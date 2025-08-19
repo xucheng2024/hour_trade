@@ -455,13 +455,33 @@ class StrategyOptimizer:
             best_limit_idx = max_limit_indices[0]
             best_duration_idx = max_duration_indices[0]
         else:
-            # Multiple positions with same returns, prefer shorter duration
-            best_idx = np.argmin(max_duration_indices)  # Find shortest duration
-            best_limit_idx = max_limit_indices[best_idx]
-            best_duration_idx = max_duration_indices[best_idx]
-            
+            # Multiple positions with same returns, need to choose best combination
             logger.info(f"🔍 Multiple parameter combinations with same returns ({max_returns_rounded:.2f}), "
-                       f"selected shortest duration: limit={limit_offset + best_limit_idx}%, duration={best_duration_idx}")
+                       f"applying selection strategy...")
+            
+            # Strategy: First prefer shorter duration, then prefer lower limit (more conservative)
+            # This ensures we get the most conservative (safe) strategy when performance is equal
+            
+            # Step 1: Find the shortest duration(s)
+            min_duration = np.min(max_duration_indices)
+            shortest_duration_mask = (max_duration_indices == min_duration)
+            shortest_duration_indices = np.where(shortest_duration_mask)[0]
+            
+            if len(shortest_duration_indices) == 1:
+                # Only one position with shortest duration
+                best_idx = shortest_duration_indices[0]
+                best_limit_idx = max_limit_indices[best_idx]
+                best_duration_idx = max_duration_indices[best_idx]
+                
+                logger.info(f"🔍 Single shortest duration found: limit={limit_offset + best_limit_idx}%, duration={best_duration_idx}")
+            else:
+                # Multiple positions with same duration, prefer lower limit (more conservative)
+                shortest_duration_limit_indices = max_limit_indices[shortest_duration_mask]
+                best_limit_idx = np.min(shortest_duration_limit_indices)  # Choose lowest limit
+                best_duration_idx = min_duration
+                
+                logger.info(f"🔍 Multiple positions with same duration ({best_duration_idx}), "
+                           f"selected lowest limit: limit={best_limit_idx}% (most conservative)")
         
         best_limit = limit_offset + best_limit_idx
         best_duration = best_duration_idx
