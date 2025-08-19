@@ -46,11 +46,11 @@ class StrategyOptimizer:
 
         # Data preprocessing - vectorized operations with validation
         try:
-            datetime_index = data[:, 8].astype(np.int64).astype('datetime64[ms]').astype(datetime)
-            open_prices = data[:, 1].astype(np.float64)
-            high_prices = data[:, 2].astype(np.float64)
-            low_prices = data[:, 3].astype(np.float64)
-            close_prices = data[:, 4].astype(np.float64)
+            datetime_index = data[:, 0].astype(np.int64).astype('datetime64[ms]').astype(datetime)  # Column 0: timestamp (ts)
+            open_prices = data[:, 1].astype(np.float64)  # Column 1: open
+            high_prices = data[:, 2].astype(np.float64)  # Column 2: high
+            low_prices = data[:, 3].astype(np.float64)  # Column 3: low
+            close_prices = data[:, 4].astype(np.float64) # Column 4: close
             
             # Validate price data sanity
             if np.any(open_prices <= 0) or np.any(high_prices <= 0) or np.any(low_prices <= 0) or np.any(close_prices <= 0):
@@ -212,6 +212,7 @@ class StrategyOptimizer:
         
         logger.info(f"💰 Total valid earnings: {total_valid_trades}")
         logger.info(f"💰 Earnings matrix max: {np.max(earn_matrix)}, min: {np.min(earn_matrix)}")
+        
         return earn_matrix
     
     def _create_time_mask_vectorized(self, datetime_array: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
@@ -358,12 +359,15 @@ class StrategyOptimizer:
             total_fee_rate = 1 - (self.custom_fees['buy_fee'] + self.custom_fees['sell_fee'])
             raw_returns = (sell_prices / buy_price - 1) * total_fee_rate
             
+            # No profit correction - use raw returns directly
+            corrected_returns = raw_returns
+            
             # Debug earnings calculation
             if trade_idx < 3:  # Only log first few trades
-                logger.debug(f"💰 Trade {trade_idx}: buy_price={buy_price:.2f}, sell_prices={sell_prices[:3]}, raw_returns={raw_returns[:3]}")
+                logger.debug(f"💰 Trade {trade_idx}: buy_price={buy_price:.2f}, sell_prices={sell_prices[:3]}, raw_returns={raw_returns[:3]}, corrected_returns={corrected_returns[:3]}")
             
-            # Convert raw returns to earnings multipliers (1 + return_rate)
-            earn_rates = 1 + raw_returns
+            # Convert corrected returns to earnings multipliers (1 + return_rate)
+            earn_rates = 1 + corrected_returns
             earnings_matrix[trade_idx, valid_mask] = earn_rates
         
         # Apply filtering and calculate compound returns
@@ -418,23 +422,55 @@ class StrategyOptimizer:
         valid_mask = avg_returns >= min_avg_earn
         logger.debug(f"💰 min_avg_earn filter: {min_avg_earn}, avg_returns range: [{np.min(avg_returns):.4f}, {np.max(avg_returns):.4f}]")
         logger.debug(f"💰 Passed min_avg_earn filter: {np.count_nonzero(valid_mask)} out of {len(valid_mask)}")
-        return np.where(valid_mask, total_returns, 0.0)
+        
+        # Round returns to 2 decimal places for consistent comparison
+        filtered_returns = np.where(valid_mask, total_returns, 0.0)
+        rounded_returns = np.round(filtered_returns, 2)
+        
+        logger.debug(f"💰 Returns rounded to 2 decimal places: range [{np.min(rounded_returns):.2f}, {np.max(rounded_returns):.2f}]")
+        return rounded_returns
     
     def _find_best_parameters(self, earn_matrix: np.ndarray, limit_offset: int) -> Optional[Tuple[int, int, float]]:
-        """Find best parameter combination from returns matrix"""
+        """Find best parameter combination from returns matrix
+        
+        Returns the best limit and duration combination with:
+        1. Returns rounded to 2 decimal places
+        2. When returns are equal, prefer shorter duration
+        """
         max_returns = np.max(earn_matrix)
         if max_returns <= 0:
             return None
+        
+        # Round returns to 2 decimal places for consistent comparison
+        earn_matrix_rounded = np.round(earn_matrix, 2)
+        max_returns_rounded = np.max(earn_matrix_rounded)
+        
+        # Find all positions with maximum returns (rounded)
+        max_positions = np.where(earn_matrix_rounded == max_returns_rounded)
+        max_limit_indices = max_positions[0]
+        max_duration_indices = max_positions[1]
+        
+        if len(max_limit_indices) == 1:
+            # Only one maximum position
+            best_limit_idx = max_limit_indices[0]
+            best_duration_idx = max_duration_indices[0]
+        else:
+            # Multiple positions with same returns, prefer shorter duration
+            best_idx = np.argmin(max_duration_indices)  # Find shortest duration
+            best_limit_idx = max_limit_indices[best_idx]
+            best_duration_idx = max_duration_indices[best_idx]
             
-        # Find position of maximum returns
-        best_limit_idx, best_duration_idx = np.unravel_index(
-            np.argmax(earn_matrix), earn_matrix.shape
-        )
+            logger.info(f"🔍 Multiple parameter combinations with same returns ({max_returns_rounded:.2f}), "
+                       f"selected shortest duration: limit={limit_offset + best_limit_idx}%, duration={best_duration_idx}")
         
         best_limit = limit_offset + best_limit_idx
         best_duration = best_duration_idx
+        best_returns = earn_matrix[best_limit_idx, best_duration_idx]  # Use original precision for return
         
-        return best_limit, best_duration, max_returns
+        logger.info(f"🔍 Best parameters: limit={best_limit}%, duration={best_duration}, "
+                   f"returns={best_returns:.4f} (rounded: {max_returns_rounded:.2f})")
+        
+        return best_limit, best_duration, best_returns
     
     def _update_result_dict(self, date_dict: Dict[str, Any], instId: str, 
                            best_params: Tuple[int, int, float], earn_matrix: np.ndarray, limit_offset: int, 
@@ -458,15 +494,20 @@ class StrategyOptimizer:
         total_days = len(datetime_index)
         trades_per_month = (trade_count / total_days) * 30
         
+        # Round max_returns to 2 decimal places for display
+        max_returns_rounded = round(max_returns, 2)
+        
         date_dict[instId] = {
             'best_limit': str(best_limit),
             'best_duration': str(best_duration),
-            'max_returns': str(max_returns),
+            'max_returns': str(max_returns_rounded),
             'trade_count': str(trade_count),
             'trades_per_month': str(round(trades_per_month, 2))
         }
         
-        logger.info(f"{instId}: Best limit={best_limit}%, duration={best_duration}, max_returns={max_returns}, trades={trade_count}, monthly={trades_per_month:.2f}")
+        logger.info(f"{instId}: Best limit={best_limit}%, duration={best_duration}, "
+                   f"max_returns={max_returns_rounded:.2f} (original: {max_returns:.4f}), "
+                   f"trades={trade_count}, monthly={trades_per_month:.2f}")
 
 
 # Singleton instance
@@ -478,3 +519,9 @@ def get_strategy_optimizer(buy_fee: float = 0.001, sell_fee: float = 0.001) -> S
     if _strategy_optimizer is None:
         _strategy_optimizer = StrategyOptimizer(buy_fee, sell_fee)
     return _strategy_optimizer
+
+def reset_strategy_optimizer():
+    """Reset the singleton strategy optimizer instance (useful for testing different configurations)"""
+    global _strategy_optimizer
+    _strategy_optimizer = None
+    logger.info("Strategy optimizer singleton instance reset")
