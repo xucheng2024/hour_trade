@@ -18,7 +18,13 @@ def main():
     """Main function to test rolling window optimization"""
     print("🔄 Rolling Window Strategy Optimization")
     print("=" * 50)
-    print("Testing rolling time window optimization vs. full history")
+    print("Forward-looking trading: Use past data to optimize future parameters")
+    print()
+    print("📋 How it works:")
+    print("  1. First 3 months: Data collection and parameter optimization")
+    print("  2. 4th month onwards: Start trading with optimized parameters")
+    print("  3. Each month: Re-optimize using past 3 months data")
+    print("  4. Result: Parameters that adapt to changing market conditions")
     print()
     
     # Get user input
@@ -28,12 +34,12 @@ def main():
             print("❌ Invalid strategy. Using daily.")
             strategy = "daily"
         
-        window_size = input("Choose window size (1m/3m/6m/1y) [3m]: ").strip().lower() or "3m"
+        window_size = input("Choose optimization window size (1m/3m/6m/1y) [3m]: ").strip().lower() or "3m"
         if window_size not in ['1m', '3m', '6m', '1y']:
             print("❌ Invalid window size. Using 3m.")
             window_size = "3m"
         
-        step_size = input("Choose step size (1m/3m/6m/1y) [1m]: ").strip().lower() or "1m"
+        step_size = input("Choose re-optimization frequency (1m/3m/6m/1y) [1m]: ").strip().lower() or "1m"
         if step_size not in ['1m', '3m', '6m', '1y']:
             print("❌ Invalid step size. Using 1m.")
             step_size = "1m"
@@ -47,13 +53,18 @@ def main():
         
         print(f"\n📊 Analysis Parameters:")
         print(f"  Strategy: {strategy}")
-        print(f"  Window Size: {window_size}")
-        print(f"  Step Size: {step_size}")
+        print(f"  Optimization Window: {window_size} (past data used for parameter optimization)")
+        print(f"  Re-optimization Frequency: {step_size} (how often to update parameters)")
         print(f"  Cryptocurrencies: {crypto_limit}")
+        print()
+        print(f"📈 Trading Timeline:")
+        print(f"  Month 1-{window_size}: Collect data and optimize parameters")
+        print(f"  Month {window_size}+1: Start trading with optimized parameters")
+        print(f"  Every {step_size}: Re-optimize using past {window_size} data")
         print()
         
         # Confirm analysis
-        confirm = input("Start rolling window optimization? (y/n) [y]: ").strip().lower() or "y"
+        confirm = input("Start forward-looking rolling window optimization? (y/n) [y]: ").strip().lower() or "y"
         if confirm not in ['y', 'yes']:
             print("❌ Analysis cancelled.")
             return
@@ -118,7 +129,8 @@ def main():
                         results['summary']['low_stability'] += 1
                     
                     # Display results
-                    print(f"  ✅ Success: {crypto_result['total_windows']} windows analyzed")
+                    print(f"  ✅ Success: {crypto_result['total_trading_points']} trading points analyzed")
+                    print(f"  📅 Trading period: {crypto_result['trading_start_date']} to {crypto_result['trading_end_date']}")
                     print(f"  📊 Recommended: Limit={crypto_result['recommended_limit']}%, Duration={crypto_result['recommended_duration']}")
                     print(f"  📈 Expected Returns: {crypto_result['expected_returns']:.3f}")
                     print(f"  🔒 Stability: {crypto_result['overall_stability']:.3f} ({crypto_result['recommendation_text']})")
@@ -128,6 +140,10 @@ def main():
                     duration_stats = crypto_result['duration_stats']
                     print(f"  📋 Limit: Avg={limit_stats['average']}±{limit_stats['std_dev']:.2f}, Most Common={limit_stats['most_common']}")
                     print(f"  📋 Duration: Avg={duration_stats['average']}±{duration_stats['std_dev']:.2f}, Most Common={duration_stats['most_common']}")
+                    
+                    # Show trading strategy info
+                    print(f"  💡 Strategy: {crypto_result['trading_strategy']}")
+                    print(f"  📊 Data Usage: {crypto_result['data_usage']}")
                     
                 else:
                     results['summary']['total_analyzed'] += 1
@@ -141,19 +157,25 @@ def main():
         
         # Display summary
         print("\n" + "=" * 50)
-        print("📊 Rolling Window Optimization Summary")
+        print("📊 Forward-Looking Rolling Window Optimization Summary")
         print("=" * 50)
         print(f"Strategy: {strategy.upper()}")
-        print(f"Window Size: {window_size}")
-        print(f"Step Size: {step_size}")
+        print(f"Optimization Window: {window_size}")
+        print(f"Re-optimization Frequency: {step_size}")
         print(f"Total Analyzed: {results['summary']['total_analyzed']}")
         print(f"Successful: {results['summary']['successful_analysis']}")
         print(f"Failed: {results['summary']['failed_analysis']}")
         print()
-        print("Stability Distribution:")
-        print(f"  High Stability: {results['summary']['high_stability']}")
-        print(f"  Medium Stability: {results['summary']['medium_stability']}")
-        print(f"  Low Stability: {results['summary']['low_stability']}")
+        print("Parameter Stability Distribution:")
+        print(f"  High Stability: {results['summary']['high_stability']} (reliable for trading)")
+        print(f"  Medium Stability: {results['summary']['medium_stability']} (moderate risk)")
+        print(f"  Low Stability: {results['summary']['low_stability']} (high risk, frequent updates needed)")
+        print()
+        print("💡 Key Benefits:")
+        print(f"  • Parameters adapt to changing market conditions")
+        print(f"  • Avoid overfitting to historical data")
+        print(f"  • Forward-looking approach for better performance")
+        print(f"  • Regular re-optimization maintains relevance")
         
         # Save results
         try:
@@ -164,7 +186,7 @@ def main():
             os.makedirs(data_dir, exist_ok=True)
             
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"rolling_window_optimization_{strategy}_{window_size}_{step_size}_{timestamp}.json"
+            filename = f"forward_looking_optimization_{strategy}_{window_size}_{step_size}_{timestamp}.json"
             filepath = os.path.join(data_dir, filename)
             
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -175,7 +197,8 @@ def main():
         except Exception as e:
             print(f"\n❌ Error saving results: {e}")
         
-        print("\n✅ Rolling Window Optimization Completed!")
+        print("\n✅ Forward-Looking Rolling Window Optimization Completed!")
+        print("🚀 Ready to implement adaptive trading strategy!")
         
     except KeyboardInterrupt:
         print("\n\n❌ Analysis interrupted by user.")

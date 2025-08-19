@@ -27,7 +27,7 @@ class RollingWindowOptimizer(StrategyOptimizer):
                                     window_size: str = "3m",
                                     step_size: str = "1m") -> Optional[Dict[str, Any]]:
         """
-        Optimize strategy using rolling time windows
+        Optimize strategy using rolling time windows for forward-looking trading
         
         Args:
             instId: Instrument ID
@@ -40,10 +40,11 @@ class RollingWindowOptimizer(StrategyOptimizer):
             step_size: Step size between windows ('1m', '3m', '6m', '1y')
             
         Returns:
-            Dictionary with rolling window optimization results
+            Dictionary with rolling window optimization results for forward-looking trading
         """
         logger.info(f"🔄 Starting rolling window optimization for {instId}")
         logger.info(f"   Window size: {window_size}, Step size: {step_size}")
+        logger.info(f"   Strategy: Forward-looking trading using past data to optimize future parameters")
         
         # Get all historical data
         data = self.data_loader.get_hist_candle_data(instId, start, end, bar)
@@ -65,54 +66,57 @@ class RollingWindowOptimizer(StrategyOptimizer):
         
         logger.info(f"📅 Data range: {earliest_date.strftime('%Y-%m-%d')} to {latest_date.strftime('%Y-%m-%d')}")
         
-        # Generate rolling windows
-        windows = self._generate_rolling_windows(earliest_date, latest_date, window_days, step_days)
+        # Generate trading time points (starting from window_size after earliest date)
+        trading_points = self._generate_trading_points(earliest_date, latest_date, window_days, step_days)
         
-        if not windows:
-            logger.warning(f"No valid windows generated for {instId}")
+        if not trading_points:
+            logger.warning(f"No valid trading points generated for {instId}")
             return None
         
-        logger.info(f"📊 Generated {len(windows)} rolling windows")
+        logger.info(f"📊 Generated {len(trading_points)} trading time points")
+        logger.info(f"   Note: First {window_size} of data used only for parameter optimization")
         
-        # Analyze each window
-        window_results = []
-        for i, (window_start, window_end) in enumerate(windows):
-            logger.info(f"🔍 Analyzing window {i+1}/{len(windows)}: {window_start.strftime('%Y-%m-%d')} to {window_end.strftime('%Y-%m-%d')}")
+        # Analyze each trading point
+        trading_results = []
+        for i, (trading_date, optimization_start, optimization_end) in enumerate(trading_points):
+            logger.info(f"🔍 Analyzing trading point {i+1}/{len(trading_points)}: {trading_date.strftime('%Y-%m-%d')}")
+            logger.info(f"   Optimization window: {optimization_start.strftime('%Y-%m-%d')} to {optimization_end.strftime('%Y-%m-%d')}")
             
-            # Filter data for this window
-            window_mask = (datetime_index >= window_start) & (datetime_index <= window_end)
-            window_data = data[window_mask]
+            # Filter data for optimization window (past data only)
+            optimization_mask = (datetime_index >= optimization_start) & (datetime_index <= optimization_end)
+            optimization_data = data[optimization_mask]
             
-            if len(window_data) < 50:  # Minimum data requirement
-                logger.info(f"   ⚠️  Window {i+1} has insufficient data ({len(window_data)} points), skipping")
+            if len(optimization_data) < 50:  # Minimum data requirement
+                logger.info(f"   ⚠️  Trading point {i+1} has insufficient optimization data ({len(optimization_data)} points), skipping")
                 continue
             
-            # Create a copy of the original data for this window
-            window_data_copy = window_data.copy()
-            
-            # Optimize strategy for this window using parent class method
+            # Optimize strategy for this optimization window
             try:
-                window_result = self._optimize_window(instId, window_data_copy, bar, strategy_type, i+1)
-                if window_result:
-                    window_results.append(window_result)
-                    logger.info(f"   ✅ Window {i+1} optimization successful")
+                trading_result = self._optimize_trading_point(
+                    instId, optimization_data, bar, strategy_type, i+1,
+                    trading_date, optimization_start, optimization_end
+                )
+                if trading_result:
+                    trading_results.append(trading_result)
+                    logger.info(f"   ✅ Trading point {i+1} optimization successful")
                 else:
-                    logger.info(f"   ❌ Window {i+1} optimization failed")
+                    logger.info(f"   ❌ Trading point {i+1} optimization failed")
             except Exception as e:
-                logger.error(f"   ❌ Window {i+1} optimization error: {e}")
+                logger.error(f"   ❌ Trading point {i+1} optimization error: {e}")
                 continue
         
-        if not window_results:
-            logger.warning(f"No successful window optimizations for {instId}")
+        if not trading_results:
+            logger.warning(f"No successful trading point optimizations for {instId}")
             return None
         
-        # Analyze results across all windows
-        analysis_result = self._analyze_window_results(instId, window_results, window_size, step_size)
+        # Analyze results across all trading points
+        analysis_result = self._analyze_trading_results(instId, trading_results, window_size, step_size)
         
         # Store results in date_dict
         date_dict[instId] = analysis_result
         
         logger.info(f"✅ Rolling window optimization completed for {instId}")
+        logger.info(f"   Ready for forward-looking trading with optimized parameters")
         return date_dict
     
     def _period_to_days(self, period: str) -> int:
@@ -129,32 +133,35 @@ class RollingWindowOptimizer(StrategyOptimizer):
             logger.warning(f"Invalid period: {period}. Using 3m (90 days) as default.")
             return 90
     
-    def _generate_rolling_windows(self, start_date: datetime, end_date: datetime,
-                                window_days: int, step_days: int) -> List[Tuple[datetime, datetime]]:
-        """Generate rolling time windows"""
-        windows = []
-        current_start = start_date
+    def _generate_trading_points(self, earliest_date: datetime, latest_date: datetime,
+                                window_days: int, step_days: int) -> List[Tuple[datetime, datetime, datetime]]:
+        """Generate trading time points for forward-looking optimization"""
+        trading_points = []
+        current_trading_date = earliest_date + timedelta(days=window_days)  # Start trading from the 4th month
         
-        while current_start + timedelta(days=window_days) <= end_date:
-            current_end = current_start + timedelta(days=window_days)
-            windows.append((current_start, current_end))
-            current_start += timedelta(days=step_days)
+        while current_trading_date + timedelta(days=window_days) <= latest_date:
+            optimization_start = current_trading_date - timedelta(days=window_days)
+            optimization_end = current_trading_date - timedelta(days=1)  # Use data up to the day before trading
+            
+            trading_points.append((current_trading_date, optimization_start, optimization_end))
+            current_trading_date += timedelta(days=step_days)
         
-        return windows
+        return trading_points
     
-    def _optimize_window(self, instId: str, window_data: np.ndarray, bar: str,
-                        strategy_type: str, window_num: int) -> Optional[Dict[str, Any]]:
-        """Optimize strategy for a single time window"""
+    def _optimize_trading_point(self, instId: str, optimization_data: np.ndarray, bar: str,
+                                strategy_type: str, trading_point_num: int,
+                                trading_date: datetime, optimization_start: datetime, optimization_end: datetime) -> Optional[Dict[str, Any]]:
+        """Optimize strategy for a single trading point (forward-looking)"""
         try:
             # Get strategy configuration
             config = self._get_strategy_config(strategy_type)
             
-            # Extract price data
-            datetime_index = window_data[:, 8].astype(np.int64).astype('datetime64[ms]').astype(datetime)
-            open_prices = window_data[:, 1].astype(np.float64)
-            high_prices = window_data[:, 2].astype(np.float64)
-            low_prices = window_data[:, 3].astype(np.float64)
-            close_prices = window_data[:, 4].astype(np.float64)
+            # Extract price data for the optimization window
+            datetime_index = optimization_data[:, 8].astype(np.int64).astype('datetime64[ms]').astype(datetime)
+            open_prices = optimization_data[:, 1].astype(np.float64)
+            high_prices = optimization_data[:, 2].astype(np.float64)
+            low_prices = optimization_data[:, 3].astype(np.float64)
+            close_prices = optimization_data[:, 4].astype(np.float64)
             
             # Validate data
             if len(close_prices) < config['min_trades'] + config['data_offset']:
@@ -165,40 +172,41 @@ class RollingWindowOptimizer(StrategyOptimizer):
             if n < config['min_trades']:
                 return None
             
-            # Calculate earnings matrix for this window
+            # Calculate earnings matrix for this optimization window
             earn_matrix = self._calculate_earnings_matrix_fully_vectorized(
                 datetime_index, low_prices, open_prices, close_prices,
                 n, config['min_trades'], config
             )
             
-            # Find best parameters for this window
+            # Find best parameters for this optimization window
             best_params = self._find_best_parameters(earn_matrix, config['limit_range'][0])
             if best_params is None:
                 return None
             
             return {
-                'window_num': window_num,
+                'trading_point_num': trading_point_num,
+                'trading_date': trading_date.strftime('%Y-%m-%d'),
+                'optimization_start': optimization_start.strftime('%Y-%m-%d'),
+                'optimization_end': optimization_end.strftime('%Y-%m-%d'),
                 'data_points': len(close_prices),
                 'effective_points': n,
                 'best_limit': best_params[0],
                 'best_duration': best_params[1],
-                'max_returns': best_params[2],
-                'window_start': datetime_index[0].strftime('%Y-%m-%d'),
-                'window_end': datetime_index[-1].strftime('%Y-%m-%d')
+                'max_returns': best_params[2]
             }
             
         except Exception as e:
-            logger.error(f"Window {window_num} optimization error: {e}")
+            logger.error(f"Trading point {trading_point_num} optimization error: {e}")
             return None
     
-    def _analyze_window_results(self, instId: str, window_results: List[Dict[str, Any]],
-                              window_size: str, step_size: str) -> Dict[str, Any]:
-        """Analyze results across all windows"""
+    def _analyze_trading_results(self, instId: str, trading_results: List[Dict[str, Any]],
+                               window_size: str, step_size: str) -> Dict[str, Any]:
+        """Analyze results across all trading points for forward-looking trading"""
         
         # Extract key metrics
-        limits = [r['best_limit'] for r in window_results]
-        durations = [r['best_duration'] for r in window_results]
-        returns = [r['max_returns'] for r in window_results]
+        limits = [r['best_limit'] for r in trading_results]
+        durations = [r['best_duration'] for r in trading_results]
+        returns = [r['max_returns'] for r in trading_results]
         
         # Calculate statistics
         avg_limit = np.mean(limits)
@@ -231,12 +239,14 @@ class RollingWindowOptimizer(StrategyOptimizer):
         
         # Create analysis result
         result = {
-            'optimization_method': 'rolling_window',
+            'optimization_method': 'rolling_window_forward_looking',
             'window_size': window_size,
             'step_size': step_size,
-            'total_windows': len(window_results),
-            'successful_windows': len(window_results),
+            'total_trading_points': len(trading_results),
+            'successful_trading_points': len(trading_results),
             'success_rate': 100.0,
+            'trading_start_date': trading_results[0]['trading_date'] if trading_results else None,
+            'trading_end_date': trading_results[-1]['trading_date'] if trading_results else None,
             
             # Parameter statistics
             'limit_stats': {
@@ -264,19 +274,23 @@ class RollingWindowOptimizer(StrategyOptimizer):
             'recommended_duration': most_common_duration,
             'expected_returns': round(avg_returns, 3),
             
-            # Detailed window results
-            'window_details': window_results
+            # Trading strategy info
+            'trading_strategy': f"Use past {window_size} data to optimize parameters for next {step_size} trading period",
+            'data_usage': f"First {window_size} of data used only for parameter optimization, trading starts from {trading_results[0]['trading_date'] if trading_results else 'N/A'}",
+            
+            # Detailed trading point results
+            'trading_point_details': trading_results
         }
         
         # Add recommendations
         if overall_stability > 0.7:
             result['recommendation'] = 'HIGH_STABILITY'
-            result['recommendation_text'] = 'Parameters are very stable across time windows'
+            result['recommendation_text'] = 'Parameters are very stable across trading points - reliable for forward-looking trading'
         elif overall_stability > 0.5:
             result['recommendation'] = 'MEDIUM_STABILITY'
-            result['recommendation_text'] = 'Parameters show moderate stability'
+            result['recommendation_text'] = 'Parameters show moderate stability - consider regular re-optimization'
         else:
             result['recommendation'] = 'LOW_STABILITY'
-            result['recommendation_text'] = 'Parameters vary significantly across time windows'
+            result['recommendation_text'] = 'Parameters vary significantly - high risk, frequent re-optimization needed'
         
         return result
