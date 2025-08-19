@@ -53,8 +53,30 @@ class RollingWindowOptimizer(StrategyOptimizer):
             return None
         
         # Convert timestamps to datetime for easier manipulation
-        timestamps = data[:, 8].astype(np.int64)
-        datetime_index = np.array([datetime.fromtimestamp(ts/1000) for ts in timestamps])
+        timestamps = data[:, 0].astype(np.int64)  # Column 0 is timestamp, not column 8
+        
+        # Debug: Check timestamp values
+        logger.info(f"🔍 Debug: First timestamp: {timestamps[0]}, Last timestamp: {timestamps[-1]}")
+        logger.info(f"🔍 Debug: Timestamp type: {type(timestamps[0])}, Shape: {timestamps.shape}")
+        
+        # Handle different timestamp formats
+        try:
+            # Try milliseconds first (most common)
+            if timestamps[0] > 1e12:  # Likely milliseconds
+                datetime_index = np.array([datetime.fromtimestamp(ts/1000) for ts in timestamps])
+                logger.info(f"🔍 Using millisecond timestamp conversion")
+            else:  # Likely seconds
+                datetime_index = np.array([datetime.fromtimestamp(ts) for ts in timestamps])
+                logger.info(f"🔍 Using second timestamp conversion")
+        except Exception as e:
+            logger.error(f"Timestamp conversion error: {e}")
+            # Fallback: try to parse as string or other format
+            try:
+                datetime_index = np.array([datetime.fromisoformat(str(ts)) for ts in timestamps])
+                logger.info(f"🔍 Using string timestamp conversion")
+            except Exception as e2:
+                logger.error(f"All timestamp conversion methods failed: {e2}")
+                return None
         
         # Calculate window and step sizes in days
         window_days = self._period_to_days(window_size)
@@ -114,6 +136,15 @@ class RollingWindowOptimizer(StrategyOptimizer):
         
         # Store results in date_dict
         date_dict[instId] = analysis_result
+        
+        # Also add the traditional format fields for compatibility
+        date_dict[instId].update({
+            'best_limit': str(analysis_result['recommended_limit']),
+            'best_duration': str(analysis_result['recommended_duration']),
+            'max_returns': str(analysis_result['expected_returns']),
+            'trade_count': str(analysis_result['total_trading_points']),
+            'trades_per_month': str(round(analysis_result['total_trading_points'] / 12, 2))  # Convert to monthly frequency
+        })
         
         logger.info(f"✅ Rolling window optimization completed for {instId}")
         logger.info(f"   Ready for forward-looking trading with optimized parameters")
