@@ -166,16 +166,34 @@ class RollingWindowOptimizer(StrategyOptimizer):
     
     def _generate_trading_points(self, earliest_date: datetime, latest_date: datetime,
                                 window_days: int, step_days: int) -> List[Tuple[datetime, datetime, datetime]]:
-        """Generate trading time points for forward-looking optimization"""
+        """Generate trading time points for rolling monthly optimization"""
         trading_points = []
-        current_trading_date = earliest_date + timedelta(days=window_days)  # Start trading from the 4th month
         
-        while current_trading_date + timedelta(days=window_days) <= latest_date:
-            optimization_start = current_trading_date - timedelta(days=window_days)
-            optimization_end = current_trading_date - timedelta(days=1)  # Use data up to the day before trading
+        # For rolling monthly backtest: generate multiple trading points
+        # Each month uses the previous 3 months for optimization
+        if (latest_date - earliest_date).days >= window_days + 90:  # Need at least window_days + 3 months
+            current_date = earliest_date + timedelta(days=window_days)  # Start from month 4
             
-            trading_points.append((current_trading_date, optimization_start, optimization_end))
-            current_trading_date += timedelta(days=step_days)
+            while current_date <= latest_date:
+                # Optimization window: previous 3 months
+                optimization_end = current_date - timedelta(days=1)
+                optimization_start = optimization_end - timedelta(days=window_days) + timedelta(days=1)
+                
+                # Trading period: current month
+                trading_date = current_date
+                
+                trading_points.append((trading_date, optimization_start, optimization_end))
+                
+                # Move to next month
+                current_date += timedelta(days=30)
+            
+            logger.info(f"📊 Generated {len(trading_points)} trading points for {window_days}-day rolling monthly optimization")
+            if trading_points:
+                logger.info(f"   First optimization: {trading_points[0][1].strftime('%Y-%m-%d')} to {trading_points[0][2].strftime('%Y-%m-%d')}")
+                logger.info(f"   Last optimization: {trading_points[-1][1].strftime('%Y-%m-%d')} to {trading_points[-1][2].strftime('%Y-%m-%d')}")
+                logger.info(f"   Logic: Each month uses previous {window_days//30} months to optimize for current month")
+        else:
+            logger.warning(f"Insufficient data for {window_days}-day rolling monthly optimization")
         
         return trading_points
     
