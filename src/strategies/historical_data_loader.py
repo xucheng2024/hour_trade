@@ -2,19 +2,21 @@
 # -*- coding: utf-8 -*-
 """
 Historical Data Loader for OKX Trading Strategies
-Handle historical data loading and configuration management
+Handle historical data loading, preprocessing, and configuration management
 """
 
 import json
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import numpy as np
+import pandas as pd
+from datetime import datetime, timezone
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 class HistoricalDataLoader:
-    """Historical data loader, responsible for historical data loading and configuration management"""
+    """Historical data loader with data preprocessing and type handling"""
     
     def __init__(self):
         self.config = self._load_config()
@@ -35,8 +37,113 @@ class HistoricalDataLoader:
             logger.warning(f"Config file not found: {config_path}")
             return {}
     
-    def get_hist_candle_data(self, instId: str, start: int, end: int, bar: str) -> Optional[np.ndarray]:
-        """Get historical candlestick data"""
+    def _preprocess_data(self, raw_data: np.ndarray, instId: str) -> Tuple[Optional[np.ndarray], Optional[pd.DataFrame]]:
+        """
+        Preprocess raw data with proper type conversion and validation
+        Returns: (processed_numpy_array, processed_dataframe)
+        """
+        try:
+            # OKX API columns: [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
+            expected_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'volCcy', 'volCcyQuote', 'confirm']
+            
+            if raw_data.shape[1] != 9:
+                logger.error(f"Invalid data structure for {instId}: expected 9 columns, got {raw_data.shape[1]}")
+                return None, None
+            
+            # Create DataFrame for easier processing
+            df = pd.DataFrame(raw_data, columns=expected_columns)
+            
+            # Convert timestamp to datetime
+            df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df['date'] = df['datetime'].dt.date
+            df['time'] = df['datetime'].dt.time
+            
+            # Convert numeric columns with proper type handling
+            numeric_columns = ['open', 'high', 'low', 'close', 'volume', 'volCcy', 'volCcyQuote', 'confirm']
+            
+            for col in numeric_columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Remove rows with NaN values
+            initial_rows = len(df)
+            df = df.dropna()
+            if len(df) < initial_rows:
+                logger.warning(f"Removed {initial_rows - len(df)} rows with NaN values for {instId}")
+            
+            # Data validation
+            if len(df) == 0:
+                logger.error(f"No valid data remaining after preprocessing for {instId}")
+                return None, None
+            
+            # Price validation
+            price_columns = ['open', 'high', 'low', 'close']
+            for col in price_columns:
+                # Check for negative or extremely high prices
+                invalid_prices = df[col] <= 0
+                if invalid_prices.any():
+                    logger.warning(f"Found {invalid_prices.sum()} invalid prices in {col} column for {instId}")
+                    df = df[~invalid_prices]
+                
+                # Check for unreasonably high prices (> 1e10)
+                extreme_prices = df[col] > 1e10
+                if extreme_prices.any():
+                    logger.warning(f"Found {extreme_prices.sum()} extreme prices in {col} column for {instId}")
+                    df = df[~extreme_prices]
+            
+            # Volume validation
+            volume_columns = ['volume', 'volCcy', 'volCcyQuote']
+            for col in volume_columns:
+                # Check for negative volumes
+                invalid_volumes = df[col] < 0
+                if invalid_volumes.any():
+                    logger.warning(f"Found {invalid_volumes.sum()} negative volumes in {col} column for {instId}")
+                    df = df[~invalid_volumes]
+            
+            # Price relationship validation
+            invalid_high_low = df['high'] < df['low']
+            invalid_high_open = df['high'] < df['open']
+            invalid_high_close = df['high'] < df['close']
+            invalid_low_open = df['low'] > df['open']
+            invalid_low_close = df['low'] > df['close']
+            
+            invalid_rows = (invalid_high_low | invalid_high_open | invalid_high_close | 
+                          invalid_low_open | invalid_low_close)
+            
+            if invalid_rows.any():
+                logger.warning(f"Found {invalid_rows.sum()} rows with invalid price relationships for {instId}")
+                df = df[~invalid_rows]
+            
+            # Sort by timestamp
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            
+            # Convert back to numpy array for compatibility
+            numpy_data = df[expected_columns].values
+            
+            # Add additional processed columns
+            df['price_change'] = df['close'] - df['open']
+            df['price_change_pct'] = (df['price_change'] / df['open']) * 100
+            df['high_low_spread'] = df['high'] - df['low']
+            df['body_size'] = abs(df['close'] - df['open'])
+            
+            logger.info(f"Successfully preprocessed data for {instId}: {len(df)} rows, {len(df.columns)} columns")
+            
+            return numpy_data, df
+            
+        except Exception as e:
+            logger.error(f"Error preprocessing data for {instId}: {e}")
+            return None, None
+    
+    def get_hist_candle_data(self, instId: str, start: int = 0, end: int = 0, bar: str = "1m", 
+                            return_dataframe: bool = False) -> Optional[np.ndarray]:
+        """
+        Get historical candlestick data with preprocessing
+        Args:
+            instId: Instrument ID
+            start: Start timestamp (ms)
+            end: End timestamp (ms)
+            bar: Timeframe
+            return_dataframe: If True, return processed DataFrame instead of numpy array
+        """
         import os
         # Get the directory where this file is located
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -48,62 +155,148 @@ class HistoricalDataLoader:
         try:
             data = np.load(os.path.join(path, file))
             name = data.files[0]
-            candles = data[name]
+            raw_candles = data[name]
             
-            # Validate data structure
-            if candles.shape[1] != 9:
-                logger.error(f"Invalid data structure for {instId}: expected 9 columns, got {candles.shape[1]}")
-                return None
+            # Preprocess the data
+            processed_candles, processed_df = self._preprocess_data(raw_candles, instId)
             
-            # Convert string data to proper numeric types with validation
-            # OKX API columns: [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
-            # NOT: [ts, vol1, vol2, vol3, open, high, low, close, confirm]
-            numeric_candles = np.zeros((candles.shape[0], candles.shape[1]))
-            
-            for i in range(candles.shape[0]):
-                for j in range(candles.shape[1]):
-                    try:
-                        if j == 0:  # ts column
-                            numeric_candles[i, j] = float(candles[i, j])
-                        elif j == 8:  # confirm column
-                            numeric_candles[i, j] = float(candles[i, j])
-                        else:  # price and volume columns
-                            value = float(candles[i, j])
-                            # Validate price data (columns 1-4: open, high, low, close)
-                            if j in [1, 2, 3, 4]:  # open, high, low, close
-                                if value <= 0 or value > 1e10:  # Reasonable price range
-                                    logger.warning(f"Invalid price value for {instId} at row {i}, col {j}: {value}")
-                                    return None
-                            numeric_candles[i, j] = value
-                    except (ValueError, TypeError) as e:
-                        logger.error(f"Data conversion error for {instId} at row {i}, col {j}: {candles[i, j]} - {e}")
-                        return None
-            
-            # Additional validation: check if prices make sense
-            # OKX API column mapping: [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
-            open_prices = numeric_candles[:, 1]  # Col 1: open
-            high_prices = numeric_candles[:, 2]  # Col 2: high
-            low_prices = numeric_candles[:, 3]   # Col 3: low
-            close_prices = numeric_candles[:, 4] # Col 4: close
-            
-            # Validate price relationships
-            if not np.all(high_prices >= low_prices) or not np.all(high_prices >= open_prices) or not np.all(high_prices >= close_prices):
-                logger.error(f"Invalid price relationships for {instId}: high must be >= low, open, close")
-                return None
-            
-            if not np.all(low_prices <= open_prices) or not np.all(low_prices <= close_prices):
-                logger.error(f"Invalid price relationships for {instId}: low must be <= open, close")
+            if processed_candles is None:
                 return None
             
             # If start=0 and end=0, return all data
             if start == 0 and end == 0:
-                return numeric_candles
+                return processed_df if return_dataframe else processed_candles
             
-            # Otherwise, filter by date range
-            date = numeric_candles[:, -1].astype(np.int64)
-            return numeric_candles[(date >= start) & (date <= end)]
+            # Filter by date range
+            if return_dataframe:
+                mask = (processed_df['timestamp'] >= start) & (processed_df['timestamp'] <= end)
+                return processed_df[mask]
+            else:
+                date = processed_candles[:, 0].astype(np.int64)
+                mask = (date >= start) & (date <= end)
+                return processed_candles[mask]
+                
         except Exception as e:
             logger.error(f"Error loading data for {instId}: {e}")
+            return None
+    
+    def get_dataframe_with_dates(self, instId: str, start: int = 0, end: int = 0, bar: str = "1m") -> Optional[pd.DataFrame]:
+        """
+        Get historical data as DataFrame with proper date columns
+        """
+        return self.get_hist_candle_data(instId, start, end, bar, return_dataframe=True)
+    
+    def convert_timestamp_to_date(self, timestamp_ms: int) -> str:
+        """Convert millisecond timestamp to readable date string"""
+        try:
+            dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+            return dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+        except Exception as e:
+            logger.error(f"Error converting timestamp {timestamp_ms}: {e}")
+            return str(timestamp_ms)
+    
+    def get_data_summary(self, instId: str, bar: str = "1m") -> Optional[Dict[str, Any]:
+        """Get summary statistics for the data"""
+        df = self.get_dataframe_with_dates(instId, 0, 0, bar)
+        if df is None or len(df) == 0:
+            return None
+        
+        try:
+            summary = {
+                'instrument': instId,
+                'timeframe': bar,
+                'total_rows': len(df),
+                'date_range': {
+                    'start': self.convert_timestamp_to_date(df['timestamp'].min()),
+                    'end': self.convert_timestamp_to_date(df['timestamp'].max())
+                },
+                'price_stats': {
+                    'min_price': df[['open', 'high', 'low', 'close']].min().min(),
+                    'max_price': df[['open', 'high', 'low', 'close']].max().max(),
+                    'avg_price': df[['open', 'high', 'low', 'close']].mean().mean()
+                },
+                'volume_stats': {
+                    'total_volume': df['volume'].sum(),
+                    'avg_volume': df['volume'].mean(),
+                    'max_volume': df['volume'].max()
+                },
+                'data_quality': {
+                    'missing_values': df.isnull().sum().to_dict(),
+                    'duplicate_timestamps': df['timestamp'].duplicated().sum()
+                }
+            }
+            return summary
+        except Exception as e:
+            logger.error(f"Error generating summary for {instId}: {e}")
+            return None
+
+    def get_latest_three_months_data(self, instId: str, bar: str = "1m", 
+                                    return_dataframe: bool = True) -> Optional[Any]:
+        """
+        Get the latest three months of historical data
+        Args:
+            instId: Instrument ID
+            bar: Timeframe
+            return_dataframe: If True, return DataFrame, else numpy array
+        """
+        try:
+            # Get all data first to find the latest timestamp
+            all_data = self.get_hist_candle_data(instId, 0, 0, bar, return_dataframe=True)
+            if all_data is None or len(all_data) == 0:
+                logger.error(f"No data available for {instId}")
+                return None
+            
+            # Get the latest timestamp
+            latest_timestamp = all_data['timestamp'].max()
+            
+            # Calculate three months ago (90 days) in milliseconds
+            three_months_ago = latest_timestamp - (90 * 24 * 60 * 60 * 1000)
+            
+            logger.info(f"Getting latest 3 months data for {instId}: "
+                       f"from {self.convert_timestamp_to_date(three_months_ago)} "
+                       f"to {self.convert_timestamp_to_date(latest_timestamp)}")
+            
+            # Get the filtered data
+            return self.get_hist_candle_data(instId, three_months_ago, latest_timestamp, 
+                                           bar, return_dataframe)
+            
+        except Exception as e:
+            logger.error(f"Error getting latest three months data for {instId}: {e}")
+            return None
+    
+    def get_data_for_date_range(self, instId: str, days: int, bar: str = "1m", 
+                               return_dataframe: bool = True) -> Optional[Any]:
+        """
+        Get data for a specific number of days from the latest available data
+        Args:
+            instId: Instrument ID
+            days: Number of days to look back
+            bar: Timeframe
+            return_dataframe: If True, return DataFrame, else numpy array
+        """
+        try:
+            # Get all data first to find the latest timestamp
+            all_data = self.get_hist_candle_data(instId, 0, 0, bar, return_dataframe=True)
+            if all_data is None or len(all_data) == 0:
+                logger.error(f"No data available for {instId}")
+                return None
+            
+            # Get the latest timestamp
+            latest_timestamp = all_data['timestamp'].max()
+            
+            # Calculate start timestamp for specified days
+            start_timestamp = latest_timestamp - (days * 24 * 60 * 60 * 1000)
+            
+            logger.info(f"Getting {days} days data for {instId}: "
+                       f"from {self.convert_timestamp_to_date(start_timestamp)} "
+                       f"to {self.convert_timestamp_to_date(latest_timestamp)}")
+            
+            # Get the filtered data
+            return self.get_hist_candle_data(instId, start_timestamp, latest_timestamp, 
+                                           bar, return_dataframe)
+            
+        except Exception as e:
+            logger.error(f"Error getting {days} days data for {instId}: {e}")
             return None
 
 
