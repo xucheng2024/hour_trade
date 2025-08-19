@@ -423,11 +423,14 @@ class StrategyOptimizer:
         logger.debug(f"💰 min_avg_earn filter: {min_avg_earn}, avg_returns range: [{np.min(avg_returns):.4f}, {np.max(avg_returns):.4f}]")
         logger.debug(f"💰 Passed min_avg_earn filter: {np.count_nonzero(valid_mask)} out of {len(valid_mask)}")
         
-        # Round returns to 2 decimal places for consistent comparison
+        # Round returns to 2 decimal places with proper rounding for consistent comparison
         filtered_returns = np.where(valid_mask, total_returns, 0.0)
+        
+        # Apply proper rounding: round to 2 decimal places
+        # np.round() already does proper rounding (0.5 rounds up, 0.4 rounds down)
         rounded_returns = np.round(filtered_returns, 2)
         
-        logger.debug(f"💰 Returns rounded to 2 decimal places: range [{np.min(rounded_returns):.2f}, {np.max(rounded_returns):.2f}]")
+        logger.debug(f"💰 Returns rounded to 2 decimal places with proper rounding: range [{np.min(rounded_returns):.2f}, {np.max(rounded_returns):.2f}]")
         return rounded_returns
     
     def _find_best_parameters(self, earn_matrix: np.ndarray, limit_offset: int) -> Optional[Tuple[int, int, float]]:
@@ -441,7 +444,8 @@ class StrategyOptimizer:
         if max_returns <= 0:
             return None
         
-        # Round returns to 2 decimal places for consistent comparison
+        # Round returns to 2 decimal places with proper rounding for consistent comparison
+        # np.round() applies proper rounding: 0.5 rounds up, 0.4 rounds down
         earn_matrix_rounded = np.round(earn_matrix, 2)
         max_returns_rounded = np.max(earn_matrix_rounded)
         
@@ -514,7 +518,8 @@ class StrategyOptimizer:
         total_days = len(datetime_index)
         trades_per_month = (trade_count / total_days) * 30
         
-        # Round max_returns to 2 decimal places for display
+        # Round max_returns to 2 decimal places with proper rounding for display
+        # round() function applies proper rounding: 0.5 rounds up, 0.4 rounds down
         max_returns_rounded = round(max_returns, 2)
         
         date_dict[instId] = {

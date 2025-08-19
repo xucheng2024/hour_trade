@@ -39,7 +39,7 @@ def analyze_daily_returns() -> Dict[str, Any]:
     # Initialize strategy optimizer with relaxed constraints
     class RelaxedStrategyOptimizer:
         def __init__(self, buy_fee=0.001, sell_fee=0.001):
-            from strategies.strategy_optimizer import StrategyOptimizer
+            from src.strategies.strategy_optimizer import StrategyOptimizer
             self.base_optimizer = StrategyOptimizer(buy_fee, sell_fee)
             
         def optimize_1d_strategy(self, instId, start, end, date_dict, bar):

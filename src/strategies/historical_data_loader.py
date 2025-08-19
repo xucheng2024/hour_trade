@@ -195,7 +195,7 @@ class HistoricalDataLoader:
             logger.error(f"Error converting timestamp {timestamp_ms}: {e}")
             return str(timestamp_ms)
     
-    def get_data_summary(self, instId: str, bar: str = "1m") -> Optional[Dict[str, Any]:
+    def get_data_summary(self, instId: str, bar: str = "1m") -> Optional[Dict[str, Any]]:
         """Get summary statistics for the data"""
         df = self.get_dataframe_with_dates(instId, 0, 0, bar)
         if df is None or len(df) == 0:
