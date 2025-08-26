@@ -192,12 +192,15 @@ class OKXDataManager:
         for attempt in range(max_retries):
             try:
                 if after is not None:
-                    candles = self.market_api.get_candlesticks(
+                    # Use history-candles endpoint for historical data
+                    candles = self.market_api.get_history_candlesticks(
                         instId=inst_id, 
-                        after=after, 
-                        bar=bar
+                        after=str(after), 
+                        bar=bar,
+                        limit=300  # history-candles supports up to 300 records per request
                     )
                 else:
+                    # Use regular candlesticks endpoint for recent data
                     candles = self.market_api.get_candlesticks(
                         instId=inst_id, 
                         bar=bar,
@@ -232,19 +235,16 @@ class OKXDataManager:
         """Fetch additional historical data by paginating backwards"""
         data = initial_data
         total_fetched = len(data)
-        max_pages = 10  # 限制最大分页次数，避免无限循环
+        max_pages = 100  # 增加分页次数，获取更多历史数据，history-candlesticks支持更早的数据
         
         for page in range(max_pages):
             try:
                 # Get timestamp for next batch
                 # data[0][0] is the timestamp of the earliest record in current data (first row, first column)
                 earliest_timestamp = int(data[0][0])
-                after = earliest_timestamp - 1
                 
-                # Skip if after timestamp is 0 or negative (reached earliest data)
-                if after <= 0:
-                    logger.info(f"📊 Reached earliest historical data for {inst_id}")
-                    break
+                # Use the earliest timestamp as 'after' parameter to get older data
+                after = earliest_timestamp
                 
                 logger.info(f"📄 Fetching page {page + 1} for {inst_id}, after timestamp: {after}")
                 
@@ -256,12 +256,32 @@ class OKXDataManager:
                     break
                 
                 # Check if we got new data (not just the same data)
-                if len(additional_data) == 0 or (len(additional_data) == 1 and int(additional_data[0][-1]) >= earliest_timestamp):
+                if len(additional_data) == 0:
                     logger.info(f"📊 No new data available for {inst_id}")
                     break
                 
-                # Concatenate data
+                # Check if the new data is actually older (smaller timestamp)
+                if len(additional_data) > 0:
+                    new_earliest_timestamp = int(additional_data[0][0])
+                    if new_earliest_timestamp >= earliest_timestamp:
+                        logger.info(f"📊 No older data available for {inst_id}")
+                        break
+                    
+                    # Additional check: ensure we're not getting duplicate data
+                    # Check if the new data overlaps with existing data
+                    new_latest_timestamp = int(additional_data[-1][0])
+                    if new_latest_timestamp >= earliest_timestamp:
+                        logger.info(f"📊 New data overlaps with existing data for {inst_id}, stopping")
+                        break
+                
+                # Concatenate data - put older data first to maintain chronological order
                 data = np.concatenate((additional_data, data))
+                
+                # Remove duplicates based on timestamp and sort to ensure chronological order
+                unique_indices = np.unique(data[:, 0], return_index=True)[1]
+                data = data[unique_indices]
+                data = data[data[:, 0].argsort()]
+                
                 new_total = len(data)
                 logger.info(f"📈 Fetched {new_total - total_fetched} additional candlesticks for {inst_id} (Total: {new_total})")
                 total_fetched = new_total

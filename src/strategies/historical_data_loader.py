@@ -43,6 +43,11 @@ class HistoricalDataLoader:
         Returns: (processed_numpy_array, processed_dataframe)
         """
         try:
+            # Skip the first data point to avoid initial data anomalies
+            if len(raw_data) > 1:
+                raw_data = raw_data[1:]
+                logger.info(f"Skipped first data point for {instId} to avoid initial anomalies")
+            
             # OKX API columns: [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
             expected_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'volCcy', 'volCcyQuote', 'confirm']
             

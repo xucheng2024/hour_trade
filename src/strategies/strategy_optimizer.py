@@ -24,6 +24,19 @@ class StrategyOptimizer:
             'buy_fee': buy_fee,
             'sell_fee': sell_fee
         }
+        
+        # Initialize strategy configurations as instance variables
+        self.strategy_configs = {
+            "1d": {
+                'limit_range': (60, 95),
+                'duration_range': 30,
+                'min_trades': 30,        # Minimum 30 trades for statistical significance
+                'min_avg_earn': 1.005, # Minimum 0.5% return requirement (was 1.01 = 1%!)
+                'data_offset': 50,       # Reduced for daily data (was 200)
+                'buy_fee': self.custom_fees['buy_fee'],   # Use custom buy fee
+                'sell_fee': self.custom_fees['sell_fee']  # Use custom sell fee
+            }
+        }
     
     def set_trading_fees(self, buy_fee: float, sell_fee: float):
         """Set custom trading fees for strategy optimization"""
@@ -31,14 +44,157 @@ class StrategyOptimizer:
         self.custom_fees['sell_fee'] = sell_fee
         logger.info(f"Updated trading fees: buy={buy_fee:.3f}, sell={sell_fee:.3f}")
     
+    def set_strategy_parameters(self, strategy_type: str, 
+                               limit_range: tuple = None, 
+                               duration_range: int = None,
+                               min_trades: int = None,
+                               min_avg_earn: float = None):
+        """Set custom strategy parameters for optimization
+        
+        Args:
+            strategy_type: Strategy type ("1d")
+            limit_range: Custom limit range tuple (min, max) e.g., (70, 90)
+            duration_range: Custom duration range (max days)
+            min_trades: Minimum number of trades required
+            min_avg_earn: Minimum average earnings requirement
+        """
+        if strategy_type not in ["1d"]:
+            logger.error(f"Invalid strategy type: {strategy_type}. Must be '1d'")
+            return
+            
+        # Get current config from instance variable
+        current_config = self.strategy_configs[strategy_type]
+        
+        # Update parameters if provided
+        if limit_range is not None:
+            if len(limit_range) == 2 and 0 < limit_range[0] < limit_range[1] <= 100:
+                current_config['limit_range'] = limit_range
+                logger.info(f"✅ Updated {strategy_type} limit_range: {limit_range}")
+            else:
+                logger.error(f"❌ Invalid limit_range: {limit_range}. Must be (min, max) where 0 < min < max <= 100")
+                
+        if duration_range is not None:
+            if duration_range > 0:
+                current_config['duration_range'] = duration_range
+                logger.info(f"✅ Updated {strategy_type} duration_range: {duration_range}")
+            else:
+                logger.error(f"❌ Invalid duration_range: {duration_range}. Must be > 0")
+                
+        if min_trades is not None:
+            if min_trades > 0:
+                current_config['min_trades'] = min_trades
+                logger.info(f"✅ Updated {strategy_type} min_trades: {min_trades}")
+            else:
+                logger.error(f"❌ Invalid min_trades: {min_trades}. Must be > 0")
+                
+        if min_avg_earn is not None:
+            if min_avg_earn > 1.0:
+                current_config['min_avg_earn'] = min_avg_earn
+                logger.info(f"✅ Updated {strategy_type} min_avg_earn: {min_avg_earn}")
+            else:
+                logger.error(f"❌ Invalid min_avg_earn: {min_avg_earn}. Must be > 1.0")
+    
+    def get_strategy_parameters(self, strategy_type: str) -> Dict[str, Any]:
+        """Get current strategy parameters
+        
+        Args:
+            strategy_type: Strategy type ("1d")
+            
+        Returns:
+            Dictionary with current strategy parameters
+        """
+        if strategy_type not in ["1d"]:
+            logger.error(f"Invalid strategy type: {strategy_type}. Must be '1d'")
+            return {}
+            
+        config = self._get_strategy_config(strategy_type)
+        return {
+            'limit_range': config['limit_range'],
+            'duration_range': config['duration_range'],
+            'min_trades': config['min_trades'],
+            'min_avg_earn': config['min_avg_earn']
+        }
+    
+    def reset_strategy_parameters(self, strategy_type: str):
+        """Reset strategy parameters to default values
+        
+        Args:
+            strategy_type: Strategy type ("1d")
+        """
+        if strategy_type not in ["1d"]:
+            logger.error(f"Invalid strategy type: {strategy_type}. Must be '1d'")
+            return
+            
+        # Reset to default configuration
+        default_configs = {
+            "1d": {
+                'limit_range': (60, 95),
+                'duration_range': 30,
+                'min_trades': 30,
+                'min_avg_earn': 1.005,
+                'data_offset': 50,
+                'buy_fee': self.custom_fees['buy_fee'],
+                'sell_fee': self.custom_fees['sell_fee']
+            }
+        }
+        
+        # Update the config with default values
+        config = self.strategy_configs[strategy_type]
+        config.update(default_configs[strategy_type])
+        logger.info(f"✅ Reset {strategy_type} strategy parameters to defaults")
+    
+    def set_all_strategy_parameters(self, 
+                                   limit_range: tuple = None, 
+                                   duration_range: int = None,
+                                   min_trades: int = None,
+                                   min_avg_earn: float = None):
+        """Set parameters for daily strategy
+        
+        Args:
+            limit_range: Custom limit range tuple (min, max) e.g., (70, 90)
+            duration_range: Custom duration range (max days)
+            min_trades: Minimum number of trades required
+            min_avg_earn: Minimum average earnings requirement
+        """
+        logger.info("🔄 Setting parameters for daily strategy...")
+        
+        # Set for 1d strategy
+        self.set_strategy_parameters("1d", limit_range, duration_range, min_trades, min_avg_earn)
+        
+        logger.info("✅ Parameters set for daily strategy")
+    
+    def print_strategy_parameters(self, strategy_type: str = None):
+        """Print current strategy parameters
+        
+        Args:
+            strategy_type: Strategy type ("1d", or None for default)
+        """
+        if strategy_type is None:
+            # Print daily strategy
+            print("📊 Current Strategy Parameters:")
+            print("=" * 50)
+            self.print_strategy_parameters("1d")
+            return
+            
+        if strategy_type not in ["1d"]:
+            logger.error(f"Invalid strategy type: {strategy_type}. Must be '1d'")
+            return
+            
+        config = self._get_strategy_config(strategy_type)
+        print(f"🔧 {strategy_type.upper()} Strategy Parameters:")
+        print(f"   Limit Range: {config['limit_range'][0]}% - {config['limit_range'][1]}%")
+        print(f"   Duration Range: 1 - {config['duration_range']} days")
+        print(f"   Min Trades: {config['min_trades']}")
+        print(f"   Min Avg Earnings: {config['min_avg_earn']:.3f}x")
+    
     def get_trading_fees(self) -> Dict[str, float]:
         """Get current trading fee configuration"""
         return self.custom_fees.copy()
     
     def optimize_strategy(self, instId: str, start: int, end: int, 
                          date_dict: Dict[str, Any], bar: str, 
-                         strategy_type: Literal["1d", "1h"] = "1d") -> Optional[Dict[str, Any]]:
-        """Optimize strategy parameters - unified method for both 1d and 1h strategies"""
+                         strategy_type: Literal["1d"] = "1d") -> Optional[Dict[str, Any]]:
+        """Optimize strategy parameters - daily strategy optimization"""
         data = self.data_loader.get_hist_candle_data(instId, start, end, bar)
         if data is None or len(data) == 0:
             logger.warning(f"No data available for {instId}")
@@ -46,7 +202,13 @@ class StrategyOptimizer:
 
         # Data preprocessing - vectorized operations with validation
         try:
-            datetime_index = data[:, 0].astype(np.int64).astype('datetime64[ms]').astype(datetime)  # Column 0: timestamp (ts)
+            # Convert timestamps to datetime objects
+            # For daily data, we need to handle the case where we only have date information
+            timestamps = data[:, 0].astype(np.int64)
+            
+            # Daily data - convert to date objects (no time components)
+            datetime_index = np.array([datetime.fromtimestamp(ts / 1000).date() for ts in timestamps])
+            logger.info(f"📅 Daily data detected for {instId} - converting to date objects")
             open_prices = data[:, 1].astype(np.float64)  # Column 1: open
             high_prices = data[:, 2].astype(np.float64)  # Column 2: high
             low_prices = data[:, 3].astype(np.float64)  # Column 3: low
@@ -117,45 +279,11 @@ class StrategyOptimizer:
         """Optimize 1-day strategy parameters - returns best limit ratio and holding time"""
         return self.optimize_strategy(instId, start, end, date_dict, bar, "1d")
     
-    def optimize_1h_strategy(self, instId: str, start: int, end: int, 
-                            date_dict: Dict[str, Any], bar: str) -> Optional[Dict[str, Any]]:
-        """Optimize 1-hour strategy parameters - returns best limit ratio and holding time"""
-        return self.optimize_strategy(instId, start, end, date_dict, bar, "1h")
+
     
     def _get_strategy_config(self, strategy_type: str) -> Dict[str, Any]:
-        """Get configuration for specific strategy type
-        
-        Note: time_window is always in HOURS for consistent calculations
-        """
-        configs = {
-            "1d": {
-                'limit_range': (60, 95),
-                'duration_range': 30,
-                'min_trades': 30,        # Minimum 30 trades for statistical significance
-                'min_avg_earn': 1.005, # Minimum 0.5% return requirement (was 1.01 = 1%!)
-                'data_offset': 50,       # Reduced for daily data (was 200)
-                'time_window': 1,        # 1 hour - changed from 96 hours
-                'hour_mask': None,       # Any hour for 1d strategy (was 0)
-                'minute_mask': None,     # Any minute for 1d strategy (was 0)
-                'second_mask': None,     # Any second for 1d strategy (was 0)
-                'buy_fee': self.custom_fees['buy_fee'],   # Use custom buy fee
-                'sell_fee': self.custom_fees['sell_fee']  # Use custom sell fee
-            },
-            "1h": {
-                'limit_range': (50, 99),  # Extended range for more opportunities
-                'duration_range': 720,     # Extended to 720 hours (30*24) to match daily strategy's 30 days
-                'min_trades': 30,         # Reduced to 10 for more strategy opportunities
-                'min_avg_earn': 1.002,   # Reduced to 0.2% for more opportunities
-                'data_offset': 50,        # Further reduced for maximum data points
-                'time_window': 168,       # Extended to 168 hours (1 week) to capture weekly patterns
-                'hour_mask': None,        # Any hour for 1h strategy (was None)
-                'minute_mask': None,      # Any minute for 1h strategy (was 0)
-                'second_mask': None,      # Any second for 1h strategy (was 0)
-                'buy_fee': self.custom_fees['buy_fee'],   # Use custom buy fee
-                'sell_fee': self.custom_fees['sell_fee']  # Use custom sell fee
-            }
-        }
-        return configs[strategy_type]
+        """Get configuration for specific strategy type"""
+        return self.strategy_configs[strategy_type]
     
     def _calculate_earnings_matrix_fully_vectorized(self, datetime_index: np.ndarray, 
                                                   low_prices: np.ndarray, 
@@ -166,7 +294,6 @@ class StrategyOptimizer:
         """Calculate earnings matrix using fully vectorized operations for maximum performance"""
         limit_range = config['limit_range']
         duration_range = config['duration_range']
-        time_window = config['time_window']
         min_avg_earn = config['min_avg_earn']
         
         # Vectorized time filtering - much faster than list comprehension
@@ -174,14 +301,14 @@ class StrategyOptimizer:
         valid_time_indices = np.where(valid_time_mask)[0]
         
         logger.info(f"⏰ Time filtering: {len(valid_time_indices)} valid time points out of {n}")
-        logger.info(f"⏰ Time config: hour_mask={config.get('hour_mask')}, minute_mask={config.get('minute_mask')}, second_mask={config.get('second_mask')}")
         
         if len(valid_time_indices) < min_occurrences:
             logger.warning(f"❌ Not enough valid time points: {len(valid_time_indices)} < {min_occurrences}")
-            return np.zeros((limit_range[1] - limit_range[0], duration_range))
+            return np.zeros((limit_range[1] - limit_range[0] + 1, duration_range))
         
         # Pre-calculate all possible buy prices efficiently using broadcasting
-        limit_ratios = np.arange(limit_range[0], limit_range[1])
+        # Ensure we include the upper bound of the range
+        limit_ratios = np.arange(limit_range[0], limit_range[1] + 1)
         
         # Calculate earnings matrix using vectorized operations
         earn_matrix = np.zeros((len(limit_ratios), duration_range))
@@ -200,7 +327,7 @@ class StrategyOptimizer:
             # Vectorized trade finding and earnings calculation for this batch
             batch_earnings = self._calculate_batch_earnings_vectorized(
                 valid_time_indices, low_prices[:n], buy_prices_batch, 
-                close_prices[:n], duration_range, time_window, min_avg_earn
+                close_prices[:n], duration_range, min_avg_earn
             )
             
             earn_matrix[batch_start:batch_end, :] = batch_earnings
@@ -217,25 +344,17 @@ class StrategyOptimizer:
     
     def _create_time_mask_vectorized(self, datetime_array: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
         """Create time mask using vectorized operations for better performance"""
-        # Extract time components as numpy arrays for vectorized comparison
-        hours = np.array([dt.hour for dt in datetime_array])
-        minutes = np.array([dt.minute for dt in datetime_array])
-        seconds = np.array([dt.second for dt in datetime_array])
         
-        # Create masks for each time component
-        hour_mask = np.ones_like(hours, dtype=bool) if config['hour_mask'] is None else (hours == config['hour_mask'])
-        minute_mask = np.ones_like(minutes, dtype=bool) if config['minute_mask'] is None else (minutes == config['minute_mask'])
-        second_mask = np.ones_like(seconds, dtype=bool) if config['second_mask'] is None else (seconds == config['second_mask'])
-        
-        # Combine all masks
-        return hour_mask & minute_mask & second_mask
+        # Daily data - all days are valid trading days
+        # Return all True to allow trading on any day
+        logger.debug(f"📅 Daily data detected - all {len(datetime_array)} days are valid trading days")
+        return np.ones(len(datetime_array), dtype=bool)
     
     def _calculate_batch_earnings_vectorized(self, valid_time_indices: np.ndarray, 
                                            low_prices: np.ndarray, 
                                            buy_prices_batch: np.ndarray,
                                            close_prices: np.ndarray, 
                                            duration_range: int,
-                                           time_window: int, 
                                            min_avg_earn: float) -> np.ndarray:
         """Calculate earnings for a batch of limit ratios using fully vectorized operations"""
         batch_size = buy_prices_batch.shape[0]
@@ -247,7 +366,7 @@ class StrategyOptimizer:
             
             # Find valid trades using vectorized operations
             valid_trades = self._find_valid_trades_optimized(
-                valid_time_indices, low_prices, buy_prices, time_window
+                valid_time_indices, low_prices, buy_prices
             )
             
             if len(valid_trades) == 0:
@@ -259,7 +378,7 @@ class StrategyOptimizer:
             # Calculate earnings for all durations at once
             earnings = self._calculate_duration_earnings_vectorized(
                 valid_trades, buy_prices, close_prices, duration_range, 
-                time_window, min_avg_earn
+                min_avg_earn
             )
             
             earn_matrix[ratio_idx, :] = earnings
@@ -267,61 +386,23 @@ class StrategyOptimizer:
         return earn_matrix
     
     def _find_valid_trades_optimized(self, valid_time_indices: np.ndarray, 
-                                   low_prices: np.ndarray, buy_prices: np.ndarray, 
-                                   time_window: int) -> list:
-        """Find valid trading opportunities using optimized vectorized operations"""
+                                   low_prices: np.ndarray, buy_prices: np.ndarray) -> list:
+        """Find valid trading opportunities for daily trading"""
         if len(valid_time_indices) == 0:
             return []
         
         valid_trades = []
-        total_checked = 0
-        time_window_exceeded = 0
-        no_price_condition = 0
-        # Vectorized approach: create a mask for all valid time indices
-        # that don't overlap with previous trades
-        valid_mask = np.ones(len(valid_time_indices), dtype=bool)
         
-        # Process time indices in order to maintain vectorization
-        for idx, i in enumerate(valid_time_indices):
-            if not valid_mask[idx]:  # Skip if already marked as invalid
-                continue
-                
-            total_checked += 1
-            if i + time_window >= len(low_prices):
-                time_window_exceeded += 1
-                valid_mask[idx] = False
-                continue
-                
+        # For daily trading: check if we can buy at the limit price on any given day
+        # We check if the low price of the day is below our buy price
+        for i in valid_time_indices:
             buy_price = buy_prices[i]
             
-            # Vectorized price condition check
-            price_window = low_prices[i:i+time_window]
-            price_condition = price_window < buy_price
-            
-            if not np.any(price_condition):
-                no_price_condition += 1
-                valid_mask[idx] = False
-                continue
-                
-            buy_timing = np.argmax(price_condition)
-            valid_trades.append((i, buy_timing))
-            
-            # Vectorized overlap prevention: mark overlapping future time indices as invalid
-            # This prevents future trades from overlapping with current trade
-            overlap_start = max(0, idx + 1)
-            overlap_end = min(len(valid_time_indices), idx + 1 + time_window)
-            valid_mask[overlap_start:overlap_end] = False
-            
-            logger.debug(f"🔍 Added trade at time {i}, marked {overlap_end - overlap_start} overlapping indices as invalid")
+            # Can we buy on this day? (low price <= buy price)
+            if low_prices[i] <= buy_price:
+                valid_trades.append((i, 0))  # 0 means buy at the start of the day
         
-        if total_checked > 0:
-            logger.debug(f"🔍 Trade search: checked={total_checked}, time_exceeded={time_window_exceeded}, no_price_match={no_price_condition}, overlapping_skipped={total_checked - len(valid_trades) - time_window_exceeded - no_price_condition}, valid={len(valid_trades)}")
-            if len(valid_trades) == 0 and total_checked > 0:
-                sample_idx = valid_time_indices[0] if len(valid_time_indices) > 0 else 0
-                if sample_idx < len(buy_prices) and sample_idx < len(low_prices):
-                    sample_buy_price = buy_prices[sample_idx]
-                    sample_low_price = low_prices[sample_idx] if sample_idx < len(low_prices) else 0
-                    logger.debug(f"🔍 Sample: buy_price={sample_buy_price:.2f}, low_price={sample_low_price:.2f}, time_window={time_window}")
+        logger.debug(f"🔍 Found {len(valid_trades)} valid trades out of {len(valid_time_indices)} checked days")
         
         return valid_trades
     
@@ -331,7 +412,6 @@ class StrategyOptimizer:
                                              buy_prices: np.ndarray, 
                                              close_prices: np.ndarray, 
                                              duration_range: int,
-                                             time_window: int, 
                                              min_avg_earn: float) -> np.ndarray:
         """Calculate earnings for all durations using optimized vectorized operations"""
         if not valid_trades:
@@ -343,7 +423,8 @@ class StrategyOptimizer:
         # Vectorized calculation for all trades and durations
         for trade_idx, (start_idx, buy_timing) in enumerate(valid_trades):
             # Calculate all durations for this trade at once
-            end_indices = start_idx + time_window - 1 + np.arange(duration_range)
+            # For daily trading: sell after 0, 1, 2, 3... days (0 = same day)
+            end_indices = start_idx + np.arange(0, duration_range)
             
             # Filter valid end indices
             valid_mask = end_indices < len(close_prices)
@@ -355,11 +436,22 @@ class StrategyOptimizer:
             sell_prices = close_prices[end_indices[valid_mask]]
             durations = np.arange(duration_range)[valid_mask]
             
-            # Vectorized return rate calculation with configurable fees
-            total_fee_rate = 1 - (self.custom_fees['buy_fee'] + self.custom_fees['sell_fee'])
-            raw_returns = (sell_prices / buy_price - 1) * total_fee_rate
+            # Correct fee calculation for trading
+            # Step 1: Buy with fee - we get less shares due to buy fee
+            # effective_buy_price = buy_price / (1 - buy_fee) 
+            # Step 2: Sell with fee - we get less money due to sell fee
+            # net_sell_price = sell_price * (1 - sell_fee)
+            # Step 3: Calculate return = net_sell_price / effective_buy_price - 1
             
-            # No profit correction - use raw returns directly
+            buy_fee = self.custom_fees['buy_fee']
+            sell_fee = self.custom_fees['sell_fee']
+            
+            # Correct fee calculation
+            effective_buy_price = buy_price / (1 - buy_fee)  # We pay more due to buy fee
+            net_sell_price = sell_prices * (1 - sell_fee)   # We receive less due to sell fee
+            raw_returns = net_sell_price / effective_buy_price - 1
+            
+            # Use corrected returns directly
             corrected_returns = raw_returns
             
             # Debug earnings calculation
@@ -367,69 +459,54 @@ class StrategyOptimizer:
                 logger.debug(f"💰 Trade {trade_idx}: buy_price={buy_price:.2f}, sell_prices={sell_prices[:3]}, raw_returns={raw_returns[:3]}, corrected_returns={corrected_returns[:3]}")
             
             # Convert corrected returns to earnings multipliers (1 + return_rate)
-            earn_rates = 1 + corrected_returns
+            # Round individual earnings to 3 decimal places
+            earn_rates = np.round(1 + corrected_returns, 3)
             earnings_matrix[trade_idx, valid_mask] = earn_rates
         
-        # Apply filtering and calculate compound returns
-        valid_earnings = earnings_matrix > 1.0  # Earnings > 1.0 means positive returns
+        # Apply filtering and calculate compound returns INCLUDING losses
+        valid_earnings = earnings_matrix > 0  # All trades with valid earnings (including losses)
         
         logger.debug(f"💰 Earnings matrix shape: {earnings_matrix.shape}")
         logger.debug(f"💰 Earnings matrix sample: {earnings_matrix[:3, :5] if earnings_matrix.size > 0 else 'empty'}")
         logger.debug(f"💰 Valid earnings count: {np.count_nonzero(valid_earnings)}")
         
         if not np.any(valid_earnings):
-            logger.debug(f"💰 No positive earnings found, returning zeros")
+            logger.debug(f"💰 No valid earnings found, returning zeros")
             return np.zeros(duration_range)
         
-        # Calculate compound returns for each duration
-        # Use arithmetic mean for more reasonable returns calculation
-        # Filter out non-positive earnings before calculation
-        positive_earnings = np.where(valid_earnings & (earnings_matrix > 1.0), earnings_matrix, 1.0)
-        
-        # Calculate returns for each duration (including losses and trade frequency)
+        # Calculate total compound returns for each duration INCLUDING LOSSES - this is the realistic metric
+        # Total compound returns represent the cumulative growth when reinvesting all profits AND accounting for losses
+        # For example: if you have trades with 1.1x, 0.9x, 1.2x returns:
+        # Total compound return = 1.1 × 0.9 × 1.2 = 1.188 (18.8% total growth despite one loss)
         total_returns = np.zeros(duration_range)
         for duration_idx in range(duration_range):
-            duration_earnings = earnings_matrix[:, duration_idx]  # Use original earnings_matrix, not filtered
-            valid_mask = duration_earnings != 0  # Only exclude trades with no data
+            duration_earnings = earnings_matrix[:, duration_idx]
+            valid_mask = duration_earnings > 0  # All valid trades (including losses)
             if np.any(valid_mask):
-                # Calculate both per-trade performance and total performance
-                trade_count = np.sum(valid_mask)
-                mean_earnings = np.mean(duration_earnings[valid_mask])
+                # Calculate total compound return (product of ALL earnings including losses)
+                all_earnings = duration_earnings[valid_mask]
+                total_compound_return = np.prod(all_earnings)
+                total_returns[duration_idx] = total_compound_return
                 
-                # Use mean earnings as the return metric (more meaningful)
-                # This represents the average performance per trade
-                total_returns[duration_idx] = mean_earnings
-                
-                logger.debug(f"💰 Duration {duration_idx}: {trade_count} trades, mean_earnings={mean_earnings:.4f}, trade_count={trade_count}")
+                profit_count = np.sum(all_earnings > 1.0)
+                loss_count = np.sum(all_earnings <= 1.0)
+                logger.debug(f"💰 Duration {duration_idx}: Total compound return={total_compound_return:.4f} from {len(all_earnings)} trades ({profit_count} profits, {loss_count} losses)")
             else:
                 total_returns[duration_idx] = 0.0
         
-        # Calculate average returns (geometric mean of earnings multipliers for compound effect)
-        # For each duration, calculate the geometric mean of earnings multipliers
-        avg_returns = np.zeros(duration_range)
-        for duration_idx in range(duration_range):
-            duration_earnings = earnings_matrix[:, duration_idx]
-            positive_mask = duration_earnings > 1.0  # Earnings > 1.0 means positive returns
-            if np.any(positive_mask):
-                # Calculate geometric mean for compound returns
-                # Since earnings are already in (1 + return) format, we can directly use them
-                geometric_mean = np.power(np.prod(duration_earnings[positive_mask]), 1/len(duration_earnings[positive_mask]))
-                avg_returns[duration_idx] = geometric_mean
-            else:
-                avg_returns[duration_idx] = 0.0
-        
-        # Apply minimum average return filter
-        valid_mask = avg_returns >= min_avg_earn
-        logger.debug(f"💰 min_avg_earn filter: {min_avg_earn}, avg_returns range: [{np.min(avg_returns):.4f}, {np.max(avg_returns):.4f}]")
+        # Apply minimum total return filter
+        valid_mask = total_returns >= min_avg_earn
+        logger.debug(f"💰 min_avg_earn filter: {min_avg_earn}, total_returns range: [{np.min(total_returns):.4f}, {np.max(total_returns):.4f}]")
         logger.debug(f"💰 Passed min_avg_earn filter: {np.count_nonzero(valid_mask)} out of {len(valid_mask)}")
         
-        # Round returns to 2 decimal places with proper rounding for consistent comparison
+        # Use total compound returns for final results - this represents actual cumulative growth
         filtered_returns = np.where(valid_mask, total_returns, 0.0)
         
-        # Apply proper rounding: round to 2 decimal places
+        # Apply proper rounding: round to 2 decimal places for compound returns
         # np.round() already does proper rounding (0.5 rounds up, 0.4 rounds down)
         rounded_returns = np.round(filtered_returns, 2)
         
+        logger.debug(f"💰 Using TOTAL COMPOUND RETURNS for final results - representing actual cumulative growth")
         logger.debug(f"💰 Returns rounded to 2 decimal places with proper rounding: range [{np.min(rounded_returns):.2f}, {np.max(rounded_returns):.2f}]")
         return rounded_returns
     
@@ -518,20 +595,19 @@ class StrategyOptimizer:
         total_days = len(datetime_index)
         trades_per_month = (trade_count / total_days) * 30
         
-        # Round max_returns to 2 decimal places with proper rounding for display
-        # round() function applies proper rounding: 0.5 rounds up, 0.4 rounds down
-        max_returns_rounded = round(max_returns, 2)
+        # Format returns: compound returns to 2 decimal places
+        max_returns_formatted = f"{max_returns:.2f}"
         
         date_dict[instId] = {
             'best_limit': str(best_limit),
             'best_duration': str(best_duration),
-            'max_returns': str(max_returns_rounded),
+            'max_returns': max_returns_formatted,
             'trade_count': str(trade_count),
-            'trades_per_month': str(round(trades_per_month, 2))
+            'trades_per_month': f"{trades_per_month:.2f}"
         }
         
         logger.info(f"{instId}: Best limit={best_limit}%, duration={best_duration}, "
-                   f"max_returns={max_returns_rounded:.2f} (original: {max_returns:.4f}), "
+                   f"max_returns={max_returns:.2f}, "
                    f"trades={trade_count}, monthly={trades_per_month:.2f}")
 
 
