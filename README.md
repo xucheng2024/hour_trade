@@ -30,7 +30,13 @@ A comprehensive cryptocurrency trading bot system for the OKX exchange platform 
    pip3 install -r requirements.txt
    ```
 
-3. **Fetch Historical Data** (Required before running strategies)
+3. **Generate/Update Crypto List** (Required for first time or updates)
+   ```bash
+   # Generate crypto list from OKX API
+   python3 generate_crypto_list.py
+   ```
+
+4. **Fetch Historical Data** (Required before running strategies)
    ```bash
    # Get daily data for all cryptocurrencies
    python3 fetch_all_cryptos_daily.py
@@ -120,7 +126,8 @@ ex_okx/
 │       └── okx_config.py         # OKX API configuration
 ├── fetch_all_cryptos_daily.py     # Daily data fetcher
 ├── fetch_all_cryptos_hourly.py    # Hourly data fetcher (for analysis)
-├── generate_configs_improved.py   # Strategy configuration generator  
+├── generate_configs_improved.py   # Strategy configuration generator
+├── generate_crypto_list.py        # Dynamic crypto list generator  
 ├── config_d0_baseline.json        # 🏆 D0 strategy config (optimal)
 ├── data_fetch.log                  # Data fetching logs
 └── requirements.txt                # Python dependencies
@@ -129,7 +136,22 @@ ex_okx/
 ## Configuration
 
 ### Cryptocurrency Selection
-Edit `src/config/cryptos_selected.json` to select cryptocurrencies for trading and data fetching.
+The cryptocurrency list is now **dynamically generated** from OKX API instead of being hardcoded.
+
+**To generate/update the crypto list:**
+```bash
+# Generate new crypto list from OKX API
+python3 generate_crypto_list.py
+```
+
+**Filtering Criteria:**
+- **USDT pairs only** (spot trading)
+- **Listed for at least 360 days** (stable trading history)
+- **State is 'live'** (currently active)
+- **Market data available** (can fetch candlestick data)
+
+**Manual Override:**
+You can still manually edit `src/config/cryptos_selected.json` if needed, but the dynamic generation is recommended for up-to-date availability.
 
 ### OKX API Configuration
 Configure API keys and endpoints in `src/config/okx_config.py`.
@@ -204,11 +226,12 @@ The `StrategyOptimizer` class:
 - Monitor API rate limits during data fetching
 
 ### Recommended Workflow
-1. **Data Collection**: `python3 fetch_all_cryptos_daily.py` (primary)
-2. **Strategy Optimization**: `python3 generate_configs_improved.py`
-3. **Configuration Review**: Check `config_d0_baseline.json` output 
-4. **Backtesting**: Use `src/testing/strategy_tester.py` for validation
-5. **Live Trading**: Implement with D0 strategy parameters
+1. **Crypto List Generation**: `python3 generate_crypto_list.py` (first time or updates)
+2. **Data Collection**: `python3 fetch_all_cryptos_daily.py` (primary)
+3. **Strategy Optimization**: `python3 generate_configs_improved.py`
+4. **Configuration Review**: Check `config_d0_baseline.json` output 
+5. **Backtesting**: Use `src/testing/strategy_tester.py` for validation
+6. **Live Trading**: Implement with D0 strategy parameters
 
 ### Key Insights from Analysis
 - **Duration 0** (same-day trading) consistently outperforms longer holding periods

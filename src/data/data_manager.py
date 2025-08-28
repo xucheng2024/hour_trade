@@ -30,46 +30,9 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # Get configuration
 config = get_config()
 
-# Selected major cryptocurrencies based on market cap and establishment
-SELECTED_CRYPTOS = [
-    # Top Tier - Established (2010-2017)
-    "BTC-USDT",    # Bitcoin - 2010, largest market cap
-    "ETH-USDT",    # Ethereum - 2015, smart contract platform
-    "XRP-USDT",    # XRP - 2012, payment protocol
-    "BNB-USDT",    # BNB - 2017, Binance ecosystem
-    "ADA-USDT",    # Cardano - 2017, academic blockchain
-    "TRX-USDT",    # TRON - 2017, entertainment blockchain
-    "LINK-USDT",   # Chainlink - 2017, oracle network
-    "BCH-USDT",    # Bitcoin Cash - 2017, Bitcoin fork
-    "LTC-USDT",    # Litecoin - 2011, Bitcoin alternative
-    "XLM-USDT",    # Stellar - 2014, payment network
-    "DOT-USDT",    # Polkadot - 2020, interoperability platform
-    "ETC-USDT",    # Ethereum Classic - 2016, original Ethereum chain
-    "UNI-USDT",    # Uniswap - 2020, leading DEX token
-    
-    # Mid Tier - Established (2018-2020)
-    "SOL-USDT",    # Solana - 2020, high-performance blockchain
-    "AVAX-USDT",   # Avalanche - 2020, consensus platform
-    "HBAR-USDT",   # Hedera - 2019, enterprise blockchain
-    "DOGE-USDT",   # Dogecoin - 2013, meme coin
-    "SHIB-USDT",   # Shiba Inu - 2020, meme ecosystem
-    "TON-USDT",    # Toncoin - 2020, Telegram blockchain
-    "AAVE-USDT",   # Aave - 2020, DeFi lending protocol
-    "NEAR-USDT",   # Near Protocol - 2020, sharded blockchain
-    "CRO-USDT",    # Cronos - 2021, Crypto.com ecosystem
-    
-    # Special Assets
-    "stETH-USDT",  # Lido Staked Ether - staking derivative
-    "WBTC-USDT",   # Wrapped Bitcoin - Bitcoin on Ethereum
-    "LEO-USDT",    # UNUS SED LEO - exchange token
-    
-    # Recent Additions (2021-2023)
-    "APT-USDT",    # Aptos - 2022, Move language blockchain
-    "ICP-USDT",    # Internet Computer - 2021, decentralized cloud
-    "SUI-USDT",    # Sui - 2023, Move language blockchain
-    "ONDO-USDT",   # Ondo - 2023, real-world asset tokenization
-    "PEPE-USDT",   # Pepe - 2023, meme coin
-]
+# Dynamic cryptocurrency list - loaded from config file
+# Use generate_crypto_list.py to update this list from OKX API
+SELECTED_CRYPTOS = []
 
 # Configure logging
 logging.basicConfig(
@@ -442,31 +405,35 @@ def update_crypto_list() -> List[str]:
     """Update cryptocurrency list by validating against OKX API"""
     logger.info("🔄 Starting cryptocurrency list update...")
     
-    # Load existing cryptos
+    # Load existing cryptos from config file
     existing_cryptos = load_crypto_list()
     logger.info(f"📊 Found {len(existing_cryptos)} existing cryptocurrencies")
+    
+    if not existing_cryptos:
+        logger.warning("⚠️ No existing crypto list found. Run generate_crypto_list.py first.")
+        return []
     
     # Get current crypto info from OKX
     crypto_info = get_okx_crypto_info()
     
-    # Filter and validate selected cryptos
-    selected_cryptos = [crypto for crypto in SELECTED_CRYPTOS if crypto in crypto_info]
-    logger.info(f"✅ Found {len(selected_cryptos)} selected cryptocurrencies on OKX")
+    # Filter and validate existing cryptos
+    valid_cryptos = [crypto for crypto in existing_cryptos if crypto in crypto_info]
+    logger.info(f"✅ Found {len(valid_cryptos)} valid cryptocurrencies on OKX")
     
     # Validate the list
-    valid_cryptos = validate_crypto_list(selected_cryptos)
-    logger.info(f"🔍 Validated {len(valid_cryptos)} cryptocurrencies")
+    validated_cryptos = validate_crypto_list(valid_cryptos)
+    logger.info(f"🔍 Validated {len(validated_cryptos)} cryptocurrencies")
     
-    # Save to file
-    save_crypto_list(valid_cryptos)
+    # Save updated list to file
+    save_crypto_list(validated_cryptos)
     
     # Print summary
-    logger.info(f"📋 Final cryptocurrency list ({len(valid_cryptos)} coins):")
-    for i, crypto in enumerate(valid_cryptos, 1):
+    logger.info(f"📋 Final cryptocurrency list ({len(validated_cryptos)} coins):")
+    for i, crypto in enumerate(validated_cryptos, 1):
         logger.info(f"  {i:2d}. {crypto}")
     
     logger.info("✨ Cryptocurrency list update completed!")
-    return valid_cryptos
+    return validated_cryptos
 
 def main():
     """Main function to execute data fetching"""
