@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-09-12T11:04:14.817092",
+  "generated_at": "2025-09-12T11:23:04.303678",
   "strategy_name": "duration_0_baseline",
   "description": "Duration 0 baseline configuration - same day trading strategy with min_trades=30",
   "strategy_type": "same_day",
@@ -1014,38 +1014,6 @@
       "trade_count": "453",
       "trades_per_month": "4.88",
       "avg_return_per_trade": "0.0099"
-    },
-    "BAND-USDT": {
-      "best_limit": "91",
-      "best_duration": "0",
-      "max_returns": "6.01",
-      "trade_count": "239",
-      "trades_per_month": "3.93",
-      "avg_return_per_trade": "0.0075"
-    },
-    "CORE-USDT": {
-      "best_limit": "93",
-      "best_duration": "0",
-      "max_returns": "3.45",
-      "trade_count": "182",
-      "trades_per_month": "5.86",
-      "avg_return_per_trade": "0.0068"
-    },
-    "MENGO-USDT": {
-      "best_limit": "96",
-      "best_duration": "0",
-      "max_returns": "5.85",
-      "trade_count": "394",
-      "trades_per_month": "11.06",
-      "avg_return_per_trade": "0.0045"
-    },
-    "ARG-USDT": {
-      "best_limit": "92",
-      "best_duration": "0",
-      "max_returns": "1.16",
-      "trade_count": "89",
-      "trades_per_month": "2.50",
-      "avg_return_per_trade": "0.0017"
     }
   }
 }

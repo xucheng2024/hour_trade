@@ -109,8 +109,11 @@ def generate_d0_baseline_config():
             skipped_cryptos.append((crypto, 0))
             print(f"    ❌ {crypto}: Error - {e}")
     
-    # Calculate average return for each crypto and sort by it (descending order)
+    # Calculate average return for each crypto and filter out low performers
     # Average return = (total_returns)^(1/trade_count) - this gives the geometric mean per trade
+    filtered_crypto_configs = {}
+    low_performers = []
+    
     for crypto, config in crypto_configs.items():
         total_returns = float(config['max_returns'])
         trade_count = int(config['trade_count'])
@@ -118,12 +121,21 @@ def generate_d0_baseline_config():
         if trade_count > 0 and total_returns > 0:
             avg_return_per_trade = (total_returns ** (1/trade_count)) - 1
             config['avg_return_per_trade'] = f"{avg_return_per_trade:.4f}"
+            
+            # Filter out cryptos with avg_return_per_trade < 0.009 (0.9%)
+            if avg_return_per_trade >= 0.009:
+                filtered_crypto_configs[crypto] = config
+            else:
+                low_performers.append((crypto, avg_return_per_trade))
+                print(f"    ❌ {crypto}: FILTERED - avg_return_per_trade={avg_return_per_trade:.4f} < 0.009")
         else:
             config['avg_return_per_trade'] = "0.0000"
+            low_performers.append((crypto, 0.0))
+            print(f"    ❌ {crypto}: FILTERED - invalid returns")
     
-    # Sort crypto_configs by average return per trade (descending order)
+    # Sort filtered crypto_configs by average return per trade (descending order)
     sorted_crypto_configs = dict(sorted(
-        crypto_configs.items(), 
+        filtered_crypto_configs.items(), 
         key=lambda item: float(item[1]['avg_return_per_trade']), 
         reverse=True
     ))
@@ -156,12 +168,14 @@ def generate_d0_baseline_config():
     print(f"\n🎯 Summary:")
     print(f"  - Total cryptocurrencies analyzed: {len(cryptos)}")
     print(f"  - Cryptocurrencies meeting requirements (≥30 trades): {len(crypto_configs)}")
-    print(f"  - Cryptocurrencies filtered out: {len(skipped_cryptos)}")
+    print(f"  - Cryptocurrencies filtered out (insufficient trades): {len(skipped_cryptos)}")
+    print(f"  - Cryptocurrencies filtered out (low performance < 0.9%): {len(low_performers)}")
+    print(f"  - Final qualified cryptocurrencies: {len(filtered_crypto_configs)}")
     
-    if crypto_configs:
+    if filtered_crypto_configs:
         # Get statistics about the selected cryptos
-        trade_counts = [int(c['trade_count']) for c in crypto_configs.values()]
-        limits = [int(c['best_limit']) for c in crypto_configs.values()]
+        trade_counts = [int(c['trade_count']) for c in filtered_crypto_configs.values()]
+        limits = [int(c['best_limit']) for c in filtered_crypto_configs.values()]
         
         print(f"  - Trade count range: {min(trade_counts)} - {max(trade_counts)}")
         print(f"  - Average trade count: {sum(trade_counts) / len(trade_counts):.1f}")
@@ -181,6 +195,12 @@ def generate_d0_baseline_config():
             print(f"    - {crypto}: {trade_count} trades")
         if len(skipped_cryptos) > 10:
             print(f"    ... and {len(skipped_cryptos) - 10} more")
+    
+    if low_performers:
+        print(f"\n⚠️  Filtered cryptocurrencies (low performance < 0.9%):")
+        for crypto, avg_return in low_performers:
+            avg_return_pct = avg_return * 100
+            print(f"    - {crypto}: {avg_return_pct:.2f}% avg per trade")
 
 if __name__ == "__main__":
     generate_d0_baseline_config()

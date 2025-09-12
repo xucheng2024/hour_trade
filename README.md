@@ -57,12 +57,12 @@ A comprehensive cryptocurrency trading bot system for the OKX exchange platform 
 ## 📊 Current Data Status
 
 - **Supported Cryptocurrencies**: 194 active USDT pairs (from OKX API)
-- **D0 Strategy Qualified**: 140 cryptocurrencies meeting strict requirements (≥30 trades, ≥1% returns)
+- **D0 Strategy Qualified**: 125 cryptocurrencies meeting strict requirements (≥30 trades, ≥1% returns, median return ≥1%, avg_return_per_trade ≥0.9%)
 - **Daily Data**: 244 cryptocurrency files with complete historical data
 - **Hourly Data**: 55 cryptocurrency files for detailed analysis
 - **Data Coverage**: 2+ years of historical data for most cryptocurrencies
 - **Update Frequency**: Dynamic generation ensures up-to-date crypto lists
-- **Last Config Update**: 2025-09-12 (config_d0_baseline.json)
+- **Last Config Update**: 2025-01-12 (config_d0_baseline.json)
 
 ## 🏗️ Project Structure
 
@@ -99,7 +99,7 @@ ex_okx/
 ├── fetch_all_cryptos_daily.py     # Daily data fetcher
 ├── fetch_all_cryptos_hourly.py    # Hourly data fetcher
 ├── generate_d0_baseline_config.py # D0 baseline config generator
-├── config_d0_baseline.json        # 🏆 Optimized D0 strategy config (140 qualified cryptos)
+├── config_d0_baseline.json        # 🏆 Optimized D0 strategy config (129 qualified cryptos)
 ├── high_price_change_trading_config.json # High volatility config
 └── requirements.txt               # Python dependencies
 ```
@@ -119,8 +119,8 @@ The system automatically generates cryptocurrency lists from the OKX API with in
 
 **Current Status:**
 - **Total Available**: 194 USDT pairs from OKX API
-- **D0 Qualified**: 140 pairs meeting strict trading requirements
-- **Filter Rate**: 72% pass rate for D0 strategy
+- **D0 Qualified**: 129 pairs meeting strict trading requirements
+- **Filter Rate**: 66% pass rate for D0 strategy
 
 **To update the crypto list:**
 ```bash
@@ -136,31 +136,35 @@ The system supports multiple trading strategies with optimized parameters:
 - **Limit Range**: 60-99% of current price
 - **Min Trades**: 30 (statistical significance)
 - **Min Returns**: 1% minimum return requirement
-- **Qualified Cryptos**: 140 out of 194 (72% pass rate)
-- **Performance**: Optimized for maximum returns with strict filtering
+- **Median Return Filter**: ≥1% median return for stability
+- **Avg Return Filter**: ≥0.9% average return per trade for quality
+- **Qualified Cryptos**: 125 out of 194 (64% pass rate)
+- **Performance**: Optimized for maximum returns with strict filtering and stability requirements
 
 **Configuration Files:**
-- `config_d0_baseline.json`: Primary D0 strategy configuration (140 qualified cryptos)
+- `config_d0_baseline.json`: Primary D0 strategy configuration (125 qualified cryptos)
 - `high_price_change_trading_config.json`: High volatility strategy
 
 ### 🏆 Top Performing D0 Strategies
 
-**Latest Performance (Generated: 2025-09-12):**
+**Latest Performance (Generated: 2025-01-12):**
 
 | Rank | Cryptocurrency | Avg Return/Trade | Total Returns | Trades | Best Limit |
 |------|----------------|------------------|---------------|--------|------------|
-| 1    | RIO-USDT       | 24.37%          | 4942.85x      | 39     | 92%        |
-| 2    | ORBS-USDT      | 21.09%          | 1438.71x      | 38     | 82%        |
-| 3    | LINK-USDT      | 15.85%          | 199.70x       | 36     | 80%        |
-| 4    | DGB-USDT       | 15.69%          | 219.69x       | 37     | 86%        |
-| 5    | SWFTC-USDT     | 15.20%          | 187.89x       | 37     | 90%        |
+| 1    | DOGE-USDT      | 9.16%           | 25.62x        | 37     | 80%        |
+| 2    | ORBS-USDT      | 9.04%           | 1438.71x      | 84     | 82%        |
+| 3    | TRB-USDT       | 8.88%           | 12.82x        | 30     | 72%        |
+| 4    | LINK-USDT      | 8.77%           | 199.70x       | 63     | 80%        |
+| 5    | ICX-USDT       | 7.89%           | 14.29x        | 35     | 77%        |
 
 **Strategy Statistics:**
 - **Total Analyzed**: 192 cryptocurrencies
-- **Qualified**: 140 (72% pass rate)
-- **Average Trades**: 35.6 per crypto
-- **Limit Range**: 60%-98% of opening price
-- **Unique Limit Values**: 32 different optimal limits
+- **Qualified**: 125 (64% pass rate)
+- **Average Trades**: 110.7 per crypto
+- **Limit Range**: 72%-96% of opening price
+- **Unique Limit Values**: 19 different optimal limits
+- **Median Return Filter**: Ensures stable performance
+- **Avg Return Filter**: ≥0.9% average return per trade for quality
 
 ## 📈 Strategy Optimization
 
@@ -173,6 +177,8 @@ The `StrategyOptimizer` class provides:
 - **Multi-Strategy Support**: D0, D1, D2+ day strategies
 - **Statistical Validation**: Minimum trade requirements
 - **Performance Metrics**: Comprehensive returns analysis
+- **Median Return Filtering**: Ensures strategy stability (≥1% median return)
+- **Accurate Trade Counting**: Correctly counts actual trades vs. non-zero earnings
 
 ### Key Features
 
@@ -180,6 +186,9 @@ The `StrategyOptimizer` class provides:
 - **Fee-Aware Calculations**: Includes realistic trading costs
 - **Risk Management**: Minimum trade count and return requirements
 - **Data Validation**: Ensures data quality and completeness
+- **Stability Filtering**: Median return filtering for consistent performance
+- **Strategy Selection**: Prefers duration 0 and higher limits when returns are equal
+- **Accurate Metrics**: Correct trade counting and performance measurement
 
 ### Usage Example
 
@@ -314,6 +323,24 @@ pytest==8.4.1
 - **Memory**: 4GB+ RAM recommended
 - **Storage**: 2GB+ for historical data
 - **Network**: Stable internet for API access
+
+## 🔧 Recent Improvements (v2.2)
+
+### Strategy Optimization Enhancements
+
+- **Fixed Trade Count Calculation**: Corrected bug where trade counts were calculated from non-zero earnings instead of actual trades
+- **Added Median Return Filtering**: Implemented stability filter requiring ≥1% median return for all strategy combinations
+- **Added Average Return Filtering**: Implemented quality filter requiring ≥0.9% average return per trade for all strategies
+- **Improved Strategy Selection**: Enhanced parameter selection to prefer duration 0 and higher limits when returns are equal
+- **Enhanced Data Accuracy**: More precise trade counting and performance metrics
+
+### Performance Impact
+
+- **Filtered Strategies**: Reduced qualified cryptocurrencies from 129 to 125 (higher quality, more stable)
+- **Improved Stability**: Median return filtering ensures consistent performance across all selected strategies
+- **Enhanced Quality**: Average return filtering removes low-performing cryptocurrencies (ARG-USDT, BAND-USDT, CORE-USDT, MENGO-USDT)
+- **Better Risk Management**: More accurate trade counting provides better risk assessment
+- **Optimized Selection**: Better parameter selection for maximum returns with stability and quality
 
 ## 🚨 Important Notes
 
