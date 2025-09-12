@@ -121,7 +121,6 @@ python3 test_sample_cryptos.py
 
 ### Configuration Files
 - **`crypto_trading_triggers.json`** - Complete triggers for all 190 cryptos
-- **`crypto_triggers_sample.json`** - Sample configuration with examples
 - **`complete_boundary_analysis.md`** - Detailed analysis report
 
 ### Data Files
