@@ -116,6 +116,40 @@ python3 test_hourly_sell_timing.py
 - **Patient Strategy**: DOGE/ADA benefit from longer 20+ hour holds
 - **Realistic Returns**: 1.07-1.61× range vs. historical extreme values
 
+### Complete Hourly Strategy Results (54 Cryptocurrencies)
+
+**Full Optimization Results**:
+- **Successfully Optimized**: 54/190 cryptocurrencies (28.4% success rate)
+- **Data Coverage**: 3 months of hourly data for each crypto
+- **All Positive Returns**: 54/54 (100% of successful optimizations)
+
+**Performance Statistics**:
+- **Compound Returns**: 1.010× - 23.137× (range)
+- **Average Compound Return**: 2.269×
+- **Win Rates**: 33.3% - 100.0% (range)
+- **Average Win Rate**: 89.1%
+- **Best Sell Timing**: 1-24 hours (average: 10.7 hours)
+
+**Top 10 Hourly Strategy Performers**:
+| Rank | Cryptocurrency | Compound Return | Win Rate | Best Sell Time | Risk Level |
+|------|----------------|-----------------|----------|----------------|------------|
+| 1 | **OKB-USDT** | **23.137×** | 58.1% | 24 hours | High |
+| 2 | **NMR-USDT** | **18.182×** | 58.8% | 24 hours | High |
+| 3 | **API3-USDT** | **5.089×** | 72.7% | 24 hours | Medium |
+| 4 | **RVN-USDT** | **3.601×** | 70.4% | 22 hours | Medium |
+| 5 | **SNT-USDT** | **2.929×** | 77.8% | 2 hours | Low |
+| 6 | **UNI-USDT** | **2.729×** | 100.0% | 12 hours | Low |
+| 7 | **XLM-USDT** | **2.398×** | 90.0% | 12 hours | Low |
+| 8 | **SUSHI-USDT** | **2.304×** | 83.3% | 4 hours | Low |
+| 9 | **COMP-USDT** | **2.257×** | 71.4% | 18 hours | Medium |
+| 10 | **ARB-USDT** | **2.214×** | 85.7% | 9 hours | Low |
+
+**Strategy Insights**:
+- **High Performers**: OKB, NMR show exceptional returns but with higher risk
+- **Balanced Performance**: UNI, XLM, SUSHI offer good returns with high win rates
+- **Quick Exits**: SNT, SUSHI benefit from 2-4 hour sell timing
+- **Patient Strategy**: OKB, NMR, RVN require 22-24 hour holds for optimal results
+
 ### Risk Categories
 
 | Category | P Range | Count | Examples | Risk Level |
@@ -155,7 +189,8 @@ python3 test_hourly_sell_timing.py
 
 ### Configuration Files
 - **`crypto_trading_triggers.json`** - Daily strategy triggers for all 190 cryptos
-- **`crypto_hourly_sell_config.json`** - Hourly strategy configuration with optimal sell timing
+- **`crypto_hourly_sell_config.json`** - Hourly strategy configuration (5 test cryptos)
+- **`crypto_hourly_sell_config_full.json`** - Complete hourly strategy configuration (54 optimized cryptos)
 
 ### Data Files
 - **`data/vectorized_optimization_*.json`** - Full optimization results
@@ -180,8 +215,8 @@ expected_return = btc_trigger['expected_performance']['median_return']  # 1.045
 
 ### Load Hourly Trading Configuration
 ```python
-# Load hourly strategy configuration
-with open('crypto_hourly_sell_config.json', 'r') as f:
+# Load hourly strategy configuration (full version with 54 cryptos)
+with open('crypto_hourly_sell_config_full.json', 'r') as f:
     hourly_config = json.load(f)
 
 # Get hourly strategy for specific crypto
@@ -192,6 +227,12 @@ sell_timing = btc_hourly['sell_timing']
 print(f"Buy when: P≥{buy_conditions['high_open_ratio_threshold']:.1%}, V≥{buy_conditions['volume_ratio_threshold']:.1f}x")
 print(f"Sell after: {sell_timing['best_hours']} hours")
 print(f"Target price: {sell_timing['sell_price_ratio']:.1%} of open price")
+
+# View statistics
+stats = hourly_config['statistics']
+print(f"Success rate: {stats['success_rate']}")
+print(f"Average compound return: {stats['compound_returns']['mean']:.3f}×")
+print(f"Average win rate: {stats['win_rates']['mean']:.1%}")
 ```
 
 ### Check Buy Signal
