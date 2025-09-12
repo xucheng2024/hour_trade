@@ -1,381 +1,220 @@
-# OKX Trading Bot
+# Crypto Trading Strategy Optimizer
 
-A comprehensive cryptocurrency trading bot system for the OKX exchange platform with advanced data management, dynamic cryptocurrency selection, and strategy optimization capabilities.
+A vectorized cryptocurrency trading strategy optimizer that finds optimal parameters for maximum compound returns with median return > 1.01.
 
 ## 🎯 Key Features
 
-- **Dynamic Crypto Selection**: Automatically generates cryptocurrency lists from OKX API
-- **Advanced Strategy Optimization**: Vectorized backtesting with realistic fee calculations
-- **Multi-Timeframe Support**: Daily and hourly data analysis
-- **Comprehensive Data Management**: Efficient storage and retrieval of historical data
-- **Real-time Trading Ready**: WebSocket integration and order management
-- **Performance Analytics**: Detailed returns analysis and strategy validation
+- **Vectorized Optimization**: Efficient parameter space exploration for 192 cryptocurrencies
+- **3D Parameter Analysis**: Optimizes p (high/open ratio) and v (volume ratio) parameters
+- **Realistic Trading**: Includes 0.1% buy/sell fees in all calculations
+- **Comprehensive Results**: 190/192 cryptocurrencies successfully optimized (99.0% success rate)
+- **Ready-to-Use Config**: JSON configuration for immediate trading implementation
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- **Python**: 3.8 or higher
-- **OKX Account**: API credentials for data access
-- **Dependencies**: See `requirements.txt`
+- Python 3.8+
+- Required packages: `numpy`, `pandas`, `json`
 
 ### Installation
-
-1. **Clone and Setup**
-   ```bash
-   git clone <repository-url>
-   cd ex_okx
-   pip3 install -r requirements.txt
-   ```
-
-2. **Generate Cryptocurrency List** (First time setup)
-   ```bash
-   # Dynamically generate crypto list from OKX API
-   python3 src/data/crypto_list_generator.py
-   ```
-
-3. **Fetch Historical Data**
-   ```bash
-   # Get daily data for all cryptocurrencies
-   python3 fetch_all_cryptos_daily.py
-   
-   # Get hourly data (optional, for analysis)
-   python3 fetch_all_cryptos_hourly.py
-   ```
-
-4. **Generate Trading Configuration**
-   ```bash
-   # Generate optimized D0 strategy configuration
-   python3 generate_d0_baseline_config.py
-   ```
-
-5. **Run Analysis**
-   ```bash
-   # Analyze returns and validate strategies
-   python3 src/analysis/returns_analyzer.py
-   ```
-
-## 📊 Current Data Status
-
-- **Supported Cryptocurrencies**: 194 active USDT pairs (from OKX API)
-- **D0 Strategy Qualified**: 125 cryptocurrencies meeting strict requirements (≥30 trades, ≥1% returns, median return ≥1%, avg_return_per_trade ≥0.9%)
-- **Daily Data**: 244 cryptocurrency files with complete historical data
-- **Hourly Data**: 55 cryptocurrency files for detailed analysis
-- **Data Coverage**: 2+ years of historical data for most cryptocurrencies
-- **Update Frequency**: Dynamic generation ensures up-to-date crypto lists
-- **Last Config Update**: 2025-01-12 (config_d0_baseline.json)
-
-## 🏗️ Project Structure
-
-```
-ex_okx/
-├── data/                           # Historical data storage
-│   ├── *-USDT_1D.npz              # Daily candlestick data (244 files)
-│   ├── *-USDT_1H.npz              # Hourly candlestick data (55 files)
-│   └── *.json                     # Analysis results and logs
-├── src/
-│   ├── core/                      # Core trading functionality
-│   │   ├── okx_functions.py      # OKX API integration
-│   │   ├── okx_order_manage.py   # Order management
-│   │   ├── okx_ws_buy.py         # WebSocket buy operations
-│   │   └── okx_ws_manage.py      # WebSocket management
-│   ├── strategies/                # Trading strategies
-│   │   ├── strategy_optimizer.py  # Vectorized strategy optimization
-│   │   └── historical_data_loader.py # Data preprocessing
-│   ├── analysis/                  # Performance analysis
-│   │   ├── returns_analyzer.py   # Return calculations
-│   │   └── strategy_earnings_calculator.py # Earnings analysis
-│   ├── data/                      # Data management
-│   │   ├── data_manager.py       # Historical data fetching
-│   │   └── crypto_list_generator.py # Dynamic crypto list generation
-│   ├── system/                    # System utilities
-│   │   └── okx_sqlite_create_table.py # Database setup
-│   ├── utils/                     # Utility functions
-│   │   ├── delist.py             # Delisting management
-│   │   └── sub_account.py        # Sub-account utilities
-│   └── config/                    # Configuration files
-│       ├── cryptos_selected.json  # Dynamic cryptocurrency list (194 coins)
-│       ├── cryptos_selected_criteria.json # Selection criteria
-│       └── okx_config.py         # OKX API configuration
-├── fetch_all_cryptos_daily.py     # Daily data fetcher
-├── fetch_all_cryptos_hourly.py    # Hourly data fetcher
-├── generate_d0_baseline_config.py # D0 baseline config generator
-├── config_d0_baseline.json        # 🏆 Optimized D0 strategy config (129 qualified cryptos)
-├── high_price_change_trading_config.json # High volatility config
-└── requirements.txt               # Python dependencies
-```
-
-## 🔧 Configuration
-
-### Dynamic Cryptocurrency Selection
-
-The system automatically generates cryptocurrency lists from the OKX API with intelligent filtering:
-
-**Selection Criteria:**
-- **USDT pairs only** (spot trading)
-- **Listed for 720+ days** (2+ years of stable trading history)
-- **State is 'live'** (currently active and tradable)
-- **Market data available** (can fetch candlestick data)
-- **Minimum trading volume** (ensures liquidity)
-
-**Current Status:**
-- **Total Available**: 194 USDT pairs from OKX API
-- **D0 Qualified**: 129 pairs meeting strict trading requirements
-- **Filter Rate**: 66% pass rate for D0 strategy
-
-**To update the crypto list:**
 ```bash
-python3 src/data/crypto_list_generator.py
+git clone <repository-url>
+cd ex_okx
+pip3 install -r requirements.txt
 ```
 
-### Strategy Configuration
+### Run Optimization
+```bash
+# Quick test with first 20 cryptos
+python3 vectorized_profit_optimizer.py
 
-The system supports multiple trading strategies with optimized parameters:
+# Full optimization for all 192 cryptos
+python3 run_full_vectorized_optimization.py
 
-**D0 Strategy (Same-day Trading):**
-- **Duration**: 0 days (buy and sell same day)
-- **Limit Range**: 60-99% of current price
-- **Min Trades**: 30 (statistical significance)
-- **Min Returns**: 1% minimum return requirement
-- **Median Return Filter**: ≥1% median return for stability
-- **Avg Return Filter**: ≥0.9% average return per trade for quality
-- **Qualified Cryptos**: 125 out of 194 (64% pass rate)
-- **Performance**: Optimized for maximum returns with strict filtering and stability requirements
+# Generate trading triggers configuration
+python3 generate_crypto_triggers.py
+```
 
-**Configuration Files:**
-- `config_d0_baseline.json`: Primary D0 strategy configuration (125 qualified cryptos)
-- `high_price_change_trading_config.json`: High volatility strategy
+## 📊 Optimization Results
 
-### 🏆 Top Performing D0 Strategies
+### Strategy Definition
+**Buy Condition**: `(High - Open) / Open >= p AND Volume / PreviousVolume >= v`  
+**Sell**: Closing price  
+**Requirements**: Maximum compound return AND median return > 1.01
 
-**Latest Performance (Generated: 2025-01-12):**
+### Key Findings
 
-| Rank | Cryptocurrency | Avg Return/Trade | Total Returns | Trades | Best Limit |
-|------|----------------|------------------|---------------|--------|------------|
-| 1    | DOGE-USDT      | 9.16%           | 25.62x        | 37     | 80%        |
-| 2    | ORBS-USDT      | 9.04%           | 1438.71x      | 84     | 82%        |
-| 3    | TRB-USDT       | 8.88%           | 12.82x        | 30     | 72%        |
-| 4    | LINK-USDT      | 8.77%           | 199.70x       | 63     | 80%        |
-| 5    | ICX-USDT       | 7.89%           | 14.29x        | 35     | 77%        |
+| Parameter | Range | Most Common | Description |
+|-----------|-------|-------------|-------------|
+| **P (High/Open ratio)** | 2.0% - 8.0% | 5.0% (41.6%) | Price momentum threshold |
+| **V (Volume ratio)** | 1.1x - 1.1x | 1.1x (99.5%) | Volume increase requirement |
 
-**Strategy Statistics:**
-- **Total Analyzed**: 192 cryptocurrencies
-- **Qualified**: 125 (64% pass rate)
-- **Average Trades**: 110.7 per crypto
-- **Limit Range**: 72%-96% of opening price
-- **Unique Limit Values**: 19 different optimal limits
-- **Median Return Filter**: Ensures stable performance
-- **Avg Return Filter**: ≥0.9% average return per trade for quality
+### Performance Statistics
+- **Success Rate**: 190/192 cryptocurrencies (99.0%)
+- **Compound Returns**: 1.42 - 2.39×10¹⁵ (range)
+- **Median Returns**: 1.014 - 1.080 (all > 1.01 requirement)
+- **Win Rates**: 70.0% - 95.2%
+- **Average Trades**: 287 ± 105 per cryptocurrency
 
-## 📈 Strategy Optimization
+### Risk Categories
 
-### Core Optimization Engine
+| Category | P Range | Count | Examples | Risk Level |
+|----------|---------|-------|----------|------------|
+| **Conservative** | 2.0% - 3.0% | 14 (7.4%) | WBTC, XAUT, TON | Low |
+| **Standard** | 4.0% - 5.0% | 134 (70.5%) | BTC, ETH, ADA | Moderate |
+| **Aggressive** | 6.0% - 7.0% | 37 (19.5%) | SWFTC, STORJ, API3 | High |
+| **High Risk** | 8.0% | 5 (2.6%) | PEPE, AIDOGE, PEOPLE | Very High |
 
-The `StrategyOptimizer` class provides:
+## 🏆 Top Performers
 
-- **Vectorized Operations**: NumPy-based for fast computation
-- **Realistic Fee Calculation**: 0.1% buy/sell fees included
-- **Multi-Strategy Support**: D0, D1, D2+ day strategies
-- **Statistical Validation**: Minimum trade requirements
-- **Performance Metrics**: Comprehensive returns analysis
-- **Median Return Filtering**: Ensures strategy stability (≥1% median return)
-- **Accurate Trade Counting**: Correctly counts actual trades vs. non-zero earnings
+### By Compound Return
+| Rank | Cryptocurrency | P | V | Compound Return | Median Return | Win Rate |
+|------|----------------|---|----|-----------------|---------------|----------|
+| 1 | SWFTC-USDT | 6.0% | 1.1x | 2.39×10¹⁵ | 1.052 | 77.6% |
+| 2 | STORJ-USDT | 6.0% | 1.1x | 2.38×10¹² | 1.055 | 83.4% |
+| 3 | THETA-USDT | 5.0% | 1.1x | 1.43×10¹² | 1.051 | 83.1% |
+| 4 | LINK-USDT | 5.0% | 1.1x | 3.06×10¹¹ | 1.056 | 86.8% |
+| 5 | LRC-USDT | 5.0% | 1.1x | 2.09×10¹¹ | 1.046 | 81.1% |
 
-### Key Features
+### By Median Return
+| Rank | Cryptocurrency | P | V | Median Return | Compound Return | Win Rate |
+|------|----------------|---|----|---------------|-----------------|----------|
+| 1 | AIDOGE-USDT | 8.0% | 1.1x | 1.080 | 183,240 | 87.7% |
+| 2 | FLOKI-USDT | 7.0% | 1.1x | 1.075 | 1,712,683 | 95.1% |
+| 3 | PEPE-USDT | 7.0% | 1.1x | 1.075 | 451,744 | 93.8% |
+| 4 | CVX-USDT | 6.0% | 1.1x | 1.072 | 1,649,430 | 93.9% |
+| 5 | ORDI-USDT | 7.0% | 1.1x | 1.072 | 5,504 | 89.2% |
 
-- **Dynamic Parameter Testing**: Tests multiple limit percentages and durations
-- **Fee-Aware Calculations**: Includes realistic trading costs
-- **Risk Management**: Minimum trade count and return requirements
-- **Data Validation**: Ensures data quality and completeness
-- **Stability Filtering**: Median return filtering for consistent performance
-- **Strategy Selection**: Prefers duration 0 and higher limits when returns are equal
-- **Accurate Metrics**: Correct trade counting and performance measurement
+## 📁 Core Files
 
-### Usage Example
+### Essential Scripts
+- **`vectorized_profit_optimizer.py`** - Main optimization engine
+- **`run_full_vectorized_optimization.py`** - Full 192-crypto optimization
+- **`generate_crypto_triggers.py`** - Generate trading configuration
 
+### Configuration Files
+- **`crypto_trading_triggers.json`** - Complete triggers for all 190 cryptos
+- **`crypto_triggers_sample.json`** - Sample configuration with examples
+- **`complete_boundary_analysis.md`** - Detailed analysis report
+
+### Data Files
+- **`data/vectorized_optimization_*.json`** - Full optimization results
+- **`data/parameter_analysis_*.json`** - 3D parameter space analysis
+
+## 💡 Usage Examples
+
+### Load Trading Configuration
 ```python
-from src.strategies.strategy_optimizer import get_strategy_optimizer
+import json
 
-# Initialize optimizer
-optimizer = get_strategy_optimizer(buy_fee=0.001, sell_fee=0.001)
+# Load triggers configuration
+with open('crypto_trading_triggers.json', 'r') as f:
+    config = json.load(f)
 
-# Set strategy parameters
-optimizer.set_strategy_parameters(
-    "1d",
-    limit_range=(70, 90),
-    duration_range=15,
-    min_trades=20,
-    min_avg_earn=1.01
-)
-
-# Optimize strategy
-result = optimizer.optimize_1d_strategy(
-    instId="BTC-USDT",
-    start=0,
-    end=0,
-    date_dict={},
-    bar='1d'
-)
+# Get trigger for specific crypto
+btc_trigger = config['triggers']['BTC-USDT']
+p_threshold = btc_trigger['high_open_ratio_threshold']  # 0.04 (4%)
+v_threshold = btc_trigger['volume_ratio_threshold']     # 1.1
+expected_return = btc_trigger['expected_performance']['median_return']  # 1.045
 ```
 
-## 📊 Data Management
+### Check Buy Signal
+```python
+def check_buy_signal(crypto, high, open_price, current_volume, previous_volume):
+    trigger = config['triggers'][crypto]
+    
+    # Calculate ratios
+    high_open_ratio = (high - open_price) / open_price
+    volume_ratio = current_volume / previous_volume if previous_volume > 0 else 0
+    
+    # Check thresholds
+    if (high_open_ratio >= trigger['high_open_ratio_threshold'] and 
+        volume_ratio >= trigger['volume_ratio_threshold']):
+        return True, {
+            'crypto': crypto,
+            'expected_median_return': trigger['expected_performance']['median_return'],
+            'risk_level': trigger['risk_level']
+        }
+    
+    return False, "Conditions not met"
 
-### Historical Data System
+# Example usage
+signal, info = check_buy_signal('BTC-USDT', 50000, 48000, 1000000, 800000)
+if signal:
+    print(f"Buy signal: {info}")
+```
 
-**Data Storage:**
-- **Format**: Compressed NumPy arrays (`.npz`)
-- **Structure**: `[timestamp, open, high, low, close, volume, volCcy, volCcyQuote, confirm]`
-- **Efficiency**: Fast loading and memory-efficient storage
+## 🔍 Key Insights
 
-**Data Fetching:**
-- **Rate Limiting**: Respects OKX API limits
-- **Error Handling**: Automatic retry and recovery
-- **Progress Tracking**: Real-time status updates
-- **Duplicate Prevention**: Automatic deduplication
+### 1. Volume Threshold is Minimal
+- **99.5% of cryptos** use v = 1.1x (10% volume increase)
+- Volume condition is easily met - **not the limiting factor**
+- Main purpose: Filter out extremely low-volume days
 
-**Data Validation:**
-- **Chronological Order**: Ensures proper time sequence
-- **Completeness Check**: Validates data integrity
-- **Range Validation**: Confirms data coverage
+### 2. Price Threshold is the Key
+- **P parameter (2%-8%)** is the primary strategy differentiator
+- Lower P = More frequent trades, lower risk
+- Higher P = Fewer trades, higher potential returns
 
-### Data Update Workflow
+### 3. Strategy Classification
+- **Conservative (P=2%-3%)**: Stable coins like WBTC, XAUT
+- **Standard (P=4%-5%)**: Most cryptocurrencies (70.5%)
+- **Aggressive (P=6%-8%)**: High volatility coins like PEPE, AIDOGE
 
-1. **Generate Crypto List**: `python3 generate_crypto_list.py`
-2. **Fetch Daily Data**: `python3 fetch_all_cryptos_daily.py`
-3. **Fetch Hourly Data**: `python3 fetch_all_cryptos_hourly.py` (optional)
-4. **Validate Data**: Automatic integrity checks
+## 📊 Parameter Distribution
 
-## 🔍 Analysis and Monitoring
+### P Parameter Distribution
+- **5.0%**: 79 cryptos (41.6%) - Most common
+- **4.0%**: 55 cryptos (28.9%) - Second most common
+- **6.0%**: 26 cryptos (13.7%) - Aggressive strategy
+- **7.0%**: 11 cryptos (5.8%) - High volatility
+- **3.0%**: 11 cryptos (5.8%) - Conservative
+- **8.0%**: 5 cryptos (2.6%) - Extreme volatility
+- **2.0%**: 3 cryptos (1.6%) - Very conservative
 
-### Returns Analysis
+### V Parameter Distribution
+- **1.1x**: 189 cryptos (99.5%) - Nearly universal
+- **1.2x-1.3x**: 1 crypto (0.5%) - XAUT-USDT only
 
-The system provides comprehensive analysis tools:
+## 🛠️ Technical Details
 
-- **Performance Metrics**: Returns, win rates, drawdowns
-- **Strategy Comparison**: Multi-strategy analysis
-- **Risk Assessment**: Volatility and correlation analysis
-- **Backtesting**: Historical strategy validation
+### Optimization Algorithm
+1. **Vectorized Operations**: NumPy-based for speed
+2. **Parameter Grid**: Tests all combinations of p and v
+3. **Constraint Filtering**: Only results with median return > 1.01
+4. **Optimal Selection**: Chooses maximum compound return
+5. **Range Analysis**: Identifies near-optimal parameter regions
 
-### Real-time Monitoring
+### Data Requirements
+- **Historical Data**: Daily OHLCV data from OKX
+- **Time Period**: 2+ years for statistical significance
+- **Data Quality**: Validated price and volume relationships
 
-- **WebSocket Integration**: Real-time price feeds
-- **Order Management**: Automated trade execution
-- **Portfolio Tracking**: Position and P&L monitoring
-- **Alert System**: Price and performance notifications
+## ⚠️ Important Notes
 
-## 🛠️ Development
+### Risk Management
+- **Historical Performance**: Results based on past data
+- **Market Dependency**: Strategy relies on upward price movements
+- **Same-Day Risk**: Selling at close may not capture maximum profit
+- **Fee Impact**: 0.2% total fees (0.1% buy + 0.1% sell)
 
-### Code Quality
-
-- **Type Hints**: Full type annotation support
-- **Error Handling**: Comprehensive exception management
-- **Logging**: Structured logging with multiple levels
-- **Testing**: Unit and integration test support
-
-### Best Practices
-
-- **Modular Design**: Clean separation of concerns
-- **Configuration Management**: Centralized settings
-- **API Rate Limiting**: Respectful API usage
-- **Data Validation**: Input sanitization and validation
-
-### Development Workflow
-
-1. **Setup Environment**: Install dependencies and configure API keys
-2. **Data Collection**: Generate crypto list and fetch historical data
-3. **Strategy Development**: Create and test new strategies
-4. **Optimization**: Use optimizer to find best parameters
-5. **Validation**: Backtest and validate strategies
-6. **Deployment**: Deploy validated strategies
+### Usage Recommendations
+- **Paper Trading**: Test with historical data first
+- **Position Sizing**: Start with small positions
+- **Monitoring**: Regularly check parameter effectiveness
+- **Updates**: Re-optimize periodically as markets change
 
 ## 📋 Requirements
 
-### Core Dependencies
-
 ```
-# Trading & Finance
-ccxt==4.5.0
-python-okx==0.4.0
-pandas==2.3.1
-numpy==2.3.2
-
-# Data Processing
-python-dateutil==2.9.0.post0
-pytz==2025.2
-
-# Real-time & Performance
-websockets==15.0.1
-redis==6.4.0
-
-# Visualization
-matplotlib==3.10.5
-plotly==6.3.0
-mplfinance==0.12.10b0
-
-# Development Tools
-black==25.1.0
-flake8==7.3.0
-pytest==8.4.1
+numpy>=1.21.0
+pandas>=1.3.0
 ```
-
-### System Requirements
-
-- **Python**: 3.8+
-- **Memory**: 4GB+ RAM recommended
-- **Storage**: 2GB+ for historical data
-- **Network**: Stable internet for API access
-
-## 🔧 Recent Improvements (v2.2)
-
-### Strategy Optimization Enhancements
-
-- **Fixed Trade Count Calculation**: Corrected bug where trade counts were calculated from non-zero earnings instead of actual trades
-- **Added Median Return Filtering**: Implemented stability filter requiring ≥1% median return for all strategy combinations
-- **Added Average Return Filtering**: Implemented quality filter requiring ≥0.9% average return per trade for all strategies
-- **Improved Strategy Selection**: Enhanced parameter selection to prefer duration 0 and higher limits when returns are equal
-- **Enhanced Data Accuracy**: More precise trade counting and performance metrics
-
-### Performance Impact
-
-- **Filtered Strategies**: Reduced qualified cryptocurrencies from 129 to 125 (higher quality, more stable)
-- **Improved Stability**: Median return filtering ensures consistent performance across all selected strategies
-- **Enhanced Quality**: Average return filtering removes low-performing cryptocurrencies (ARG-USDT, BAND-USDT, CORE-USDT, MENGO-USDT)
-- **Better Risk Management**: More accurate trade counting provides better risk assessment
-- **Optimized Selection**: Better parameter selection for maximum returns with stability and quality
-
-## 🚨 Important Notes
-
-### API Usage
-
-- **Rate Limits**: Respect OKX API rate limits
-- **API Keys**: Configure in `src/config/okx_config.py`
-- **Demo Mode**: Use flag="1" for testing
-
-### Data Management
-
-- **Backup**: Regularly backup historical data
-- **Updates**: Run data fetching scripts periodically
-- **Validation**: Always validate data before trading
-
-### Risk Management
-
-- **Testing**: Always test strategies with historical data
-- **Paper Trading**: Use demo mode for initial testing
-- **Position Sizing**: Implement proper risk management
-- **Monitoring**: Continuously monitor strategy performance
-
-## 📞 Support
-
-For questions, issues, or contributions:
-
-1. **Documentation**: Check source code comments and docstrings
-2. **Issues**: Report bugs and feature requests
-3. **Contributions**: Submit pull requests for improvements
-4. **Community**: Join discussions and share strategies
 
 ## 📄 License
 
-This project is for educational and research purposes. Please ensure compliance with OKX terms of service and applicable regulations when using for live trading.
+This project is for educational and research purposes. Please ensure compliance with applicable regulations when using for live trading.
 
 ---
 
-**Disclaimer**: This software is provided for educational purposes only. Cryptocurrency trading involves substantial risk of loss. Past performance does not guarantee future results. Always do your own research and consider your risk tolerance before trading.
+**Disclaimer**: Cryptocurrency trading involves substantial risk. Past performance does not guarantee future results. Always do your own research and consider your risk tolerance before trading.
