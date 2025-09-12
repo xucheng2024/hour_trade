@@ -1,14 +1,15 @@
 # Crypto Trading Strategy Optimizer
 
-A vectorized cryptocurrency trading strategy optimizer that finds optimal parameters for maximum compound returns with median return > 1.01.
+A comprehensive cryptocurrency trading strategy optimizer with both daily and hourly trading strategies, featuring vectorized optimization for maximum compound returns.
 
 ## 🎯 Key Features
 
+- **Dual Strategy Support**: Daily and hourly trading strategies
 - **Vectorized Optimization**: Efficient parameter space exploration for 192 cryptocurrencies
 - **3D Parameter Analysis**: Optimizes p (high/open ratio) and v (volume ratio) parameters
 - **Realistic Trading**: Includes 0.1% buy/sell fees in all calculations
 - **Comprehensive Results**: 190/192 cryptocurrencies successfully optimized (99.0% success rate)
-- **Ready-to-Use Config**: JSON configuration for immediate trading implementation
+- **Ready-to-Use Configs**: JSON configurations for both daily and hourly trading
 
 ## 🚀 Quick Start
 
@@ -17,14 +18,14 @@ A vectorized cryptocurrency trading strategy optimizer that finds optimal parame
 - Required packages: `numpy`, `pandas`, `json`
 
 ### Installation
-```bash
-git clone <repository-url>
-cd ex_okx
-pip3 install -r requirements.txt
-```
+   ```bash
+   git clone <repository-url>
+   cd ex_okx
+   pip3 install -r requirements.txt
+   ```
 
 ### Run Optimization
-```bash
+   ```bash
 # Quick test with first 20 cryptos
 python3 vectorized_profit_optimizer.py
 
@@ -36,14 +37,24 @@ python3 generate_crypto_triggers.py
 
 # Test recent 3-month performance
 python3 test_sample_cryptos.py
+
+# Test hourly strategy with optimized parameters
+python3 test_hourly_sell_timing.py
 ```
 
 ## 📊 Optimization Results
 
-### Strategy Definition
+### Strategy Definitions
+
+#### Daily Strategy
 **Buy Condition**: `(High - Open) / Open >= p AND Volume / PreviousVolume >= v`  
 **Sell**: Closing price  
 **Requirements**: Maximum compound return AND median return > 1.01
+
+#### Hourly Strategy
+**Buy Condition**: Same as daily strategy using hourly data  
+**Sell**: After N hours (optimized per crypto: 8-24 hours)  
+**Target Price**: Open price × sell_price_ratio (107.6% - 110.0%)
 
 ### Key Findings
 
@@ -81,6 +92,29 @@ python3 test_sample_cryptos.py
 - **Overall Success**: 185/190 cryptos positive (97.4%)
 - **Negative Returns**: 5/190 cryptos (2.6%) - mostly small losses
 - **Strategy Validation**: Parameters remain effective in recent market conditions
+
+### Hourly Strategy Performance (2025-05-30 to 2025-08-28)
+
+**Test Results Summary**:
+- **Tested Cryptocurrencies**: 5 representative coins
+- **Data Period**: 3 months of hourly data (2,161 hours)
+- **Strategy**: Buy when conditions met, sell after optimal hours
+- **All Positive Returns**: 5/5 (100% in sample)
+
+**Hourly Strategy Results**:
+| Cryptocurrency | Buy Conditions | Best Sell Time | Target Price | Compound Return | Win Rate | Risk Level |
+|----------------|----------------|----------------|--------------|-----------------|----------|------------|
+| **BTC-USDT** | P≥3.0%, V≥1.1x | **8 hours** | 107.6% | 1.074× | 100% | Low |
+| **ETH-USDT** | P≥4.0%, V≥1.1x | **8 hours** | 110.0% | 1.232× | 100% | Low |
+| **SOL-USDT** | P≥5.0%, V≥1.1x | **15 hours** | 110.0% | 1.147× | 50% | High |
+| **DOGE-USDT** | P≥4.0%, V≥1.1x | **22 hours** | 110.0% | 1.606× | 75% | Medium |
+| **ADA-USDT** | P≥4.0%, V≥1.1x | **21 hours** | 110.0% | 1.262× | 75% | Medium |
+
+**Key Insights**:
+- **Personalized Timing**: Each crypto has unique optimal sell timing (8-24 hours)
+- **Conservative Targets**: BTC/ETH prefer quick 8-hour exits
+- **Patient Strategy**: DOGE/ADA benefit from longer 20+ hour holds
+- **Realistic Returns**: 1.07-1.61× range vs. historical extreme values
 
 ### Risk Categories
 
@@ -120,8 +154,8 @@ python3 test_sample_cryptos.py
 - **`test_sample_cryptos.py`** - Test recent performance on representative cryptos
 
 ### Configuration Files
-- **`crypto_trading_triggers.json`** - Complete triggers for all 190 cryptos
-- **`complete_boundary_analysis.md`** - Detailed analysis report
+- **`crypto_trading_triggers.json`** - Daily strategy triggers for all 190 cryptos
+- **`crypto_hourly_sell_config.json`** - Hourly strategy configuration with optimal sell timing
 
 ### Data Files
 - **`data/vectorized_optimization_*.json`** - Full optimization results
@@ -129,19 +163,35 @@ python3 test_sample_cryptos.py
 
 ## 💡 Usage Examples
 
-### Load Trading Configuration
+### Load Daily Trading Configuration
 ```python
 import json
 
-# Load triggers configuration
+# Load daily triggers configuration
 with open('crypto_trading_triggers.json', 'r') as f:
-    config = json.load(f)
+    daily_config = json.load(f)
 
 # Get trigger for specific crypto
-btc_trigger = config['triggers']['BTC-USDT']
+btc_trigger = daily_config['triggers']['BTC-USDT']
 p_threshold = btc_trigger['high_open_ratio_threshold']  # 0.04 (4%)
 v_threshold = btc_trigger['volume_ratio_threshold']     # 1.1
 expected_return = btc_trigger['expected_performance']['median_return']  # 1.045
+```
+
+### Load Hourly Trading Configuration
+```python
+# Load hourly strategy configuration
+with open('crypto_hourly_sell_config.json', 'r') as f:
+    hourly_config = json.load(f)
+
+# Get hourly strategy for specific crypto
+btc_hourly = hourly_config['crypto_configs']['BTC-USDT']
+buy_conditions = btc_hourly['buy_conditions']
+sell_timing = btc_hourly['sell_timing']
+
+print(f"Buy when: P≥{buy_conditions['high_open_ratio_threshold']:.1%}, V≥{buy_conditions['volume_ratio_threshold']:.1f}x")
+print(f"Sell after: {sell_timing['best_hours']} hours")
+print(f"Target price: {sell_timing['sell_price_ratio']:.1%} of open price")
 ```
 
 ### Check Buy Signal
