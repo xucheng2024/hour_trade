@@ -7,7 +7,7 @@ Strategy parameter optimizer, responsible for optimizing buy price and holding t
 
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple, Literal
+from typing import Optional, Dict, Any, Tuple, Literal, List
 import numpy as np
 
 from .historical_data_loader import get_historical_data_loader
@@ -253,7 +253,7 @@ class StrategyOptimizer:
 
         # Fully vectorized earnings calculation
         try:
-            earn_matrix = self._calculate_earnings_matrix_fully_vectorized(
+            earn_matrix, trade_counts = self._calculate_earnings_matrix_fully_vectorized(
                 datetime_index, low_prices, open_prices, close_prices, 
                 n, min_occurrences, config
             )
@@ -270,8 +270,12 @@ class StrategyOptimizer:
         else:
             logger.info(f"✅ Found best parameters for {instId}: limit={best_params[0]}%, duration={best_params[1]}, returns={best_params[2]}")
 
+        # Get actual trade count for the best limit
+        best_limit, best_duration, max_returns = best_params
+        actual_trade_count = trade_counts.get(best_limit, 0)
+        
         # Update result dictionary
-        self._update_result_dict(date_dict, instId, best_params, earn_matrix, config['limit_range'][0], datetime_index)
+        self._update_result_dict(date_dict, instId, best_params, earn_matrix, config['limit_range'][0], datetime_index, actual_trade_count)
         return date_dict
     
     def optimize_1d_strategy(self, instId: str, start: int, end: int, 
@@ -290,7 +294,7 @@ class StrategyOptimizer:
                                                   open_prices: np.ndarray,
                                                   close_prices: np.ndarray, 
                                                   n: int, min_occurrences: int,
-                                                  config: Dict[str, Any]) -> np.ndarray:
+                                                  config: Dict[str, Any]) -> Tuple[np.ndarray, Dict[int, int]]:
         """Calculate earnings matrix using fully vectorized operations for maximum performance"""
         limit_range = config['limit_range']
         duration_range = config['duration_range']
@@ -312,6 +316,7 @@ class StrategyOptimizer:
         
         # Calculate earnings matrix using vectorized operations
         earn_matrix = np.zeros((len(limit_ratios), duration_range))
+        trade_counts = {}  # Store actual trade counts for each limit ratio
         logger.info(f"💰 Calculating earnings matrix: {len(limit_ratios)} limit ratios × {duration_range} durations")
         
         # Process in batches to balance memory usage and performance
@@ -325,12 +330,16 @@ class StrategyOptimizer:
             buy_prices_batch = (batch_ratios[:, np.newaxis] * open_prices[:n]) / 100
             
             # Vectorized trade finding and earnings calculation for this batch
-            batch_earnings = self._calculate_batch_earnings_vectorized(
+            batch_earnings, batch_trade_counts = self._calculate_batch_earnings_vectorized(
                 valid_time_indices, low_prices[:n], buy_prices_batch, 
                 close_prices[:n], duration_range, min_avg_earn
             )
             
             earn_matrix[batch_start:batch_end, :] = batch_earnings
+            
+            # Store trade counts for each limit ratio in this batch
+            for i, ratio in enumerate(batch_ratios):
+                trade_counts[ratio] = batch_trade_counts[i]
             
             # Count non-zero earnings as a proxy for valid trades
             batch_valid = np.count_nonzero(batch_earnings)
@@ -340,7 +349,7 @@ class StrategyOptimizer:
         logger.info(f"💰 Total valid earnings: {total_valid_trades}")
         logger.info(f"💰 Earnings matrix max: {np.max(earn_matrix)}, min: {np.min(earn_matrix)}")
         
-        return earn_matrix
+        return earn_matrix, trade_counts
     
     def _create_time_mask_vectorized(self, datetime_array: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
         """Create time mask using vectorized operations for better performance"""
@@ -355,10 +364,11 @@ class StrategyOptimizer:
                                            buy_prices_batch: np.ndarray,
                                            close_prices: np.ndarray, 
                                            duration_range: int,
-                                           min_avg_earn: float) -> np.ndarray:
+                                           min_avg_earn: float) -> Tuple[np.ndarray, List[int]]:
         """Calculate earnings for a batch of limit ratios using fully vectorized operations"""
         batch_size = buy_prices_batch.shape[0]
         earn_matrix = np.zeros((batch_size, duration_range))
+        trade_counts = []  # Store trade counts for each ratio in this batch
         
         # Vectorized trade finding for all limit ratios in batch
         for ratio_idx in range(batch_size):
@@ -368,6 +378,9 @@ class StrategyOptimizer:
             valid_trades = self._find_valid_trades_optimized(
                 valid_time_indices, low_prices, buy_prices
             )
+            
+            # Store actual trade count for this ratio
+            trade_counts.append(len(valid_trades))
             
             if len(valid_trades) == 0:
                 logger.debug(f"🔍 No valid trades found for ratio {ratio_idx + 60}%")
@@ -383,7 +396,7 @@ class StrategyOptimizer:
             
             earn_matrix[ratio_idx, :] = earnings
         
-        return earn_matrix
+        return earn_matrix, trade_counts
     
     def _find_valid_trades_optimized(self, valid_time_indices: np.ndarray, 
                                    low_prices: np.ndarray, buy_prices: np.ndarray) -> list:
@@ -486,11 +499,20 @@ class StrategyOptimizer:
                 # Calculate total compound return (product of ALL earnings including losses)
                 all_earnings = duration_earnings[valid_mask]
                 total_compound_return = np.prod(all_earnings)
-                total_returns[duration_idx] = total_compound_return
                 
-                profit_count = np.sum(all_earnings > 1.0)
-                loss_count = np.sum(all_earnings <= 1.0)
-                logger.debug(f"💰 Duration {duration_idx}: Total compound return={total_compound_return:.4f} from {len(all_earnings)} trades ({profit_count} profits, {loss_count} losses)")
+                # Calculate median return to ensure strategy stability
+                median_return = np.median(all_earnings)
+                
+                # Skip this combination if median return < 1% (0.01)
+                if median_return < 1.01:  # 1% = 1.01x return
+                    logger.debug(f"💰 Duration {duration_idx}: SKIPPED - median return {median_return:.4f} < 1% (compound: {total_compound_return:.4f})")
+                    total_returns[duration_idx] = 0.0
+                else:
+                    total_returns[duration_idx] = total_compound_return
+                    
+                    profit_count = np.sum(all_earnings > 1.0)
+                    loss_count = np.sum(all_earnings <= 1.0)
+                    logger.debug(f"💰 Duration {duration_idx}: Total compound return={total_compound_return:.4f}, median={median_return:.4f} from {len(all_earnings)} trades ({profit_count} profits, {loss_count} losses)")
             else:
                 total_returns[duration_idx] = 0.0
         
@@ -540,29 +562,30 @@ class StrategyOptimizer:
             logger.info(f"🔍 Multiple parameter combinations with same returns ({max_returns_rounded:.2f}), "
                        f"applying selection strategy...")
             
-            # Strategy: First prefer shorter duration, then prefer lower limit (more conservative)
-            # This ensures we get the most conservative (safe) strategy when performance is equal
+            # Strategy: First prefer duration 0 (same-day trading), then prefer higher limit (more aggressive)
+            # This ensures we get the most aggressive strategy when performance is equal
             
-            # Step 1: Find the shortest duration(s)
-            min_duration = np.min(max_duration_indices)
-            shortest_duration_mask = (max_duration_indices == min_duration)
-            shortest_duration_indices = np.where(shortest_duration_mask)[0]
+            # Step 1: Find duration 0 positions first
+            duration_0_mask = (max_duration_indices == 0)
+            duration_0_indices = np.where(duration_0_mask)[0]
             
-            if len(shortest_duration_indices) == 1:
-                # Only one position with shortest duration
-                best_idx = shortest_duration_indices[0]
-                best_limit_idx = max_limit_indices[best_idx]
-                best_duration_idx = max_duration_indices[best_idx]
+            if len(duration_0_indices) > 0:
+                # Prefer duration 0 (same-day trading)
+                duration_0_limit_indices = max_limit_indices[duration_0_mask]
+                best_limit_idx = np.max(duration_0_limit_indices)  # Choose highest limit (most aggressive)
+                best_duration_idx = 0
                 
-                logger.info(f"🔍 Single shortest duration found: limit={limit_offset + best_limit_idx}%, duration={best_duration_idx}")
+                logger.info(f"🔍 Duration 0 found: limit={limit_offset + best_limit_idx}%, duration={best_duration_idx}")
             else:
-                # Multiple positions with same duration, prefer lower limit (more conservative)
+                # No duration 0, fall back to shortest duration with highest limit
+                min_duration = np.min(max_duration_indices)
+                shortest_duration_mask = (max_duration_indices == min_duration)
                 shortest_duration_limit_indices = max_limit_indices[shortest_duration_mask]
-                best_limit_idx = np.min(shortest_duration_limit_indices)  # Choose lowest limit
+                best_limit_idx = np.max(shortest_duration_limit_indices)  # Choose highest limit
                 best_duration_idx = min_duration
                 
                 logger.info(f"🔍 Multiple positions with same duration ({best_duration_idx}), "
-                           f"selected lowest limit: limit={best_limit_idx}% (most conservative)")
+                           f"selected highest limit: limit={limit_offset + best_limit_idx}% (most aggressive)")
         
         best_limit = limit_offset + best_limit_idx
         best_duration = best_duration_idx
@@ -575,7 +598,7 @@ class StrategyOptimizer:
     
     def _update_result_dict(self, date_dict: Dict[str, Any], instId: str, 
                            best_params: Tuple[int, int, float], earn_matrix: np.ndarray, limit_offset: int, 
-                           datetime_index: np.ndarray) -> None:
+                           datetime_index: np.ndarray, actual_trade_count: int = None) -> None:
         """Update result dictionary"""
         best_limit, best_duration, max_returns = best_params
         
@@ -586,9 +609,13 @@ class StrategyOptimizer:
         best_limit_idx = best_limit - limit_offset
         best_duration_idx = best_duration
         
-        # Count valid trades for the best parameter combination
-        duration_earnings = earn_matrix[:, best_duration_idx]
-        trade_count = np.sum(duration_earnings > 0)  # Count non-zero earnings (actual trades)
+        # Use actual trade count if provided, otherwise fall back to matrix calculation
+        if actual_trade_count is not None:
+            trade_count = actual_trade_count
+        else:
+            # Fallback: Count non-zero earnings (less accurate)
+            duration_earnings = earn_matrix[:, best_duration_idx]
+            trade_count = np.sum(duration_earnings > 0)
         
         # Calculate trades per month based on data length
         # Each data point represents 1 day, so total days = len(datetime_index)

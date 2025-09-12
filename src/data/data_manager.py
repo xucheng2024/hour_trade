@@ -31,7 +31,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 config = get_config()
 
 # Dynamic cryptocurrency list - loaded from config file
-# Use generate_crypto_list.py to update this list from OKX API
+# Use src/data/crypto_list_generator.py to update this list from OKX API
 SELECTED_CRYPTOS = []
 
 # Configure logging
@@ -410,7 +410,7 @@ def update_crypto_list() -> List[str]:
     logger.info(f"📊 Found {len(existing_cryptos)} existing cryptocurrencies")
     
     if not existing_cryptos:
-        logger.warning("⚠️ No existing crypto list found. Run generate_crypto_list.py first.")
+        logger.warning("⚠️ No existing crypto list found. Run src/data/crypto_list_generator.py first.")
         return []
     
     # Get current crypto info from OKX
