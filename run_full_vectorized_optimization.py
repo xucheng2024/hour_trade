@@ -27,7 +27,7 @@ def main():
     
     # Define optimization parameters (more granular for full run)
     p_range = (0.01, 0.08)  # 1% to 8% high/open ratio
-    v_range = (1.1, 2.0)    # 1.1x to 2.0x volume ratio (reduced range for faster processing)
+    v_range = (1.1, 1.1)    # Fixed at 1.1x volume ratio (simplified)
     p_step = 0.01           # 1% steps for p
     v_step = 0.1            # 0.1 steps for v
     min_median_return = 1.01  # Minimum 1% median return
