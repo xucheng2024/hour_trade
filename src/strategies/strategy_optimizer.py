@@ -459,10 +459,9 @@ class StrategyOptimizer:
             buy_fee = self.custom_fees['buy_fee']
             sell_fee = self.custom_fees['sell_fee']
             
-            # Correct fee calculation
-            effective_buy_price = buy_price / (1 - buy_fee)  # We pay more due to buy fee
-            net_sell_price = sell_prices * (1 - sell_fee)   # We receive less due to sell fee
-            raw_returns = net_sell_price / effective_buy_price - 1
+            # Correct fee calculation - fees are deducted from profit, not from prices
+            total_fee_rate = buy_fee + sell_fee
+            raw_returns = (sell_prices - buy_price) / buy_price - total_fee_rate
             
             # Use corrected returns directly
             corrected_returns = raw_returns

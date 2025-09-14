@@ -171,10 +171,11 @@ class VectorizedProfitOptimizer:
         data['volume_ratio'] = data['volume'] / data['volume'].shift(1)
         data['volume_ratio'] = data['volume_ratio'].fillna(1.0)
         
-        # Calculate buy/sell prices with fees
-        data['buy_price'] = data['open'] * (1 + self.buy_fee)
-        data['sell_price'] = data['close'] * (1 - self.sell_fee)
-        data['profit_ratio'] = data['sell_price'] / data['buy_price']
+        # Store close price for sell price calculation (without fees)
+        data['sell_price'] = data['close']
+        
+        # Note: buy_price will be calculated dynamically based on p parameter
+        # in the vectorized optimization function
         
         # Remove invalid data
         data = data.dropna()
@@ -195,7 +196,7 @@ class VectorizedProfitOptimizer:
         # Vectorized operations for each parameter combination
         for i, p in enumerate(p_values):
             for j, v in enumerate(v_values):
-                # Find trades that meet criteria
+                # Find trades that meet criteria: high >= open * (1 + p)
                 mask = (data['high_open_ratio'] >= p) & (data['volume_ratio'] >= v)
                 
                 if mask.sum() == 0:
@@ -203,8 +204,18 @@ class VectorizedProfitOptimizer:
                     results[i, j] = [0, 0, 0, 0, 0, 0]
                     continue
                 
-                # Get profit ratios for valid trades
-                profit_ratios = data.loc[mask, 'profit_ratio'].values
+                # Calculate buy price using limit order logic: open * (1 + p) (without fees)
+                buy_price = data['open'] * (1 + p)
+                
+                # Calculate profit ratios for valid trades with proper fee calculation
+                sell_prices = data.loc[mask, 'sell_price']
+                buy_prices = buy_price[mask]
+                
+                # Calculate net profit after fees: (sell_price - buy_price) / buy_price - total_fee_rate
+                total_fee_rate = self.buy_fee + self.sell_fee
+                profit_ratios = (sell_prices - buy_prices) / buy_prices - total_fee_rate
+                # Convert to return multiplier (1 + return_rate)
+                profit_ratios = 1 + profit_ratios
                 
                 # Calculate metrics
                 total_trades = len(profit_ratios)

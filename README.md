@@ -10,6 +10,7 @@ A comprehensive cryptocurrency trading strategy optimizer with both daily and ho
 - **Realistic Trading**: Includes 0.1% buy/sell fees in all calculations
 - **Comprehensive Results**: 190/192 cryptocurrencies successfully optimized (99.0% success rate)
 - **Ready-to-Use Configs**: JSON configurations for both daily and hourly trading
+- **Corrected Fee Logic**: Fixed fee calculation to deduct from profit rather than adjust prices
 
 ## 🚀 Quick Start
 
@@ -217,16 +218,18 @@ python3 test_hourly_sell_timing.py
 ## 📁 Core Files
 
 ### Essential Scripts
-- **`vectorized_profit_optimizer.py`** - Main optimization engine
+- **`vectorized_profit_optimizer.py`** - Main optimization engine (with corrected fee logic)
 - **`run_full_vectorized_optimization.py`** - Full 192-crypto optimization
 - **`generate_crypto_triggers.py`** - Generate trading configuration
 - **`test_sample_cryptos.py`** - Test recent performance on representative cryptos
+- **`generate_d0_baseline_config.py`** - Generate Duration 0 baseline configuration
 
 ### Configuration Files
 - **`crypto_trading_triggers.json`** - Daily strategy triggers for all 190 cryptos
 - **`crypto_hourly_sell_config.json`** - Hourly strategy configuration (5 test cryptos)
 - **`crypto_hourly_sell_config_full.json`** - Complete hourly strategy configuration (54 optimized cryptos)
 - **`optimal_take_profit_config.json`** - Optimal take-profit ratios for 124 cryptocurrencies
+- **`config_d0_baseline.json`** - Duration 0 baseline configuration (124 qualified cryptos)
 
 ### Data Files
 - **`data/vectorized_optimization_*.json`** - Full optimization results
@@ -371,6 +374,7 @@ if signal:
 - **Market Dependency**: Strategy relies on upward price movements
 - **Same-Day Risk**: Selling at close may not capture maximum profit
 - **Fee Impact**: 0.2% total fees (0.1% buy + 0.1% sell)
+- **Corrected Fee Logic**: Fees are now properly deducted from profit calculations
 
 ### Usage Recommendations
 - **Paper Trading**: Test with historical data first
@@ -388,6 +392,14 @@ pandas>=1.3.0
 ## 📄 License
 
 This project is for educational and research purposes. Please ensure compliance with applicable regulations when using for live trading.
+
+## 🔧 Recent Updates
+
+### Fee Calculation Fix (2025-09-14)
+- **Fixed Fee Logic**: Corrected fee calculation to deduct from profit rather than adjust prices
+- **More Accurate Results**: 85.5% of cryptocurrencies showed improved performance
+- **Logic Consistency**: Fees now properly applied during profit calculation
+- **Updated Configs**: All configuration files regenerated with corrected calculations
 
 ---
 

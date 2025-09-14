@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-09-12T11:23:04.303678",
+  "generated_at": "2025-09-14T14:28:05.808492",
   "strategy_name": "duration_0_baseline",
   "description": "Duration 0 baseline configuration - same day trading strategy with min_trades=30",
   "strategy_type": "same_day",
@@ -18,79 +18,79 @@
     "DOGE-USDT": {
       "best_limit": "80",
       "best_duration": "0",
-      "max_returns": "25.62",
+      "max_returns": "25.77",
       "trade_count": "37",
       "trades_per_month": "0.50",
-      "avg_return_per_trade": "0.0916"
+      "avg_return_per_trade": "0.0918"
     },
     "ORBS-USDT": {
       "best_limit": "82",
       "best_duration": "0",
-      "max_returns": "1438.71",
+      "max_returns": "1462.47",
       "trade_count": "84",
       "trades_per_month": "1.13",
-      "avg_return_per_trade": "0.0904"
+      "avg_return_per_trade": "0.0906"
     },
     "TRB-USDT": {
       "best_limit": "72",
       "best_duration": "0",
-      "max_returns": "12.82",
+      "max_returns": "12.86",
       "trade_count": "30",
       "trades_per_month": "0.49",
-      "avg_return_per_trade": "0.0888"
+      "avg_return_per_trade": "0.0889"
     },
     "LINK-USDT": {
       "best_limit": "80",
       "best_duration": "0",
-      "max_returns": "199.70",
+      "max_returns": "201.92",
       "trade_count": "63",
       "trades_per_month": "0.68",
-      "avg_return_per_trade": "0.0877"
+      "avg_return_per_trade": "0.0879"
     },
     "ICX-USDT": {
       "best_limit": "77",
       "best_duration": "0",
-      "max_returns": "14.29",
+      "max_returns": "14.32",
       "trade_count": "35",
       "trades_per_month": "0.38",
-      "avg_return_per_trade": "0.0789"
+      "avg_return_per_trade": "0.0790"
     },
     "LRC-USDT": {
       "best_limit": "77",
       "best_duration": "0",
-      "max_returns": "18.60",
+      "max_returns": "18.70",
       "trade_count": "39",
       "trades_per_month": "0.42",
-      "avg_return_per_trade": "0.0778"
+      "avg_return_per_trade": "0.0780"
     },
     "AERGO-USDT": {
       "best_limit": "76",
       "best_duration": "0",
-      "max_returns": "9.01",
+      "max_returns": "9.04",
       "trade_count": "31",
       "trades_per_month": "0.50",
-      "avg_return_per_trade": "0.0735"
+      "avg_return_per_trade": "0.0736"
     },
     "LUNC-USDT": {
       "best_limit": "86",
       "best_duration": "0",
-      "max_returns": "27.76",
+      "max_returns": "27.89",
       "trade_count": "54",
       "trades_per_month": "1.37",
-      "avg_return_per_trade": "0.0635"
+      "avg_return_per_trade": "0.0636"
     },
     "BNT-USDT": {
       "best_limit": "82",
       "best_duration": "0",
-      "max_returns": "15.64",
+      "max_returns": "15.77",
       "trade_count": "46",
       "trades_per_month": "0.50",
-      "avg_return_per_trade": "0.0616"
+      "avg_return_per_trade": "0.0618"
     },
     "TURBO-USDT": {
       "best_limit": "82",
       "best_duration": "0",
-      "max_returns": "10.32",
+      "max_returns": "10.34",
       "trade_count": "40",
       "trades_per_month": "1.45",
       "avg_return_per_trade": "0.0601"
@@ -98,23 +98,23 @@
     "PSTAKE-USDT": {
       "best_limit": "84",
       "best_duration": "0",
-      "max_returns": "11.99",
+      "max_returns": "12.05",
       "trade_count": "45",
       "trades_per_month": "1.05",
-      "avg_return_per_trade": "0.0568"
+      "avg_return_per_trade": "0.0569"
     },
     "MLN-USDT": {
       "best_limit": "82",
       "best_duration": "0",
-      "max_returns": "5.47",
+      "max_returns": "5.48",
       "trade_count": "31",
       "trades_per_month": "0.51",
-      "avg_return_per_trade": "0.0563"
+      "avg_return_per_trade": "0.0564"
     },
     "IOST-USDT": {
       "best_limit": "80",
       "best_duration": "0",
-      "max_returns": "24.59",
+      "max_returns": "24.67",
       "trade_count": "59",
       "trades_per_month": "0.64",
       "avg_return_per_trade": "0.0558"
@@ -122,39 +122,39 @@
     "HBAR-USDT": {
       "best_limit": "83",
       "best_duration": "0",
-      "max_returns": "11.27",
+      "max_returns": "11.32",
       "trade_count": "48",
       "trades_per_month": "0.66",
-      "avg_return_per_trade": "0.0518"
+      "avg_return_per_trade": "0.0519"
     },
     "BAL-USDT": {
       "best_limit": "82",
       "best_duration": "0",
-      "max_returns": "6.05",
+      "max_returns": "6.07",
       "trade_count": "39",
       "trades_per_month": "0.63",
-      "avg_return_per_trade": "0.0472"
+      "avg_return_per_trade": "0.0473"
     },
     "STX-USDT": {
       "best_limit": "81",
       "best_duration": "0",
-      "max_returns": "4.35",
+      "max_returns": "4.37",
       "trade_count": "32",
       "trades_per_month": "0.59",
-      "avg_return_per_trade": "0.0470"
+      "avg_return_per_trade": "0.0472"
     },
     "TON-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "5.36",
+      "max_returns": "5.40",
       "trade_count": "37",
       "trades_per_month": "0.91",
-      "avg_return_per_trade": "0.0464"
+      "avg_return_per_trade": "0.0466"
     },
     "CRV-USDT": {
       "best_limit": "81",
       "best_duration": "0",
-      "max_returns": "17.56",
+      "max_returns": "17.58",
       "trade_count": "64",
       "trades_per_month": "1.04",
       "avg_return_per_trade": "0.0458"
@@ -162,15 +162,15 @@
     "GRT-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "62.96",
+      "max_returns": "63.66",
       "trade_count": "93",
       "trades_per_month": "1.63",
-      "avg_return_per_trade": "0.0455"
+      "avg_return_per_trade": "0.0457"
     },
     "LTC-USDT": {
       "best_limit": "82",
       "best_duration": "0",
-      "max_returns": "6.68",
+      "max_returns": "6.69",
       "trade_count": "43",
       "trades_per_month": "0.46",
       "avg_return_per_trade": "0.0452"
@@ -178,23 +178,23 @@
     "RVN-USDT": {
       "best_limit": "83",
       "best_duration": "0",
-      "max_returns": "10.07",
+      "max_returns": "10.14",
       "trade_count": "53",
       "trades_per_month": "0.79",
-      "avg_return_per_trade": "0.0445"
+      "avg_return_per_trade": "0.0447"
     },
     "CELO-USDT": {
       "best_limit": "84",
       "best_duration": "0",
-      "max_returns": "8.33",
+      "max_returns": "8.37",
       "trade_count": "49",
       "trades_per_month": "0.79",
-      "avg_return_per_trade": "0.0442"
+      "avg_return_per_trade": "0.0443"
     },
     "AIDOGE-USDT": {
       "best_limit": "83",
       "best_duration": "0",
-      "max_returns": "8.29",
+      "max_returns": "8.28",
       "trade_count": "49",
       "trades_per_month": "1.72",
       "avg_return_per_trade": "0.0441"
@@ -202,18 +202,18 @@
     "DGB-USDT": {
       "best_limit": "86",
       "best_duration": "0",
-      "max_returns": "219.69",
+      "max_returns": "222.36",
       "trade_count": "128",
       "trades_per_month": "1.38",
-      "avg_return_per_trade": "0.0430"
+      "avg_return_per_trade": "0.0431"
     },
     "BCH-USDT": {
       "best_limit": "84",
       "best_duration": "0",
-      "max_returns": "10.72",
+      "max_returns": "10.79",
       "trade_count": "57",
       "trades_per_month": "0.69",
-      "avg_return_per_trade": "0.0425"
+      "avg_return_per_trade": "0.0426"
     },
     "BTC-USDT": {
       "best_limit": "85",
@@ -226,7 +226,7 @@
     "VELODROME-USDT": {
       "best_limit": "86",
       "best_duration": "0",
-      "max_returns": "5.29",
+      "max_returns": "5.30",
       "trade_count": "41",
       "trades_per_month": "1.38",
       "avg_return_per_trade": "0.0415"
@@ -234,7 +234,7 @@
     "NEO-USDT": {
       "best_limit": "83",
       "best_duration": "0",
-      "max_returns": "10.37",
+      "max_returns": "10.41",
       "trade_count": "60",
       "trades_per_month": "0.65",
       "avg_return_per_trade": "0.0398"
@@ -242,23 +242,23 @@
     "ETC-USDT": {
       "best_limit": "84",
       "best_duration": "0",
-      "max_returns": "15.27",
+      "max_returns": "15.36",
       "trade_count": "72",
       "trades_per_month": "0.78",
-      "avg_return_per_trade": "0.0386"
+      "avg_return_per_trade": "0.0387"
     },
     "ATOM-USDT": {
       "best_limit": "84",
       "best_duration": "0",
-      "max_returns": "8.61",
+      "max_returns": "8.65",
       "trade_count": "57",
       "trades_per_month": "0.74",
-      "avg_return_per_trade": "0.0385"
+      "avg_return_per_trade": "0.0386"
     },
     "SUI-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "6.55",
+      "max_returns": "6.56",
       "trade_count": "50",
       "trades_per_month": "1.77",
       "avg_return_per_trade": "0.0383"
@@ -266,18 +266,26 @@
     "YGG-USDT": {
       "best_limit": "83",
       "best_duration": "0",
-      "max_returns": "5.99",
+      "max_returns": "6.01",
       "trade_count": "49",
       "trades_per_month": "0.99",
-      "avg_return_per_trade": "0.0372"
+      "avg_return_per_trade": "0.0373"
     },
     "PEOPLE-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "118.19",
+      "max_returns": "118.67",
       "trade_count": "131",
       "trades_per_month": "2.87",
       "avg_return_per_trade": "0.0371"
+    },
+    "ELF-USDT": {
+      "best_limit": "80",
+      "best_duration": "0",
+      "max_returns": "4.94",
+      "trade_count": "44",
+      "trades_per_month": "0.47",
+      "avg_return_per_trade": "0.0370"
     },
     "LPT-USDT": {
       "best_limit": "83",
@@ -287,34 +295,26 @@
       "trades_per_month": "0.73",
       "avg_return_per_trade": "0.0370"
     },
-    "ELF-USDT": {
-      "best_limit": "80",
+    "ID-USDT": {
+      "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "4.92",
-      "trade_count": "44",
-      "trades_per_month": "0.47",
-      "avg_return_per_trade": "0.0369"
+      "max_returns": "3.08",
+      "trade_count": "32",
+      "trades_per_month": "1.12",
+      "avg_return_per_trade": "0.0358"
     },
     "JOE-USDT": {
       "best_limit": "84",
       "best_duration": "0",
-      "max_returns": "2.98",
+      "max_returns": "2.97",
       "trade_count": "31",
       "trades_per_month": "0.72",
-      "avg_return_per_trade": "0.0359"
-    },
-    "ID-USDT": {
-      "best_limit": "87",
-      "best_duration": "0",
-      "max_returns": "3.07",
-      "trade_count": "32",
-      "trades_per_month": "1.12",
       "avg_return_per_trade": "0.0357"
     },
     "BETH-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "5.31",
+      "max_returns": "5.32",
       "trade_count": "48",
       "trades_per_month": "0.84",
       "avg_return_per_trade": "0.0354"
@@ -330,31 +330,31 @@
     "XLM-USDT": {
       "best_limit": "86",
       "best_duration": "0",
-      "max_returns": "17.53",
+      "max_returns": "17.55",
       "trade_count": "89",
       "trades_per_month": "0.96",
       "avg_return_per_trade": "0.0327"
     },
-    "DYDX-USDT": {
-      "best_limit": "85",
-      "best_duration": "0",
-      "max_returns": "5.44",
-      "trade_count": "54",
-      "trades_per_month": "1.12",
-      "avg_return_per_trade": "0.0319"
-    },
     "QTUM-USDT": {
       "best_limit": "83",
       "best_duration": "0",
-      "max_returns": "8.21",
+      "max_returns": "8.23",
       "trade_count": "67",
       "trades_per_month": "0.72",
+      "avg_return_per_trade": "0.0320"
+    },
+    "DYDX-USDT": {
+      "best_limit": "85",
+      "best_duration": "0",
+      "max_returns": "5.46",
+      "trade_count": "54",
+      "trades_per_month": "1.12",
       "avg_return_per_trade": "0.0319"
     },
     "BLUR-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "5.49",
+      "max_returns": "5.50",
       "trade_count": "56",
       "trades_per_month": "1.82",
       "avg_return_per_trade": "0.0309"
@@ -370,7 +370,7 @@
     "AR-USDT": {
       "best_limit": "86",
       "best_duration": "0",
-      "max_returns": "3.86",
+      "max_returns": "3.87",
       "trade_count": "45",
       "trades_per_month": "1.01",
       "avg_return_per_trade": "0.0305"
@@ -378,71 +378,71 @@
     "CVC-USDT": {
       "best_limit": "85",
       "best_duration": "0",
-      "max_returns": "27.49",
+      "max_returns": "27.59",
       "trade_count": "112",
       "trades_per_month": "1.21",
-      "avg_return_per_trade": "0.0300"
+      "avg_return_per_trade": "0.0301"
     },
     "MINA-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "6.32",
+      "max_returns": "6.35",
       "trade_count": "64",
       "trades_per_month": "1.24",
-      "avg_return_per_trade": "0.0292"
-    },
-    "SSV-USDT": {
-      "best_limit": "88",
-      "best_duration": "0",
-      "max_returns": "3.57",
-      "trade_count": "45",
-      "trades_per_month": "1.48",
-      "avg_return_per_trade": "0.0287"
+      "avg_return_per_trade": "0.0293"
     },
     "CHZ-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "11.98",
+      "max_returns": "12.12",
       "trade_count": "88",
       "trades_per_month": "1.61",
-      "avg_return_per_trade": "0.0286"
+      "avg_return_per_trade": "0.0288"
+    },
+    "SSV-USDT": {
+      "best_limit": "88",
+      "best_duration": "0",
+      "max_returns": "3.58",
+      "trade_count": "45",
+      "trades_per_month": "1.48",
+      "avg_return_per_trade": "0.0287"
     },
     "OKB-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "6.99",
+      "max_returns": "6.98",
       "trade_count": "72",
       "trades_per_month": "0.80",
       "avg_return_per_trade": "0.0274"
     },
-    "ENS-USDT": {
-      "best_limit": "89",
-      "best_duration": "0",
-      "max_returns": "11.46",
-      "trade_count": "94",
-      "trades_per_month": "2.03",
-      "avg_return_per_trade": "0.0263"
-    },
     "ZRX-USDT": {
       "best_limit": "85",
       "best_duration": "0",
-      "max_returns": "14.42",
+      "max_returns": "14.55",
       "trade_count": "104",
       "trades_per_month": "1.12",
-      "avg_return_per_trade": "0.0260"
+      "avg_return_per_trade": "0.0261"
     },
     "LUNA-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "7.49",
+      "max_returns": "7.56",
       "trade_count": "80",
       "trades_per_month": "2.02",
-      "avg_return_per_trade": "0.0255"
+      "avg_return_per_trade": "0.0256"
+    },
+    "MKR-USDT": {
+      "best_limit": "89",
+      "best_duration": "0",
+      "max_returns": "35.44",
+      "trade_count": "143",
+      "trades_per_month": "1.54",
+      "avg_return_per_trade": "0.0253"
     },
     "WOO-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "4.47",
+      "max_returns": "4.48",
       "trade_count": "60",
       "trades_per_month": "1.33",
       "avg_return_per_trade": "0.0253"
@@ -455,34 +455,26 @@
       "trades_per_month": "1.79",
       "avg_return_per_trade": "0.0252"
     },
-    "MKR-USDT": {
-      "best_limit": "89",
+    "UNI-USDT": {
+      "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "35.14",
-      "trade_count": "143",
-      "trades_per_month": "1.54",
-      "avg_return_per_trade": "0.0252"
+      "max_returns": "9.94",
+      "trade_count": "95",
+      "trades_per_month": "1.58",
+      "avg_return_per_trade": "0.0245"
     },
     "GALA-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "15.58",
+      "max_returns": "15.57",
       "trade_count": "114",
       "trades_per_month": "2.38",
-      "avg_return_per_trade": "0.0244"
-    },
-    "UNI-USDT": {
-      "best_limit": "88",
-      "best_duration": "0",
-      "max_returns": "9.91",
-      "trade_count": "95",
-      "trades_per_month": "1.58",
       "avg_return_per_trade": "0.0244"
     },
     "AAVE-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "23.09",
+      "max_returns": "23.29",
       "trade_count": "131",
       "trades_per_month": "2.22",
       "avg_return_per_trade": "0.0243"
@@ -490,15 +482,15 @@
     "IOTA-USDT": {
       "best_limit": "86",
       "best_duration": "0",
-      "max_returns": "12.67",
+      "max_returns": "12.72",
       "trade_count": "106",
       "trades_per_month": "1.14",
-      "avg_return_per_trade": "0.0242"
+      "avg_return_per_trade": "0.0243"
     },
     "SOL-USDT": {
       "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "143.60",
+      "max_returns": "143.85",
       "trade_count": "211",
       "trades_per_month": "3.53",
       "avg_return_per_trade": "0.0238"
@@ -514,7 +506,7 @@
     "BAT-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "14.94",
+      "max_returns": "15.01",
       "trade_count": "117",
       "trades_per_month": "1.75",
       "avg_return_per_trade": "0.0234"
@@ -522,42 +514,34 @@
     "RDNT-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "2.78",
+      "max_returns": "2.80",
       "trade_count": "45",
       "trades_per_month": "1.52",
-      "avg_return_per_trade": "0.0230"
+      "avg_return_per_trade": "0.0231"
     },
     "OP-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "6.59",
+      "max_returns": "6.62",
       "trade_count": "84",
       "trades_per_month": "2.13",
-      "avg_return_per_trade": "0.0227"
-    },
-    "RSR-USDT": {
-      "best_limit": "89",
-      "best_duration": "0",
-      "max_returns": "60.72",
-      "trade_count": "184",
-      "trades_per_month": "3.02",
-      "avg_return_per_trade": "0.0226"
+      "avg_return_per_trade": "0.0228"
     },
     "SNX-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "17.11",
+      "max_returns": "17.19",
       "trade_count": "128",
       "trades_per_month": "2.06",
-      "avg_return_per_trade": "0.0224"
+      "avg_return_per_trade": "0.0225"
     },
     "ICP-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "10.20",
+      "max_returns": "10.22",
       "trade_count": "107",
       "trades_per_month": "2.05",
-      "avg_return_per_trade": "0.0219"
+      "avg_return_per_trade": "0.0220"
     },
     "MAGIC-USDT": {
       "best_limit": "87",
@@ -570,7 +554,7 @@
     "STORJ-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "67.68",
+      "max_returns": "68.19",
       "trade_count": "201",
       "trades_per_month": "2.17",
       "avg_return_per_trade": "0.0212"
@@ -594,34 +578,34 @@
     "KNC-USDT": {
       "best_limit": "86",
       "best_duration": "0",
-      "max_returns": "13.44",
+      "max_returns": "13.40",
       "trade_count": "126",
       "trades_per_month": "1.36",
       "avg_return_per_trade": "0.0208"
     },
-    "ONE-USDT": {
+    "ILV-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "3.11",
-      "trade_count": "56",
-      "trades_per_month": "1.26",
-      "avg_return_per_trade": "0.0205"
+      "max_returns": "2.42",
+      "trade_count": "44",
+      "trades_per_month": "0.91",
+      "avg_return_per_trade": "0.0203"
     },
     "SAND-USDT": {
       "best_limit": "90",
       "best_duration": "0",
-      "max_returns": "16.81",
+      "max_returns": "16.97",
       "trade_count": "141",
       "trades_per_month": "2.61",
-      "avg_return_per_trade": "0.0202"
+      "avg_return_per_trade": "0.0203"
     },
     "ALGO-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "30.80",
+      "max_returns": "31.03",
       "trade_count": "172",
       "trades_per_month": "2.28",
-      "avg_return_per_trade": "0.0201"
+      "avg_return_per_trade": "0.0202"
     },
     "OMI-USDT": {
       "best_limit": "89",
@@ -631,69 +615,69 @@
       "trades_per_month": "1.15",
       "avg_return_per_trade": "0.0201"
     },
-    "GEAR-USDT": {
-      "best_limit": "87",
-      "best_duration": "0",
-      "max_returns": "3.01",
-      "trade_count": "56",
-      "trades_per_month": "1.72",
-      "avg_return_per_trade": "0.0199"
-    },
     "UMA-USDT": {
       "best_limit": "85",
       "best_duration": "0",
-      "max_returns": "3.61",
+      "max_returns": "3.62",
       "trade_count": "65",
       "trades_per_month": "1.07",
+      "avg_return_per_trade": "0.0200"
+    },
+    "GEAR-USDT": {
+      "best_limit": "87",
+      "best_duration": "0",
+      "max_returns": "3.02",
+      "trade_count": "56",
+      "trades_per_month": "1.72",
       "avg_return_per_trade": "0.0199"
     },
     "ZIL-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "15.92",
+      "max_returns": "16.08",
       "trade_count": "141",
       "trades_per_month": "1.59",
-      "avg_return_per_trade": "0.0198"
+      "avg_return_per_trade": "0.0199"
     },
     "VRA-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "12.85",
+      "max_returns": "12.97",
       "trade_count": "133",
       "trades_per_month": "2.52",
-      "avg_return_per_trade": "0.0194"
+      "avg_return_per_trade": "0.0195"
     },
     "ETH-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "7.07",
+      "max_returns": "7.14",
       "trade_count": "105",
       "trades_per_month": "1.10",
-      "avg_return_per_trade": "0.0188"
-    },
-    "KSM-USDT": {
-      "best_limit": "91",
-      "best_duration": "0",
-      "max_returns": "37.58",
-      "trade_count": "197",
-      "trades_per_month": "3.25",
-      "avg_return_per_trade": "0.0186"
+      "avg_return_per_trade": "0.0189"
     },
     "SKL-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "4.63",
+      "max_returns": "4.65",
       "trade_count": "83",
       "trades_per_month": "1.54",
+      "avg_return_per_trade": "0.0187"
+    },
+    "KSM-USDT": {
+      "best_limit": "91",
+      "best_duration": "0",
+      "max_returns": "37.87",
+      "trade_count": "197",
+      "trades_per_month": "3.25",
       "avg_return_per_trade": "0.0186"
     },
     "CELR-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "5.25",
+      "max_returns": "5.28",
       "trade_count": "91",
       "trades_per_month": "1.69",
-      "avg_return_per_trade": "0.0184"
+      "avg_return_per_trade": "0.0185"
     },
     "ELON-USDT": {
       "best_limit": "90",
@@ -706,31 +690,39 @@
     "NEAR-USDT": {
       "best_limit": "90",
       "best_duration": "0",
-      "max_returns": "23.26",
+      "max_returns": "23.31",
       "trade_count": "175",
       "trades_per_month": "3.04",
-      "avg_return_per_trade": "0.0181"
+      "avg_return_per_trade": "0.0182"
     },
     "XRP-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "6.84",
+      "max_returns": "6.88",
       "trade_count": "107",
       "trades_per_month": "1.15",
-      "avg_return_per_trade": "0.0181"
+      "avg_return_per_trade": "0.0182"
     },
     "APT-USDT": {
       "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "5.52",
+      "max_returns": "5.54",
       "trade_count": "99",
       "trades_per_month": "2.85",
       "avg_return_per_trade": "0.0174"
     },
+    "ENS-USDT": {
+      "best_limit": "91",
+      "best_duration": "0",
+      "max_returns": "13.16",
+      "trade_count": "150",
+      "trades_per_month": "3.24",
+      "avg_return_per_trade": "0.0173"
+    },
     "THETA-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "22.32",
+      "max_returns": "22.48",
       "trade_count": "182",
       "trades_per_month": "1.96",
       "avg_return_per_trade": "0.0172"
@@ -738,7 +730,7 @@
     "YFI-USDT": {
       "best_limit": "92",
       "best_duration": "0",
-      "max_returns": "51.06",
+      "max_returns": "51.64",
       "trade_count": "231",
       "trades_per_month": "3.80",
       "avg_return_per_trade": "0.0172"
@@ -754,34 +746,18 @@
     "T-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "2.32",
+      "max_returns": "2.34",
       "trade_count": "51",
       "trades_per_month": "1.23",
-      "avg_return_per_trade": "0.0166"
+      "avg_return_per_trade": "0.0168"
     },
     "MANA-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "25.93",
+      "max_returns": "26.03",
       "trade_count": "203",
       "trades_per_month": "2.19",
       "avg_return_per_trade": "0.0162"
-    },
-    "WBTC-USDT": {
-      "best_limit": "90",
-      "best_duration": "0",
-      "max_returns": "1.87",
-      "trade_count": "39",
-      "trades_per_month": "0.65",
-      "avg_return_per_trade": "0.0162"
-    },
-    "ILV-USDT": {
-      "best_limit": "88",
-      "best_duration": "0",
-      "max_returns": "2.41",
-      "trade_count": "55",
-      "trades_per_month": "1.14",
-      "avg_return_per_trade": "0.0161"
     },
     "ACA-USDT": {
       "best_limit": "86",
@@ -794,15 +770,15 @@
     "CSPR-USDT": {
       "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "7.02",
+      "max_returns": "7.04",
       "trade_count": "124",
       "trades_per_month": "2.37",
-      "avg_return_per_trade": "0.0158"
+      "avg_return_per_trade": "0.0159"
     },
     "ALPHA-USDT": {
       "best_limit": "87",
       "best_duration": "0",
-      "max_returns": "3.90",
+      "max_returns": "3.91",
       "trade_count": "89",
       "trades_per_month": "1.63",
       "avg_return_per_trade": "0.0154"
@@ -810,7 +786,7 @@
     "BABYDOGE-USDT": {
       "best_limit": "92",
       "best_duration": "0",
-      "max_returns": "59.38",
+      "max_returns": "59.57",
       "trade_count": "268",
       "trades_per_month": "5.44",
       "avg_return_per_trade": "0.0154"
@@ -826,15 +802,23 @@
     "RIO-USDT": {
       "best_limit": "92",
       "best_duration": "0",
-      "max_returns": "4942.85",
+      "max_returns": "5038.03",
       "trade_count": "591",
       "trades_per_month": "9.82",
       "avg_return_per_trade": "0.0145"
     },
+    "FLOW-USDT": {
+      "best_limit": "89",
+      "best_duration": "0",
+      "max_returns": "4.30",
+      "trade_count": "103",
+      "trades_per_month": "1.88",
+      "avg_return_per_trade": "0.0143"
+    },
     "NMR-USDT": {
       "best_limit": "90",
       "best_duration": "0",
-      "max_returns": "4.77",
+      "max_returns": "4.78",
       "trade_count": "110",
       "trades_per_month": "1.82",
       "avg_return_per_trade": "0.0143"
@@ -847,12 +831,12 @@
       "trades_per_month": "3.00",
       "avg_return_per_trade": "0.0143"
     },
-    "FLOW-USDT": {
-      "best_limit": "89",
+    "RSR-USDT": {
+      "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "4.29",
-      "trade_count": "103",
-      "trades_per_month": "1.88",
+      "max_returns": "68.20",
+      "trade_count": "300",
+      "trades_per_month": "4.93",
       "avg_return_per_trade": "0.0142"
     },
     "PHA-USDT": {
@@ -866,7 +850,7 @@
     "COMP-USDT": {
       "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "17.62",
+      "max_returns": "17.66",
       "trade_count": "210",
       "trades_per_month": "3.34",
       "avg_return_per_trade": "0.0138"
@@ -874,25 +858,33 @@
     "CTC-USDT": {
       "best_limit": "93",
       "best_duration": "0",
-      "max_returns": "115.44",
+      "max_returns": "115.90",
       "trade_count": "347",
       "trades_per_month": "5.30",
       "avg_return_per_trade": "0.0138"
     },
-    "CITY-USDT": {
-      "best_limit": "91",
+    "ONE-USDT": {
+      "best_limit": "89",
       "best_duration": "0",
-      "max_returns": "1.76",
-      "trade_count": "42",
-      "trades_per_month": "1.18",
-      "avg_return_per_trade": "0.0136"
+      "max_returns": "3.11",
+      "trade_count": "83",
+      "trades_per_month": "1.87",
+      "avg_return_per_trade": "0.0138"
     },
     "SHIB-USDT": {
       "best_limit": "93",
       "best_duration": "0",
-      "max_returns": "29.35",
+      "max_returns": "29.61",
       "trade_count": "253",
       "trades_per_month": "4.83",
+      "avg_return_per_trade": "0.0135"
+    },
+    "CITY-USDT": {
+      "best_limit": "91",
+      "best_duration": "0",
+      "max_returns": "1.75",
+      "trade_count": "42",
+      "trades_per_month": "1.18",
       "avg_return_per_trade": "0.0134"
     },
     "WLD-USDT": {
@@ -906,7 +898,7 @@
     "API3-USDT": {
       "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "31.11",
+      "max_returns": "31.59",
       "trade_count": "267",
       "trades_per_month": "4.65",
       "avg_return_per_trade": "0.0130"
@@ -914,15 +906,15 @@
     "DOT-USDT": {
       "best_limit": "92",
       "best_duration": "0",
-      "max_returns": "12.26",
+      "max_returns": "12.38",
       "trade_count": "198",
       "trades_per_month": "3.25",
-      "avg_return_per_trade": "0.0127"
+      "avg_return_per_trade": "0.0128"
     },
     "GHST-USDT": {
       "best_limit": "93",
       "best_duration": "0",
-      "max_returns": "6.20",
+      "max_returns": "6.23",
       "trade_count": "148",
       "trades_per_month": "2.50",
       "avg_return_per_trade": "0.0124"
@@ -930,7 +922,7 @@
     "IMX-USDT": {
       "best_limit": "92",
       "best_duration": "0",
-      "max_returns": "14.44",
+      "max_returns": "14.53",
       "trade_count": "219",
       "trades_per_month": "4.72",
       "avg_return_per_trade": "0.0123"
@@ -938,7 +930,7 @@
     "USTC-USDT": {
       "best_limit": "90",
       "best_duration": "0",
-      "max_returns": "4.66",
+      "max_returns": "4.68",
       "trade_count": "126",
       "trades_per_month": "3.19",
       "avg_return_per_trade": "0.0123"
@@ -946,7 +938,7 @@
     "CFG-USDT": {
       "best_limit": "88",
       "best_duration": "0",
-      "max_returns": "1.98",
+      "max_returns": "1.99",
       "trade_count": "57",
       "trades_per_month": "1.14",
       "avg_return_per_trade": "0.0121"
@@ -954,7 +946,7 @@
     "AVAX-USDT": {
       "best_limit": "93",
       "best_duration": "0",
-      "max_returns": "59.77",
+      "max_returns": "60.40",
       "trade_count": "349",
       "trades_per_month": "5.82",
       "avg_return_per_trade": "0.0118"
@@ -962,7 +954,7 @@
     "LEO-USDT": {
       "best_limit": "96",
       "best_duration": "0",
-      "max_returns": "35.53",
+      "max_returns": "35.68",
       "trade_count": "321",
       "trades_per_month": "4.25",
       "avg_return_per_trade": "0.0112"
@@ -970,7 +962,7 @@
     "DEP-USDT": {
       "best_limit": "95",
       "best_duration": "0",
-      "max_returns": "219.94",
+      "max_returns": "221.69",
       "trade_count": "490",
       "trades_per_month": "7.47",
       "avg_return_per_trade": "0.0111"
@@ -978,7 +970,7 @@
     "POLYDOGE-USDT": {
       "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "13.66",
+      "max_returns": "13.67",
       "trade_count": "236",
       "trades_per_month": "5.10",
       "avg_return_per_trade": "0.0111"
@@ -994,7 +986,7 @@
     "ADA-USDT": {
       "best_limit": "92",
       "best_duration": "0",
-      "max_returns": "17.53",
+      "max_returns": "17.54",
       "trade_count": "267",
       "trades_per_month": "3.09",
       "avg_return_per_trade": "0.0108"
@@ -1002,7 +994,7 @@
     "LAT-USDT": {
       "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "8.35",
+      "max_returns": "8.41",
       "trade_count": "216",
       "trades_per_month": "4.13",
       "avg_return_per_trade": "0.0099"
@@ -1010,7 +1002,7 @@
     "SWFTC-USDT": {
       "best_limit": "91",
       "best_duration": "0",
-      "max_returns": "87.06",
+      "max_returns": "86.71",
       "trade_count": "453",
       "trades_per_month": "4.88",
       "avg_return_per_trade": "0.0099"
