@@ -150,6 +150,41 @@ python3 test_hourly_sell_timing.py
 - **Quick Exits**: SNT, SUSHI benefit from 2-4 hour sell timing
 - **Patient Strategy**: OKB, NMR, RVN require 22-24 hour holds for optimal results
 
+### Take-Profit Strategy Analysis (124 Cryptocurrencies)
+
+**Comprehensive Take-Profit Optimization**:
+- **Analyzed Cryptocurrencies**: 124 cryptocurrencies with complete hourly data
+- **Data Coverage**: Full historical hourly data (2022-2025, 3+ years)
+- **Strategy**: Buy at limit price, sell at take-profit or after 20 hours
+- **Average Improvement**: 2.5× return enhancement
+
+**Key Findings**:
+- **Optimal Take-Profit Range**: 3.0% - 30.0% (most common: 10.0%)
+- **Success Rate**: 100% of tested cryptocurrencies showed improvement
+- **Best Performers**: DEP-USDT (111.95×), RIO-USDT (43.57×), POLYDOGE-USDT (13.27×)
+- **Take-Profit Hit Rate**: Average 20-30% of trades trigger take-profit
+
+**Top 10 Take-Profit Strategy Performers**:
+| Rank | Cryptocurrency | Optimal TP | Improvement | Win Rate | TP Hit Rate | Trades |
+|------|----------------|------------|-------------|----------|-------------|---------|
+| 1 | **DEP-USDT** | **7.0%** | **111.95×** | 71.8% | 26.2% | 621 |
+| 2 | **RIO-USDT** | **15.0%** | **43.57×** | 73.3% | 15.7% | 764 |
+| 3 | **POLYDOGE-USDT** | **10.0%** | **13.27×** | 75.2% | 27.7% | 411 |
+| 4 | **USTC-USDT** | **10.0%** | **7.38×** | 73.0% | 22.5% | 285 |
+| 5 | **LAT-USDT** | **15.0%** | **6.94×** | 69.3% | 12.9% | 303 |
+| 6 | **CTC-USDT** | **7.0%** | **6.49×** | 67.1% | 23.7% | 371 |
+| 7 | **RACA-USDT** | **10.0%** | **5.73×** | 69.0% | 21.4% | 42 |
+| 8 | **CITY-USDT** | **5.0%** | **5.44×** | 65.4% | 36.4% | 107 |
+| 9 | **OMI-USDT** | **15.0%** | **5.00×** | 65.4% | 11.5% | 104 |
+| 10 | **RVN-USDT** | **10.0%** | **4.41×** | 71.0% | 22.6% | 31 |
+
+**Take-Profit Distribution**:
+- **10.0%**: 29 cryptos (23.4%) - Most popular
+- **15.0%**: 25 cryptos (20.2%) - Second most popular
+- **7.0%**: 21 cryptos (16.9%) - Conservative approach
+- **20.0%**: 20 cryptos (16.1%) - Patient strategy
+- **30.0%**: 13 cryptos (10.5%) - Aggressive approach
+
 ### Risk Categories
 
 | Category | P Range | Count | Examples | Risk Level |
@@ -191,6 +226,7 @@ python3 test_hourly_sell_timing.py
 - **`crypto_trading_triggers.json`** - Daily strategy triggers for all 190 cryptos
 - **`crypto_hourly_sell_config.json`** - Hourly strategy configuration (5 test cryptos)
 - **`crypto_hourly_sell_config_full.json`** - Complete hourly strategy configuration (54 optimized cryptos)
+- **`optimal_take_profit_config.json`** - Optimal take-profit ratios for 124 cryptocurrencies
 
 ### Data Files
 - **`data/vectorized_optimization_*.json`** - Full optimization results
@@ -233,6 +269,27 @@ stats = hourly_config['statistics']
 print(f"Success rate: {stats['success_rate']}")
 print(f"Average compound return: {stats['compound_returns']['mean']:.3f}×")
 print(f"Average win rate: {stats['win_rates']['mean']:.1%}")
+```
+
+### Load Take-Profit Configuration
+```python
+# Load optimal take-profit configuration
+with open('optimal_take_profit_config.json', 'r') as f:
+    tp_config = json.load(f)
+
+# Get take-profit settings for specific crypto
+btc_tp = tp_config['crypto_configs']['BTC-USDT']
+optimal_tp_ratio = btc_tp['optimal_take_profit_ratio']
+improvement = btc_tp['improvement_multiplier']
+
+print(f"Optimal take-profit: {optimal_tp_ratio:.1%}")
+print(f"Expected improvement: {improvement:.2f}×")
+print(f"Win rate: {btc_tp['win_rate']:.1%}")
+print(f"Take-profit hit rate: {btc_tp['tp_hit_rate']:.1%}")
+
+# View all available cryptos
+available_cryptos = list(tp_config['crypto_configs'].keys())
+print(f"Available cryptos: {len(available_cryptos)}")
 ```
 
 ### Check Buy Signal
