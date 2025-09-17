@@ -58,7 +58,8 @@ class HistoricalDataLoader:
             # Create DataFrame for easier processing
             df = pd.DataFrame(raw_data, columns=expected_columns)
             
-            # Convert timestamp to datetime
+            # Convert timestamp to numeric first, then to datetime
+            df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
             df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
             df['date'] = df['datetime'].dt.date
             df['time'] = df['datetime'].dt.time
@@ -270,7 +271,8 @@ class HistoricalDataLoader:
             return None
     
     def get_data_for_date_range(self, instId: str, days: int, bar: str = "1m", 
-                               return_dataframe: bool = True) -> Optional[Any]:
+                               return_dataframe: bool = True, start_date: Optional[datetime] = None, 
+                               end_date: Optional[datetime] = None) -> Optional[Any]:
         """
         Get data for a specific number of days from the latest available data
         Args:
@@ -278,6 +280,8 @@ class HistoricalDataLoader:
             days: Number of days to look back
             bar: Timeframe
             return_dataframe: If True, return DataFrame, else numpy array
+            start_date: Optional start date (if provided, overrides days calculation)
+            end_date: Optional end date (if provided, overrides days calculation)
         """
         try:
             # Get all data first to find the latest timestamp
@@ -286,18 +290,24 @@ class HistoricalDataLoader:
                 logger.error(f"No data available for {instId}")
                 return None
             
-            # Get the latest timestamp
-            latest_timestamp = all_data['timestamp'].max()
-            
-            # Calculate start timestamp for specified days
-            start_timestamp = latest_timestamp - (days * 24 * 60 * 60 * 1000)
-            
-            logger.info(f"Getting {days} days data for {instId}: "
-                       f"from {self.convert_timestamp_to_date(start_timestamp)} "
-                       f"to {self.convert_timestamp_to_date(latest_timestamp)}")
+            if start_date and end_date:
+                # Use provided date range
+                start_timestamp = int(start_date.timestamp() * 1000)
+                end_timestamp = int(end_date.timestamp() * 1000)
+                
+                logger.info(f"Getting data for {instId} from {start_date} to {end_date}")
+            else:
+                # Use days calculation
+                latest_timestamp = all_data['timestamp'].max()
+                start_timestamp = latest_timestamp - (days * 24 * 60 * 60 * 1000)
+                end_timestamp = latest_timestamp
+                
+                logger.info(f"Getting {days} days data for {instId}: "
+                           f"from {self.convert_timestamp_to_date(start_timestamp)} "
+                           f"to {self.convert_timestamp_to_date(end_timestamp)}")
             
             # Get the filtered data
-            return self.get_hist_candle_data(instId, start_timestamp, latest_timestamp, 
+            return self.get_hist_candle_data(instId, start_timestamp, end_timestamp, 
                                            bar, return_dataframe)
             
         except Exception as e:
