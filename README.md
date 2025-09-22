@@ -1,46 +1,33 @@
 # OKX Cryptocurrency Trading System
 
-A comprehensive cryptocurrency trading system with advanced strategy optimization.
+A comprehensive cryptocurrency trading system for data collection, strategy optimization, and automated trading.
 
 ## 🎯 Core Features
 
-- **Historical Data Management**: OKX API integration for market data
-- **Strategy Optimization**: Ultra-fast parameter optimization with train/test split
+- **Historical Data Management**: OKX API integration for market data collection
 - **Real-time Trading**: WebSocket connections and order management
 - **Risk Management**: Sophisticated stop-loss and take-profit mechanisms
+- **Data Storage**: Efficient NPZ format for large datasets
 
-## 🚀 Strategy Optimization System
+## 🚀 System Architecture
 
-### Key Innovation: Intraday Mean Reversion Strategy
+### Data Collection
+- **Hourly Data**: `fetch_all_cryptos_hourly.py` - Collects 1H OHLCV data
+- **Daily Data**: `fetch_all_cryptos_daily.py` - Collects 1D OHLCV data
+- **Storage**: Data stored in compressed NPZ format in `data/` directory
+
+### Strategy Optimization
+- **Vectorized Optimization**: `run_full_vectorized_optimization.py`
+- **Parameter Search**: Automated grid search for optimal trading parameters
+- **Configuration Generation**: Automated config file generation for best parameters
+
+## 📊 Trading Strategy
+
+### Intraday Mean Reversion Strategy
 - **Entry**: Buy when hourly low ≤ daily_open × (1 - b%)
-- **Stop Loss**: Exit when price ≤ daily_open × (1 - l%)  
-- **Take Profit**: Exit when price ≥ daily_open × (1 + p%)
+- **Stop Loss**: Exit when price ≤ entry_price × (1 - l%)  
+- **Take Profit**: Exit when price ≥ entry_price × (1 + p%)
 - **End of Day**: Exit at close if neither SL/TP triggered
-
-### Research Module
-```
-research/
-├── data_loader.py              # Market data integration
-├── final_ultra_optimizer.py    # 🎯 Core optimization engine
-├── run_final_optimization.py   # 🚀 Main execution script
-└── README.md                   # Detailed documentation
-
-run_strategy_optimization.py    # 📋 Convenient wrapper script
-```
-
-## 📊 Performance Results
-
-Recent optimization results (91-day out-of-sample testing):
-
-| Symbol | Test Return | Optimal Parameters (b%, l%, p%) | Annualized |
-|--------|-------------|----------------------------------|------------|
-| ACA-USDT | 51.53% | 5.0, 2.5, 10.5 | 471.2% |
-| 1INCH-USDT | 87.38% | 2.0, 1.0, 4.0 | 801.1% |
-| BTC-USDT | 26.5% | 1.5, 0.8, 5.0 | 243.1% |
-
-- **Average Return**: 55.1% (91 days)
-- **Success Rate**: 100% (all tested symbols profitable)
-- **Method**: Strict train/test split, no data leakage
 
 ## 🔧 Quick Start
 
@@ -49,31 +36,30 @@ Recent optimization results (91-day out-of-sample testing):
 pip install -r requirements.txt
 ```
 
-### Run Strategy Optimization
+### Data Collection
 ```bash
-# Method 1: Use wrapper script
-python run_strategy_optimization.py
+# Fetch hourly data for all cryptocurrencies
+python fetch_all_cryptos_hourly.py
 
-# Method 2: Run research module directly  
-python -m research.run_final_optimization
-
-# Quick mode (non-interactive):
-# Runs 3 symbols with a compact grid and ~60-day test window
-printf "1\n" | python -m research.run_final_optimization | cat
+# Fetch daily data for all cryptocurrencies  
+python fetch_all_cryptos_daily.py
 ```
 
-### Options
-1. Quick test (3 symbols, ~30-90 seconds, ~60-day test window, compact grid)
-2. Medium test (10 symbols, ~2 minutes)  
-3. Full optimization (184 symbols, ~10 minutes)
+### Strategy Optimization
+```bash
+# Run vectorized optimization
+python run_full_vectorized_optimization.py
+
+# Generate optimal configurations
+python generate_full_hourly_config.py
+```
 
 ## ⚡ Technical Features
 
-- **Ultra-fast**: Vectorized calculations with numpy (quick mode uses float32 arrays)
+- **High Performance**: Vectorized calculations with numpy
 - **Scalable**: Processes 184+ cryptocurrencies efficiently
-- **Rigorous**: Proper train/test methodology prevents overfitting
-- **Comprehensive**: Tests 4,350+ parameter combinations per symbol
-  - Quick mode uses a compact parameter grid for speed
+- **Configurable**: Flexible parameter ranges and trading rules
+- **Data Efficient**: Compressed storage format reduces disk usage
 
 ## 📈 Data Requirements
 
