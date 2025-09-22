@@ -56,19 +56,24 @@ python run_strategy_optimization.py
 
 # Method 2: Run research module directly  
 python -m research.run_final_optimization
+
+# Quick mode (non-interactive):
+# Runs 3 symbols with a compact grid and ~60-day test window
+printf "1\n" | python -m research.run_final_optimization | cat
 ```
 
 ### Options
-1. Quick test (3 symbols, ~30 seconds)
+1. Quick test (3 symbols, ~30-90 seconds, ~60-day test window, compact grid)
 2. Medium test (10 symbols, ~2 minutes)  
 3. Full optimization (184 symbols, ~10 minutes)
 
 ## ⚡ Technical Features
 
-- **Ultra-fast**: Vectorized calculations with numpy
+- **Ultra-fast**: Vectorized calculations with numpy (quick mode uses float32 arrays)
 - **Scalable**: Processes 184+ cryptocurrencies efficiently
 - **Rigorous**: Proper train/test methodology prevents overfitting
 - **Comprehensive**: Tests 4,350+ parameter combinations per symbol
+  - Quick mode uses a compact parameter grid for speed
 
 ## 📈 Data Requirements
 
