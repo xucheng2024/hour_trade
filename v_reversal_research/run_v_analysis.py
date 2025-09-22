@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+V-shaped Reversal Analysis Runner
+V型反转分析运行器
+"""
+
+import os
+import sys
+import logging
+import json
+from datetime import datetime
+from typing import Dict, List
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data_loader import VReversalDataLoader
+from v_pattern_detector import VPatternDetector, print_pattern_summary
+from v_strategy_backtester import VReversalBacktester, print_backtest_summary
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def run_comprehensive_analysis(symbols: List[str] = None, 
+                             months: int = 6,
+                             save_results: bool = True) -> Dict:
+    """
+    运行完整的V型反转分析
+    
+    Args:
+        symbols: 要分析的币种列表
+        months: 分析几个月的数据
+        save_results: 是否保存结果
+        
+    Returns:
+        分析结果字典
+    """
+    print("🚀 Starting V-shaped Reversal Analysis")
+    print("=" * 60)
+    
+    # 1. 加载数据
+    print("📊 Loading data...")
+    data_loader = VReversalDataLoader()
+    
+    if symbols is None:
+        # 选择一些主要币种进行分析
+        available_symbols = data_loader.get_available_symbols()
+        symbols = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT', '1INCH-USDT', 'AAVE-USDT', 'ACA-USDT']
+        symbols = [s for s in symbols if s in available_symbols][:5]  # 最多5个币种
+    
+    data_dict = data_loader.load_multiple_symbols(symbols, months=months)
+    
+    if not data_dict:
+        print("❌ No data loaded")
+        return {}
+    
+    print(f"✅ Loaded data for {len(data_dict)} symbols")
+    
+    # 2. V型模式检测
+    print("\n🔍 Detecting V-shaped patterns...")
+    detector = VPatternDetector(
+        min_depth_pct=0.03,     # 最小下跌3%
+        max_depth_pct=0.25,     # 最大下跌25%
+        min_recovery_pct=0.70,  # 最小恢复70%
+        max_total_time=48,      # 最大总时间48小时
+        max_recovery_time=24    # 最大恢复时间24小时
+    )
+    
+    all_patterns = {}
+    total_patterns = 0
+    
+    for symbol, df in data_dict.items():
+        patterns = detector.detect_patterns(df)
+        all_patterns[symbol] = patterns
+        total_patterns += len(patterns)
+        
+        print(f"  {symbol}: {len(patterns)} patterns detected")
+        if patterns:
+            print_pattern_summary(patterns[:3])  # 显示前3个模式
+    
+    print(f"\n✅ Total patterns detected: {total_patterns}")
+    
+    # 3. 策略回测
+    print("\n📈 Running strategy backtest...")
+    backtester = VReversalBacktester(
+        holding_hours=20,         # 固定持有20小时
+        min_pattern_quality=0.2,  # 最小质量分数0.2
+        transaction_cost=0.001    # 交易费用0.1%
+    )
+    
+    backtest_results = backtester.backtest_multiple_symbols(data_dict, detector)
+    
+    # 4. 显示结果
+    print_backtest_summary(backtest_results)
+    
+    # 5. 生成详细报告
+    summary = backtester.generate_summary_report(backtest_results)
+    
+    print(f"\n📋 Strategy Summary:")
+    print(f"  Total symbols: {summary['overview']['total_symbols']}")
+    print(f"  Total patterns: {summary['overview']['total_patterns']}")
+    print(f"  Total trades: {summary['overview']['total_trades']}")
+    print(f"  Overall win rate: {summary['overview']['overall_win_rate']:.1%}")
+    print(f"  Average return per trade: {summary['overview']['avg_return_per_trade']:.2%}")
+    print(f"  Total strategy return: {summary['overview']['total_return']:.2%}")
+    print(f"  Sharpe ratio: {summary['overview']['sharpe_ratio']:.2f}")
+    print(f"  Average holding time: {summary['overview']['avg_holding_hours']:.1f} hours")
+    
+    # 退出原因分析
+    print(f"\n🚪 Exit Analysis:")
+    for reason, stats in summary['exit_analysis'].items():
+        print(f"  {reason}: {stats['count']} trades ({stats['avg_return']:.2%} avg return)")
+    
+    # 6. 保存结果
+    if save_results:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 保存详细结果
+        results_file = f"v_reversal_analysis_{timestamp}.json"
+        
+        # 准备可序列化的结果
+        serializable_results = {
+            "metadata": {
+                "timestamp": timestamp,
+                "symbols": symbols,
+                "months": months,
+                "total_patterns": total_patterns
+            },
+            "detector_config": {
+                "min_depth_pct": detector.min_depth_pct,
+                "max_depth_pct": detector.max_depth_pct,
+                "min_recovery_pct": detector.min_recovery_pct,
+                "max_total_time": detector.max_total_time,
+                "max_recovery_time": detector.max_recovery_time
+            },
+            "backtester_config": {
+                "holding_hours": backtester.holding_hours,
+                "min_pattern_quality": backtester.min_pattern_quality,
+                "transaction_cost": backtester.transaction_cost,
+                "strategy_type": "fixed_holding_only"
+            },
+            "summary": summary,
+            "pattern_details": {}
+        }
+        
+        # 添加模式详情
+        for symbol, patterns in all_patterns.items():
+            serializable_results["pattern_details"][symbol] = []
+            for pattern in patterns:
+                serializable_results["pattern_details"][symbol].append({
+                    "start_time": pattern.start_time.isoformat(),
+                    "bottom_time": pattern.bottom_time.isoformat(),
+                    "recovery_time": pattern.recovery_time_stamp.isoformat(),
+                    "depth_pct": pattern.depth_pct,
+                    "recovery_hours": pattern.recovery_time,
+                    "total_hours": pattern.total_time,
+                    "volume_spike": pattern.volume_spike,
+                    "start_price": pattern.start_price,
+                    "bottom_price": pattern.bottom_price,
+                    "recovery_price": pattern.recovery_price
+                })
+        
+        # 保存到data目录
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        data_dir = os.path.join(parent_dir, 'data')
+        results_path = os.path.join(data_dir, results_file)
+        
+        with open(results_path, 'w') as f:
+            json.dump(serializable_results, f, indent=2, ensure_ascii=False)
+        
+        print(f"💾 Results saved to: {results_path}")
+    
+    return summary
+
+def quick_test():
+    """快速测试V型反转策略"""
+    print("⚡ Quick V-Reversal Test")
+    print("=" * 40)
+    
+    # 使用较少币种和较短时间进行快速测试
+    result = run_comprehensive_analysis(
+        symbols=['BTC-USDT', 'ETH-USDT', '1INCH-USDT'], 
+        months=3,
+        save_results=True
+    )
+    
+    return result
+
+def full_analysis():
+    """完整分析"""
+    print("🔬 Full V-Reversal Analysis")
+    print("=" * 40)
+    
+    # 使用更多币种和更长时间进行完整分析
+    result = run_comprehensive_analysis(
+        symbols=None,  # 使用默认币种列表
+        months=6,
+        save_results=True
+    )
+    
+    return result
+
+def main():
+    """主函数"""
+    print("🎯 V-shaped Reversal Strategy Analysis")
+    print("=" * 50)
+    print("1. Quick test (3 symbols, 3 months)")
+    print("2. Full analysis (5 symbols, 6 months)")
+    print("3. Custom analysis")
+    
+    try:
+        choice = input("\nSelect option (1-3): ").strip()
+        
+        if choice == '1':
+            result = quick_test()
+        elif choice == '2':
+            result = full_analysis()
+        elif choice == '3':
+            symbols_input = input("Enter symbols (comma-separated, or press Enter for default): ").strip()
+            months_input = input("Enter months (default 6): ").strip()
+            
+            symbols = None
+            if symbols_input:
+                symbols = [s.strip().upper() for s in symbols_input.split(',')]
+            
+            months = 6
+            if months_input:
+                try:
+                    months = int(months_input)
+                except ValueError:
+                    print("Invalid months input, using default 6")
+            
+            result = run_comprehensive_analysis(symbols=symbols, months=months)
+        else:
+            print("Invalid choice")
+            return
+        
+        print("\n🎉 Analysis completed successfully!")
+        
+    except KeyboardInterrupt:
+        print("\n\n⏹️  Analysis interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Error during analysis: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
