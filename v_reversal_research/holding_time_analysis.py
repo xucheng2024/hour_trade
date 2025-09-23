@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Holding Time Analysis for V-Pattern Strategy
-V型反转策略持有时间分析
+V-shaped reversal strategy holding time analysis
 """
 
 import os
@@ -26,15 +26,15 @@ logger = logging.getLogger(__name__)
 
 def analyze_holding_time_impact(symbols: List[str] = None, total_months: int = 6, test_months: int = 3):
     """
-    分析不同持有时间对收益的影响
+    Analyze the impact of different holding times on returns
     """
     print("📊 V-Pattern Strategy: Holding Time Impact Analysis")
     print("=" * 70)
-    print("🎯 重点分析: 买入后最佳持有时间")
-    print("⏰ 测试范围: 6小时 到 72小时")
+    print("🎯 Focus: Optimal holding time after purchase")
+    print("⏰ Test range: 6 hours to 72 hours")
     print()
     
-    # 1. 加载数据
+    # 1. Load data
     print("📊 Loading data...")
     data_loader = VReversalDataLoader()
     
@@ -49,7 +49,7 @@ def analyze_holding_time_impact(symbols: List[str] = None, total_months: int = 6
     
     print(f"✅ Loaded data for {len(data_dict)} symbols")
     
-    # 2. 运行优化
+    # 2. Run optimization
     print("\n⚡ Starting holding time optimization...")
     maximizer = VectorizedProfitMaximizer(test_months=test_months)
     
@@ -63,65 +63,65 @@ def analyze_holding_time_impact(symbols: List[str] = None, total_months: int = 6
     
     print(f"✅ Optimization completed in {optimization_time:.1f}s")
     
-    # 3. 分析持有时间影响
+    # 3. Analyze holding time impact
     analyze_holding_time_patterns(results)
     
-    # 4. 保存详细结果
+    # 4. Save detailed results
     save_holding_analysis(results, maximizer)
     
     return results
 
 def analyze_holding_time_patterns(results: Dict[str, MaxProfitParams]):
-    """分析持有时间模式"""
+    """Analyze holding time patterns"""
     print(f"\n⏰ Holding Time Analysis Results")
     print("=" * 80)
     
     for symbol, result in results.items():
         print(f"\n💰 {symbol} - Optimal Holding Configuration:")
-        print(f"  🕐 最佳持有时间: {result.holding_hours} 小时")
-        print(f"  📈 测试收益: {result.test_return:.2%}")
-        print(f"  🎯 胜率: {result.test_win_rate:.1%}")
-        print(f"  📊 交易次数: {result.test_trades}")
-        print(f"  ⚖️ 盈亏比: {result.profit_factor:.2f}")
+        print(f"  🕐 Optimal holding time: {result.holding_hours} hours")
+        print(f"  📈 Test return: {result.test_return:.2%}")
+        print(f"  🎯 Win rate: {result.test_win_rate:.1%}")
+        print(f"  📊 Number of trades: {result.test_trades}")
+        print(f"  ⚖️ Profit factor: {result.profit_factor:.2f}")
         
-        # 分析持有时间的合理性
+        # Analyze the reasonableness of holding time
         analyze_holding_logic(symbol, result)
 
 def analyze_holding_logic(symbol: str, result: MaxProfitParams):
-    """分析持有时间的逻辑"""
+    """Analyze holding time logic"""
     holding_hours = result.holding_hours
     
-    print(f"  🧠 持有时间分析:")
+    print(f"  🧠 Holding time analysis:")
     
     if holding_hours <= 8:
-        print(f"    ⚡ 超短线策略 ({holding_hours}h) - 快进快出，适合高频交易")
-        risk_level = "低风险"
+        print(f"    ⚡ Ultra-short strategy ({holding_hours}h) - Quick in and out, suitable for high-frequency trading")
+        risk_level = "Low risk"
     elif holding_hours <= 24:
-        print(f"    🎯 短线策略 ({holding_hours}h) - 日内交易，避免隔夜风险") 
-        risk_level = "中等风险"
+        print(f"    🎯 Short-term strategy ({holding_hours}h) - Intraday trading, avoiding overnight risk") 
+        risk_level = "Medium risk"
     elif holding_hours <= 48:
-        print(f"    📈 中线策略 ({holding_hours}h) - 跨日持有，捕捉更大趋势")
-        risk_level = "中高风险"
+        print(f"    📈 Medium-term strategy ({holding_hours}h) - Cross-day holding, capturing larger trends")
+        risk_level = "Medium-high risk"
     else:
-        print(f"    🏔️ 长线策略 ({holding_hours}h) - 多日持有，趋势跟踪")
-        risk_level = "高风险"
+        print(f"    🏔️ Long-term strategy ({holding_hours}h) - Multi-day holding, trend following")
+        risk_level = "High risk"
     
-    print(f"    🛡️ 风险等级: {risk_level}")
+    print(f"    🛡️ Risk level: {risk_level}")
     
-    # 计算理论年化收益
+    # Calculate theoretical annual return
     if result.test_trades > 0:
         avg_days_per_trade = holding_hours / 24
         trades_per_year = 365 / avg_days_per_trade
         single_trade_return = result.test_return / result.test_trades
         theoretical_annual = single_trade_return * trades_per_year
-        print(f"    📊 理论年化: {theoretical_annual:.1%} (基于平均单笔收益)")
+        print(f"    📊 Theoretical annual: {theoretical_annual:.1%} (based on average single trade return)")
 
 def compare_holding_strategies(results: Dict[str, MaxProfitParams]):
-    """对比不同持有策略"""
+    """Compare different holding strategies"""
     print(f"\n📊 Holding Strategy Comparison")
     print("=" * 80)
     
-    # 按持有时间分组
+    # Group by holding time
     strategies = {
         'Ultra Short (≤8h)': [],
         'Short (9-24h)': [],
@@ -149,19 +149,19 @@ def compare_holding_strategies(results: Dict[str, MaxProfitParams]):
         avg_win_rate = np.mean([r[1].test_win_rate for r in strategy_results])
         avg_trades = np.mean([r[1].test_trades for r in strategy_results])
         
-        print(f"  📈 平均收益: {avg_return:.2%}")
-        print(f"  🎯 平均胜率: {avg_win_rate:.1%}")
-        print(f"  📊 平均交易数: {avg_trades:.0f}")
+        print(f"  📈 Average return: {avg_return:.2%}")
+        print(f"  🎯 Average win rate: {avg_win_rate:.1%}")
+        print(f"  📊 Average trades: {avg_trades:.0f}")
         
         for symbol, result in strategy_results:
             print(f"    {symbol}: {result.holding_hours}h, {result.test_return:.1%}")
 
 def save_holding_analysis(results: Dict[str, MaxProfitParams], maximizer: VectorizedProfitMaximizer):
-    """保存持有时间分析结果"""
+    """Save holding time analysis results"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"holding_time_analysis_{timestamp}.json"
     
-    # 准备分析数据
+    # Prepare analysis data
     analysis_data = {
         "metadata": {
             "timestamp": datetime.now().isoformat(),
@@ -177,14 +177,14 @@ def save_holding_analysis(results: Dict[str, MaxProfitParams], maximizer: Vector
         "detailed_results": {}
     }
     
-    # 统计持有时间分布
+    # Statistics of holding time distribution
     holding_times = [r.holding_hours for r in results.values()]
     unique_times, counts = np.unique(holding_times, return_counts=True)
     
     for time_val, count in zip(unique_times, counts):
         analysis_data["summary"]["holding_distribution"][f"{time_val}h"] = int(count)
     
-    # 详细结果
+    # Detailed results
     for symbol, result in results.items():
         analysis_data["detailed_results"][symbol] = {
             "optimal_holding_hours": int(result.holding_hours),
@@ -199,7 +199,7 @@ def save_holding_analysis(results: Dict[str, MaxProfitParams], maximizer: Vector
             }
         }
     
-    # 保存文件
+    # Save file
     import json
     parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     data_dir = os.path.join(parent_dir, 'data')
@@ -212,44 +212,44 @@ def save_holding_analysis(results: Dict[str, MaxProfitParams], maximizer: Vector
     return results_path
 
 def print_holding_time_insights():
-    """打印持有时间优化的洞察"""
+    """Print holding time optimization insights"""
     print(f"\n💡 Holding Time Optimization Insights")
     print("=" * 80)
-    print("🔍 关键发现:")
-    print("  1. 持有时间过短 (<6h): 可能错过趋势发展")
-    print("  2. 持有时间过长 (>72h): 承担更多市场风险")
-    print("  3. 最优持有时间取决于:")
-    print("     - 币种波动特性")
-    print("     - 市场环境")
-    print("     - 止盈止损设置")
-    print("     - 交易频率要求")
+    print("🔍 Key findings:")
+    print("  1. Too short holding time (<6h): May miss trend development")
+    print("  2. Too long holding time (>72h): Bears more market risk")
+    print("  3. Optimal holding time depends on:")
+    print("     - Cryptocurrency volatility characteristics")
+    print("     - Market environment")
+    print("     - Stop loss and take profit settings")
+    print("     - Trading frequency requirements")
     print()
-    print("🎯 策略建议:")
-    print("  • 超短线 (6-8h): 适合高波动期，快进快出")
-    print("  • 短线 (12-24h): 平衡风险收益，日内完成")
-    print("  • 中线 (24-48h): 捕捉较大趋势，适合趋势明确时")
-    print("  • 长线 (48h+): 只在强趋势确认时使用")
+    print("🎯 Strategy recommendations:")
+    print("  • Ultra-short (6-8h): Suitable for high volatility periods, quick in and out")
+    print("  • Short-term (12-24h): Balance risk and return, complete within day")
+    print("  • Medium-term (24-48h): Capture larger trends, suitable when trend is clear")
+    print("  • Long-term (48h+): Only use when strong trend is confirmed")
 
 def main():
-    """主函数"""
+    """Main function"""
     print("⏰ V-Pattern Holding Time Optimizer")
     print("=" * 60)
-    print("🎯 专门优化买入后的最佳持有时间")
+    print("🎯 Specifically optimizes the best holding time after purchase")
     print()
     
     try:
-        # 运行持有时间分析
+        # Run holding time analysis
         results = analyze_holding_time_impact()
         
         if results:
-            # 对比分析
+            # Comparative analysis
             compare_holding_strategies(results)
             
-            # 打印洞察
+            # Print insights
             print_holding_time_insights()
             
-            print(f"\n🎉 持有时间优化完成!")
-            print(f"💡 现在你知道每个币种的最佳持有时间了!")
+            print(f"\n🎉 Holding time optimization completed!")
+            print(f"💡 Now you know the optimal holding time for each cryptocurrency!")
         
     except KeyboardInterrupt:
         print("\n\n⏹️  Analysis interrupted by user")

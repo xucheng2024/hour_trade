@@ -1,6 +1,6 @@
 {
   "generated_at": "2025-09-14T13:21:00.695557",
-  "description": "每个加密货币的最优止盈比例配置",
+  "description": "Optimal take profit ratio configuration for each cryptocurrency",
   "total_cryptos": 124,
   "crypto_configs": {
     "AAVE-USDT": {

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Vectorized Profit Maximizer for V-Pattern Strategy
-向量化V型反转策略利润最大化器
+Vectorized V-shaped reversal strategy profit maximizer
 """
 
 import numpy as np
@@ -19,19 +19,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MaxProfitParams:
-    """利润最大化参数"""
+    """Profit maximization parameters"""
     symbol: str
-    # V型检测参数
+    # V-pattern detection parameters
     min_depth_pct: float
     max_depth_pct: float
     min_recovery_pct: float
     max_total_time: int
     max_recovery_time: int
-    # 交易参数
+    # Trading parameters
     stop_loss_pct: float
     take_profit_pct: float
     holding_hours: int
-    # 性能指标
+    # Performance metrics
     train_return: float
     test_return: float
     train_win_rate: float
@@ -43,17 +43,17 @@ class MaxProfitParams:
     profit_factor: float
 
 def find_local_extremes_fast(prices: np.ndarray, window: int = 3) -> Tuple[np.ndarray, np.ndarray]:
-    """快速寻找局部极值点"""
+    """Fast local extremum finding"""
     peaks = []
     troughs = []
     
     for i in range(window, len(prices) - window):
-        # 检查局部高点
+        # Check for local highs
         if all(prices[i] >= prices[i-j] for j in range(1, window+1)) and \
            all(prices[i] >= prices[i+j] for j in range(1, window+1)):
             peaks.append(i)
         
-        # 检查局部低点
+        # Check for local lows
         if all(prices[i] <= prices[i-j] for j in range(1, window+1)) and \
            all(prices[i] <= prices[i+j] for j in range(1, window+1)):
             troughs.append(i)
@@ -66,7 +66,7 @@ def vectorized_v_detection_fast(prices: np.ndarray,
                                min_recovery: float,
                                max_total_time: int,
                                max_recovery_time: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """快速向量化V型检测"""
+    """Fast vectorized V-pattern detection"""
     peaks, troughs = find_local_extremes_fast(prices)
     
     patterns_start = []
@@ -79,7 +79,7 @@ def vectorized_v_detection_fast(prices: np.ndarray,
             
         start_price = prices[peak_idx]
         
-        # 寻找该高点后的低点
+        # Find troughs after this peak
         valid_troughs = troughs[(troughs > peak_idx) & 
                                (troughs <= peak_idx + max_total_time)]
         
@@ -92,7 +92,7 @@ def vectorized_v_detection_fast(prices: np.ndarray,
             
             recovery_threshold = bottom_price + (start_price - bottom_price) * min_recovery
             
-            # 向量化寻找恢复点
+            # Vectorized search for recovery point
             recovery_end = min(trough_idx + max_recovery_time, len(prices))
             recovery_slice = prices[trough_idx+1:recovery_end]
             
@@ -113,7 +113,7 @@ def vectorized_advanced_backtest(prices: np.ndarray,
                                 take_profit_pct: float,
                                 holding_hours: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    向量化高级回测，包含止盈止损
+    Vectorized advanced backtesting with stop loss and take profit
     
     Returns:
         (returns, exit_reasons, holding_times)
@@ -130,36 +130,36 @@ def vectorized_advanced_backtest(prices: np.ndarray,
         entry_price = prices[entry_idx]
         max_exit_idx = min(entry_idx + holding_hours, len(prices) - 1)
         
-        # 计算止损止盈价位
+        # Calculate stop loss and take profit prices
         sl_price = entry_price * (1 - stop_loss_pct)
         tp_price = entry_price * (1 + take_profit_pct)
         
-        # 检查持有期间的价格
+        # Check prices during holding period
         exit_idx = max_exit_idx
-        exit_reason = 0  # 默认时间退出
+        exit_reason = 0  # Default time exit
         
         for j in range(entry_idx + 1, max_exit_idx + 1):
             low = prices[j] if j < len(prices) else prices[-1]
             high = prices[j] if j < len(prices) else prices[-1]
             
-            # 检查止损
+            # Check stop loss
             if low <= sl_price:
                 exit_idx = j
-                exit_reason = 1  # 止损
+                exit_reason = 1  # Stop loss
                 break
             
-            # 检查止盈
+            # Check take profit
             if high >= tp_price:
                 exit_idx = j
-                exit_reason = 2  # 止盈
+                exit_reason = 2  # Take profit
                 break
         
-        # 计算收益
-        if exit_reason == 1:  # 止损
+        # Calculate returns
+        if exit_reason == 1:  # Stop loss
             exit_price = sl_price
-        elif exit_reason == 2:  # 止盈
+        elif exit_reason == 2:  # Take profit
             exit_price = tp_price
-        else:  # 时间退出
+        else:  # Time exit
             exit_price = prices[exit_idx] if exit_idx < len(prices) else prices[-1]
         
         returns[i] = (exit_price - entry_price) / entry_price
@@ -169,32 +169,32 @@ def vectorized_advanced_backtest(prices: np.ndarray,
     return returns, exit_reasons, holding_times
 
 class VectorizedProfitMaximizer:
-    """向量化利润最大化器"""
+    """Vectorized profit maximizer"""
     
     def __init__(self, test_months: int = 3):
-        """初始化利润最大化器"""
+        """Initialize profit maximizer"""
         self.test_months = test_months
         
-        # 扩展的参数网格 - 专注于利润最大化，特别优化持有时间
+        # Extended parameter grid - focused on profit maximization, especially optimizing holding time
         self.param_ranges = {
-            # V型检测参数
+            # V-pattern detection parameters
             'min_depth_pct': np.array([0.02, 0.03, 0.05]),
             'max_depth_pct': np.array([0.10, 0.15, 0.20, 0.25]),
             'min_recovery_pct': np.array([0.60, 0.70, 0.80]),
             'max_total_time': np.array([24, 36, 48]),
             'max_recovery_time': np.array([12, 18, 24]),
             
-            # 利润最大化参数
-            'stop_loss_pct': np.array([0.03, 0.05, 0.08, 0.10]),      # 3%-10%止损
-            'take_profit_pct': np.array([0.08, 0.12, 0.15, 0.20, 0.25]), # 8%-25%止盈
-            'holding_hours': np.array([6, 8, 12, 16, 20, 24, 30, 36, 48, 72])  # 6-72小时持有 (重点优化)
+            # Profit maximization parameters
+            'stop_loss_pct': np.array([0.03, 0.05, 0.08, 0.10]),      # 3%-10% stop loss
+            'take_profit_pct': np.array([0.08, 0.12, 0.15, 0.20, 0.25]), # 8%-25% take profit
+            'holding_hours': np.array([6, 8, 12, 16, 20, 24, 30, 36, 48, 72])  # 6-72 hours holding (key optimization)
         }
         
         total_combinations = np.prod([len(v) for v in self.param_ranges.values()])
         logger.info(f"Profit Maximizer initialized with {total_combinations} parameter combinations")
     
     def split_data_by_time(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """按时间分割训练和测试数据"""
+        """Split training and test data by time"""
         df = df.sort_values('timestamp').reset_index(drop=True)
         
         latest_time = df['timestamp'].max()
@@ -206,7 +206,7 @@ class VectorizedProfitMaximizer:
         return train_df, test_df
     
     def calculate_performance_metrics(self, returns: np.ndarray, exit_reasons: np.ndarray) -> Dict:
-        """计算详细的性能指标"""
+        """Calculate detailed performance metrics"""
         if len(returns) == 0:
             return {
                 'total_return': 0.0,
@@ -219,28 +219,28 @@ class VectorizedProfitMaximizer:
                 'tp_rate': 0.0
             }
         
-        # 基本指标
+        # Basic metrics
         total_return = np.prod(1 + returns) - 1
         win_rate = np.mean(returns > 0)
         avg_return = np.mean(returns)
         
-        # 最大回撤
+        # Maximum drawdown
         cumulative = np.cumprod(1 + returns)
         running_max = np.maximum.accumulate(cumulative)
         drawdown = (cumulative - running_max) / running_max
         max_drawdown = np.min(drawdown)
         
-        # 夏普比率
+        # Sharpe ratio
         sharpe_ratio = avg_return / np.std(returns) if np.std(returns) > 0 else 0
         
-        # 盈亏比
+        # Profit factor
         wins = returns[returns > 0]
         losses = returns[returns < 0]
         profit_factor = (np.sum(wins) / abs(np.sum(losses))) if len(losses) > 0 and np.sum(losses) != 0 else float('inf')
         
-        # 退出方式统计
-        sl_rate = np.mean(exit_reasons == 1)  # 止损率
-        tp_rate = np.mean(exit_reasons == 2)  # 止盈率
+        # Exit method statistics
+        sl_rate = np.mean(exit_reasons == 1)  # Stop loss rate
+        tp_rate = np.mean(exit_reasons == 2)  # Take profit rate
         
         return {
             'total_return': total_return,
@@ -254,9 +254,9 @@ class VectorizedProfitMaximizer:
         }
     
     def evaluate_parameter_set(self, params: Dict, prices: np.ndarray) -> float:
-        """评估单组参数的利润潜力"""
+        """Evaluate profit potential of a single parameter set"""
         try:
-            # V型检测
+            # V-pattern detection
             starts, bottoms, recoveries = vectorized_v_detection_fast(
                 prices,
                 params['min_depth_pct'],
@@ -269,11 +269,11 @@ class VectorizedProfitMaximizer:
             if len(starts) == 0:
                 return 0.0
             
-            # 高级回测
+            # Advanced backtesting
             entry_indices = recoveries + 1
             valid_entries = entry_indices[entry_indices < len(prices) - params['holding_hours']]
             
-            if len(valid_entries) < 3:  # 至少需要3笔交易
+            if len(valid_entries) < 3:  # At least 3 trades needed
                 return 0.0
             
             returns, exit_reasons, holding_times = vectorized_advanced_backtest(
@@ -283,16 +283,16 @@ class VectorizedProfitMaximizer:
                 params['holding_hours']
             )
             
-            # 去除交易费用
-            returns = returns - 0.002  # 0.2%双边费用
+            # Deduct trading fees
+            returns = returns - 0.002  # 0.2% bilateral fees
             
             metrics = self.calculate_performance_metrics(returns, exit_reasons)
             
-            # 综合评分 - 专注利润最大化
+            # Comprehensive scoring - focused on profit maximization
             profit_score = metrics['total_return'] * 0.4
             consistency_score = metrics['win_rate'] * 0.2
-            risk_score = max(0, 1 + metrics['max_drawdown']) * 0.2  # 回撤越小越好
-            sharpe_score = min(metrics['sharpe_ratio'] / 3.0, 1.0) * 0.2  # 夏普比率归一化
+            risk_score = max(0, 1 + metrics['max_drawdown']) * 0.2  # Lower drawdown is better
+            sharpe_score = min(metrics['sharpe_ratio'] / 3.0, 1.0) * 0.2  # Sharpe ratio normalization
             
             return profit_score + consistency_score + risk_score + sharpe_score
             
@@ -301,11 +301,11 @@ class VectorizedProfitMaximizer:
             return 0.0
     
     def optimize_for_max_profit(self, symbol: str, df: pd.DataFrame) -> Optional[MaxProfitParams]:
-        """为单个币种优化利润最大化参数"""
+        """Optimize profit maximization parameters for a single cryptocurrency"""
         logger.info(f"🚀 Optimizing for maximum profit: {symbol}")
         
         try:
-            # 分割数据
+            # Split data
             train_df, test_df = self.split_data_by_time(df)
             
             if len(train_df) < 1000 or len(test_df) < 500:
@@ -317,7 +317,7 @@ class VectorizedProfitMaximizer:
             
             logger.info(f"  Train: {len(train_prices)} points, Test: {len(test_prices)} points")
             
-            # 生成参数组合
+            # Generate parameter combinations
             param_names = list(self.param_ranges.keys())
             param_values = list(self.param_ranges.values())
             
@@ -325,7 +325,7 @@ class VectorizedProfitMaximizer:
             best_params = None
             best_metrics = None
             
-            # 采用分批处理避免内存问题
+            # Use batch processing to avoid memory issues
             batch_size = 1000
             total_combinations = np.prod([len(v) for v in param_values])
             
@@ -334,7 +334,7 @@ class VectorizedProfitMaximizer:
             combination_count = 0
             for combo_batch in self._generate_param_batches(param_names, param_values, batch_size):
                 for params in combo_batch:
-                    # 基本约束检查
+                    # Basic constraint checks
                     if (params['min_depth_pct'] >= params['max_depth_pct'] or
                         params['max_recovery_time'] > params['max_total_time'] or
                         params['stop_loss_pct'] >= params['take_profit_pct']):
@@ -347,7 +347,7 @@ class VectorizedProfitMaximizer:
                         best_score = score
                         best_params = params.copy()
                         
-                        # 计算详细指标用于记录
+                        # Calculate detailed metrics for recording
                         best_metrics = self._get_detailed_metrics(params, train_prices, test_prices)
                 
                 if combination_count % 1000 == 0:
@@ -359,7 +359,7 @@ class VectorizedProfitMaximizer:
             
             logger.info(f"✅ {symbol} optimization complete: score {best_score:.4f}")
             
-            # 构建结果
+            # Build result
             result = MaxProfitParams(
                 symbol=symbol,
                 min_depth_pct=best_params['min_depth_pct'],
@@ -380,7 +380,7 @@ class VectorizedProfitMaximizer:
             return None
     
     def _generate_param_batches(self, param_names: List, param_values: List, batch_size: int):
-        """分批生成参数组合"""
+        """Generate parameter combinations in batches"""
         combinations = itertools.product(*param_values)
         
         batch = []
@@ -396,11 +396,11 @@ class VectorizedProfitMaximizer:
             yield batch
     
     def _get_detailed_metrics(self, params: Dict, train_prices: np.ndarray, test_prices: np.ndarray) -> Dict:
-        """获取详细的训练和测试指标"""
-        # 训练指标
+        """Get detailed training and test metrics"""
+        # Training metrics
         train_metrics = self._calculate_metrics_for_prices(params, train_prices)
         
-        # 测试指标  
+        # Test metrics  
         test_metrics = self._calculate_metrics_for_prices(params, test_prices)
         
         return {
@@ -416,7 +416,7 @@ class VectorizedProfitMaximizer:
         }
     
     def _calculate_metrics_for_prices(self, params: Dict, prices: np.ndarray) -> Dict:
-        """为给定价格数据计算指标"""
+        """Calculate metrics for given price data"""
         starts, bottoms, recoveries = vectorized_v_detection_fast(
             prices,
             params['min_depth_pct'],
@@ -442,7 +442,7 @@ class VectorizedProfitMaximizer:
             params['holding_hours']
         )
         
-        returns = returns - 0.002  # 交易费用
+        returns = returns - 0.002  # Trading fees
         
         metrics = self.calculate_performance_metrics(returns, exit_reasons)
         metrics['trades'] = len(returns)
@@ -450,7 +450,7 @@ class VectorizedProfitMaximizer:
         return metrics
     
     def optimize_multiple_symbols(self, data_dict: Dict[str, pd.DataFrame]) -> Dict[str, MaxProfitParams]:
-        """优化多个币种的利润最大化参数"""
+        """Optimize profit maximization parameters for multiple cryptocurrencies"""
         logger.info(f"🚀 Starting profit maximization for {len(data_dict)} symbols")
         
         results = {}
@@ -464,12 +464,12 @@ class VectorizedProfitMaximizer:
         return results
     
     def save_results(self, results: Dict[str, MaxProfitParams], filename: Optional[str] = None) -> str:
-        """保存优化结果"""
+        """Save optimization results"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"profit_maximization_{timestamp}.json"
         
-        # 准备可序列化的结果
+        # Prepare serializable results
         serializable_results = {
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
@@ -508,7 +508,7 @@ class VectorizedProfitMaximizer:
                 }
             }
         
-        # 保存文件
+        # Save file
         import os, json
         parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         data_dir = os.path.join(parent_dir, 'data')
@@ -522,7 +522,7 @@ class VectorizedProfitMaximizer:
 
 
 def print_profit_maximization_results(results: Dict[str, MaxProfitParams]):
-    """打印利润最大化结果"""
+    """Print profit maximization results"""
     if not results:
         print("❌ No optimization results")
         return
@@ -539,7 +539,7 @@ def print_profit_maximization_results(results: Dict[str, MaxProfitParams]):
               f"{result.take_profit_pct:>5.1%} {result.holding_hours:>5} "
               f"{result.sharpe_ratio:>6.2f} {result.profit_factor:>11.2f}")
     
-    # 汇总统计
+    # Summary statistics
     avg_return = np.mean([r.test_return for r in results.values()])
     avg_win_rate = np.mean([r.test_win_rate for r in results.values()])
     total_trades = sum([r.test_trades for r in results.values()])
@@ -550,9 +550,9 @@ def print_profit_maximization_results(results: Dict[str, MaxProfitParams]):
 
 
 if __name__ == "__main__":
-    # 测试利润最大化器
+    # Test profit maximizer
     logging.basicConfig(level=logging.INFO)
     
     print("💰 Testing Vectorized Profit Maximizer")
     
-    # 这里可以加载实际数据进行测试
+    # Can load actual data for testing here

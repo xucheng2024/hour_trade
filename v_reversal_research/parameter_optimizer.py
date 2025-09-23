@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 V-Pattern Parameter Optimizer
-V型模式参数优化器 - 根据历史数据优化检测参数
+V-shaped pattern parameter optimizer - optimizes detection parameters based on historical data
 """
 
 import numpy as np
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OptimalParams:
-    """优化后的参数"""
+    """Optimized parameters"""
     symbol: str
     min_depth_pct: float
     max_depth_pct: float
@@ -37,7 +37,7 @@ class OptimalParams:
 
 @dataclass
 class ValidationResult:
-    """验证结果"""
+    """Validation results"""
     symbol: str
     optimal_params: OptimalParams
     test_score: float
@@ -46,34 +46,34 @@ class ValidationResult:
     test_win_rate: float
     test_total_return: float
     test_sharpe_ratio: float
-    consistency_ratio: float  # 测试/训练表现比率
+    consistency_ratio: float  # Test/training performance ratio
 
 class VPatternParameterOptimizer:
-    """V型模式参数优化器"""
+    """V-shaped pattern parameter optimizer"""
     
     def __init__(self, 
-                 test_months: int = 3,           # 测试期3个月
-                 min_train_months: int = 6,      # 最少训练期6个月
-                 max_workers: int = 4):          # 并行工作线程数
+                 test_months: int = 3,           # Test period 3 months
+                 min_train_months: int = 6,      # Minimum training period 6 months
+                 max_workers: int = 4):          # Parallel worker threads
         """
-        初始化参数优化器
+        Initialize parameter optimizer
         
         Args:
-            test_months: 测试期月数
-            min_train_months: 最少训练期月数
-            max_workers: 并行处理线程数
+            test_months: Test period months
+            min_train_months: Minimum training period months
+            max_workers: Parallel processing threads
         """
         self.test_months = test_months
         self.min_train_months = min_train_months
         self.max_workers = max_workers
         
-        # 定义参数优化范围
+        # Define parameter optimization ranges
         self.param_grid = {
             'min_depth_pct': [0.02, 0.03, 0.04, 0.05],           # 2%-5%
             'max_depth_pct': [0.15, 0.20, 0.25, 0.30],           # 15%-30%
             'min_recovery_pct': [0.60, 0.70, 0.80, 0.90],        # 60%-90%
-            'max_total_time': [24, 36, 48, 60],                  # 24-60小时
-            'max_recovery_time': [12, 18, 24, 30]                # 12-30小时
+            'max_total_time': [24, 36, 48, 60],                  # 24-60 hours
+            'max_recovery_time': [12, 18, 24, 30]                # 12-30 hours
         }
         
         logger.info(f"Parameter Optimizer initialized:")
@@ -83,7 +83,7 @@ class VPatternParameterOptimizer:
         logger.info(f"  Max workers: {max_workers}")
     
     def _count_param_combinations(self) -> int:
-        """计算参数组合总数"""
+        """Calculate total parameter combinations"""
         count = 1
         for values in self.param_grid.values():
             count *= len(values)
@@ -91,32 +91,32 @@ class VPatternParameterOptimizer:
     
     def split_data(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        分割训练和测试数据
+        Split training and test data
         
         Args:
-            df: 完整数据
+            df: Complete data
             
         Returns:
-            (训练数据, 测试数据)
+            (training data, test data)
         """
         if 'timestamp' not in df.columns:
             raise ValueError("DataFrame must contain 'timestamp' column")
         
-        # 确保时间格式
+        # Ensure time format
         if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
             df['timestamp'] = pd.to_datetime(df['timestamp'])
         
-        # 按时间排序
+        # Sort by time
         df = df.sort_values('timestamp').reset_index(drop=True)
         
-        # 计算分割点
+        # Calculate split point
         latest_time = df['timestamp'].max()
         split_time = latest_time - pd.Timedelta(days=self.test_months * 30)
         
         train_df = df[df['timestamp'] < split_time].copy()
         test_df = df[df['timestamp'] >= split_time].copy()
         
-        # 验证数据量
+        # Validate data amount
         train_months = (train_df['timestamp'].max() - train_df['timestamp'].min()).days / 30
         test_months = (test_df['timestamp'].max() - test_df['timestamp'].min()).days / 30
         
@@ -130,17 +130,17 @@ class VPatternParameterOptimizer:
     
     def _evaluate_params(self, params: Dict, train_df: pd.DataFrame) -> Tuple[float, int, int, float, float]:
         """
-        评估参数组合在训练数据上的表现
+        Evaluate parameter combination performance on training data
         
         Args:
-            params: 参数字典
-            train_df: 训练数据
+            params: Parameter dictionary
+            train_df: Training data
             
         Returns:
-            (评分, 模式数, 交易数, 胜率, 总收益)
+            (score, pattern count, trade count, win rate, total return)
         """
         try:
-            # 创建检测器
+            # Create detector
             detector = VPatternDetector(
                 min_depth_pct=params['min_depth_pct'],
                 max_depth_pct=params['max_depth_pct'],
@@ -149,26 +149,26 @@ class VPatternParameterOptimizer:
                 max_recovery_time=params['max_recovery_time']
             )
             
-            # 检测模式
+            # Detect patterns
             patterns = detector.detect_patterns(train_df)
             
             if len(patterns) == 0:
                 return 0.0, 0, 0, 0.0, 0.0
             
-            # 回测
+            # Backtest
             backtester = VReversalBacktester(holding_hours=20, min_pattern_quality=0.1)
             result = backtester.backtest_symbol(train_df, patterns)
             
             if result.total_trades == 0:
                 return 0.0, len(patterns), 0, 0.0, 0.0
             
-            # 计算综合评分
-            # 基于胜率、平均收益、交易次数的综合评分
+            # Calculate comprehensive score
+            # Comprehensive score based on win rate, average return, trade count
             win_rate_score = result.win_rate
-            return_score = max(0, result.avg_return_per_trade / 0.05)  # 5%为满分
-            frequency_score = min(1.0, result.total_trades / 20)  # 20笔交易为满分
+            return_score = max(0, result.avg_return_per_trade / 0.05)  # 5% is full score
+            frequency_score = min(1.0, result.total_trades / 20)  # 20 trades is full score
             
-            # 综合评分
+            # Comprehensive score
             score = win_rate_score * 0.4 + return_score * 0.4 + frequency_score * 0.2
             
             return score, len(patterns), result.total_trades, result.win_rate, result.total_return
@@ -179,22 +179,22 @@ class VPatternParameterOptimizer:
     
     def optimize_single_symbol(self, symbol: str, df: pd.DataFrame) -> Optional[OptimalParams]:
         """
-        优化单个币种的参数
+        Optimize parameters for a single cryptocurrency
         
         Args:
-            symbol: 币种符号
-            df: 价格数据
+            symbol: Cryptocurrency symbol
+            df: Price data
             
         Returns:
-            最优参数或None
+            Optimal parameters or None
         """
         logger.info(f"Optimizing parameters for {symbol}...")
         
         try:
-            # 分割数据
+            # Split data
             train_df, test_df = self.split_data(df)
             
-            # 生成所有参数组合
+            # Generate all parameter combinations
             param_names = list(self.param_grid.keys())
             param_values = list(self.param_grid.values())
             param_combinations = list(itertools.product(*param_values))
@@ -205,11 +205,11 @@ class VPatternParameterOptimizer:
             best_params = None
             best_stats = None
             
-            # 逐个测试参数组合
+            # Test parameter combinations one by one
             for i, combination in enumerate(param_combinations):
                 params = dict(zip(param_names, combination))
                 
-                # 添加约束检查
+                # Add constraint checks
                 if params['min_depth_pct'] >= params['max_depth_pct']:
                     continue
                 if params['max_recovery_time'] > params['max_total_time']:
@@ -260,20 +260,20 @@ class VPatternParameterOptimizer:
     
     def validate_optimized_params(self, optimal_params: OptimalParams, df: pd.DataFrame) -> Optional[ValidationResult]:
         """
-        在测试数据上验证优化后的参数
+        Validate optimized parameters on test data
         
         Args:
-            optimal_params: 优化后的参数
-            df: 完整数据
+            optimal_params: Optimized parameters
+            df: Complete data
             
         Returns:
-            验证结果或None
+            Validation result or None
         """
         try:
-            # 分割数据
+            # Split data
             train_df, test_df = self.split_data(df)
             
-            # 使用优化后的参数创建检测器
+            # Create detector with optimized parameters
             detector = VPatternDetector(
                 min_depth_pct=optimal_params.min_depth_pct,
                 max_depth_pct=optimal_params.max_depth_pct,
@@ -282,14 +282,14 @@ class VPatternParameterOptimizer:
                 max_recovery_time=optimal_params.max_recovery_time
             )
             
-            # 在测试数据上检测模式
+            # Detect patterns on test data
             test_patterns = detector.detect_patterns(test_df)
             
             if len(test_patterns) == 0:
                 logger.warning(f"No patterns detected in test data for {optimal_params.symbol}")
                 return None
             
-            # 回测
+            # Backtest
             backtester = VReversalBacktester(holding_hours=20, min_pattern_quality=0.1)
             test_result = backtester.backtest_symbol(test_df, test_patterns)
             
@@ -297,13 +297,13 @@ class VPatternParameterOptimizer:
                 logger.warning(f"No trades executed in test data for {optimal_params.symbol}")
                 return None
             
-            # 计算测试评分
+            # Calculate test score
             win_rate_score = test_result.win_rate
             return_score = max(0, test_result.avg_return_per_trade / 0.05)
             frequency_score = min(1.0, test_result.total_trades / 20)
             test_score = win_rate_score * 0.4 + return_score * 0.4 + frequency_score * 0.2
             
-            # 计算一致性比率
+            # Calculate consistency ratio
             consistency_ratio = test_score / optimal_params.train_score if optimal_params.train_score > 0 else 0
             
             validation_result = ValidationResult(
@@ -326,13 +326,13 @@ class VPatternParameterOptimizer:
     
     def optimize_multiple_symbols(self, data_dict: Dict[str, pd.DataFrame]) -> Dict[str, OptimalParams]:
         """
-        优化多个币种的参数
+        Optimize parameters for multiple cryptocurrencies
         
         Args:
-            data_dict: 币种数据字典
+            data_dict: Cryptocurrency data dictionary
             
         Returns:
-            优化结果字典
+            Optimization results dictionary
         """
         logger.info(f"Starting parameter optimization for {len(data_dict)} symbols")
         
@@ -348,24 +348,24 @@ class VPatternParameterOptimizer:
     
     def run_full_optimization_and_validation(self, data_dict: Dict[str, pd.DataFrame]) -> Dict[str, ValidationResult]:
         """
-        运行完整的优化和验证流程
+        Run complete optimization and validation process
         
         Args:
-            data_dict: 币种数据字典
+            data_dict: Cryptocurrency data dictionary
             
         Returns:
-            验证结果字典
+            Validation results dictionary
         """
         logger.info(f"🚀 Starting full optimization and validation for {len(data_dict)} symbols")
         
-        # 1. 参数优化
+        # 1. Parameter optimization
         optimized_params = self.optimize_multiple_symbols(data_dict)
         
         if not optimized_params:
             logger.error("No parameters optimized successfully")
             return {}
         
-        # 2. 验证
+        # 2. Validation
         logger.info(f"📊 Validating optimized parameters on test data...")
         validation_results = {}
         
@@ -380,12 +380,12 @@ class VPatternParameterOptimizer:
     
     def save_optimization_results(self, validation_results: Dict[str, ValidationResult], 
                                 filename: Optional[str] = None) -> str:
-        """保存优化结果"""
+        """Save optimization results"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"v_pattern_optimization_{timestamp}.json"
         
-        # 准备可序列化的结果
+        # Prepare serializable results
         serializable_results = {
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
@@ -424,7 +424,7 @@ class VPatternParameterOptimizer:
                 }
             }
         
-        # 保存到data目录
+        # Save to data directory
         import os
         parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         data_dir = os.path.join(parent_dir, 'data')
@@ -438,7 +438,7 @@ class VPatternParameterOptimizer:
 
 
 def print_optimization_summary(validation_results: Dict[str, ValidationResult]):
-    """打印优化结果摘要"""
+    """Print optimization results summary"""
     if not validation_results:
         print("❌ No optimization results")
         return
@@ -455,7 +455,7 @@ def print_optimization_summary(validation_results: Dict[str, ValidationResult]):
               f"{result.test_win_rate:>8.1%} {result.test_total_return:>10.2%} "
               f"{result.test_trades:>10}")
     
-    # 汇总统计
+    # Summary statistics
     all_results = list(validation_results.values())
     avg_train_score = np.mean([r.optimal_params.train_score for r in all_results])
     avg_test_score = np.mean([r.test_score for r in all_results])
@@ -471,12 +471,12 @@ def print_optimization_summary(validation_results: Dict[str, ValidationResult]):
 
 
 if __name__ == "__main__":
-    # 测试参数优化器
+    # Test parameter optimizer
     logging.basicConfig(level=logging.INFO)
     
     print("🚀 Testing V-Pattern Parameter Optimizer")
     
-    # 这里可以加载实际数据进行测试
+    # Can load actual data for testing here
     # from data_loader import VReversalDataLoader
     # 
     # loader = VReversalDataLoader()

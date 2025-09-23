@@ -167,11 +167,11 @@ class OKXDataManager:
                     candles = self.market_api.get_candlesticks(
                         instId=inst_id, 
                         bar=bar,
-                        limit=1000  # 获取最大数量的记录
+                        limit=1000  # Get maximum number of records
                     )
                 
                 if candles and 'data' in candles:
-                    return candles['data']  # OKX API已经按时间顺序返回，不需要翻转
+                    return candles['data']  # OKX API already returns in chronological order, no need to reverse
                 else:
                     logger.warning(f"⚠️  Invalid response format for {inst_id}")
                     return None
@@ -198,7 +198,7 @@ class OKXDataManager:
         """Fetch additional historical data by paginating backwards"""
         data = initial_data
         total_fetched = len(data)
-        max_pages = 100  # 增加分页次数，获取更多历史数据，history-candlesticks支持更早的数据
+        max_pages = 100  # Increase pagination count to get more historical data, history-candlesticks supports earlier data
         
         for page in range(max_pages):
             try:

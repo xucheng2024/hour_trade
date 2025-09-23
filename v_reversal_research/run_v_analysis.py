@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 V-shaped Reversal Analysis Runner
-V型反转分析运行器
+V-shaped reversal analysis runner
 """
 
 import os
@@ -30,28 +30,28 @@ def run_comprehensive_analysis(symbols: List[str] = None,
                              months: int = 6,
                              save_results: bool = True) -> Dict:
     """
-    运行完整的V型反转分析
+    Run comprehensive V-shaped reversal analysis
     
     Args:
-        symbols: 要分析的币种列表
-        months: 分析几个月的数据
-        save_results: 是否保存结果
+        symbols: List of cryptocurrencies to analyze
+        months: Number of months of data to analyze
+        save_results: Whether to save results
         
     Returns:
-        分析结果字典
+        Analysis results dictionary
     """
     print("🚀 Starting V-shaped Reversal Analysis")
     print("=" * 60)
     
-    # 1. 加载数据
+    # 1. Load data
     print("📊 Loading data...")
     data_loader = VReversalDataLoader()
     
     if symbols is None:
-        # 选择一些主要币种进行分析
+        # Select some main cryptocurrencies for analysis
         available_symbols = data_loader.get_available_symbols()
         symbols = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT', '1INCH-USDT', 'AAVE-USDT', 'ACA-USDT']
-        symbols = [s for s in symbols if s in available_symbols][:5]  # 最多5个币种
+        symbols = [s for s in symbols if s in available_symbols][:5]  # Maximum 5 cryptocurrencies
     
     data_dict = data_loader.load_multiple_symbols(symbols, months=months)
     
@@ -61,14 +61,14 @@ def run_comprehensive_analysis(symbols: List[str] = None,
     
     print(f"✅ Loaded data for {len(data_dict)} symbols")
     
-    # 2. V型模式检测
+    # 2. V-shaped pattern detection
     print("\n🔍 Detecting V-shaped patterns...")
     detector = VPatternDetector(
-        min_depth_pct=0.03,     # 最小下跌3%
-        max_depth_pct=0.25,     # 最大下跌25%
-        min_recovery_pct=0.70,  # 最小恢复70%
-        max_total_time=48,      # 最大总时间48小时
-        max_recovery_time=24    # 最大恢复时间24小时
+        min_depth_pct=0.03,     # Minimum decline 3%
+        max_depth_pct=0.25,     # Maximum decline 25%
+        min_recovery_pct=0.70,  # Minimum recovery 70%
+        max_total_time=48,      # Maximum total time 48 hours
+        max_recovery_time=24    # Maximum recovery time 24 hours
     )
     
     all_patterns = {}
@@ -81,24 +81,24 @@ def run_comprehensive_analysis(symbols: List[str] = None,
         
         print(f"  {symbol}: {len(patterns)} patterns detected")
         if patterns:
-            print_pattern_summary(patterns[:3])  # 显示前3个模式
+            print_pattern_summary(patterns[:3])  # Show first 3 patterns
     
     print(f"\n✅ Total patterns detected: {total_patterns}")
     
-    # 3. 策略回测
+    # 3. Strategy backtesting
     print("\n📈 Running strategy backtest...")
     backtester = VReversalBacktester(
-        holding_hours=20,         # 固定持有20小时
-        min_pattern_quality=0.2,  # 最小质量分数0.2
-        transaction_cost=0.001    # 交易费用0.1%
+        holding_hours=20,         # Fixed holding 20 hours
+        min_pattern_quality=0.2,  # Minimum quality score 0.2
+        transaction_cost=0.001    # Transaction cost 0.1%
     )
     
     backtest_results = backtester.backtest_multiple_symbols(data_dict, detector)
     
-    # 4. 显示结果
+    # 4. Display results
     print_backtest_summary(backtest_results)
     
-    # 5. 生成详细报告
+    # 5. Generate detailed report
     summary = backtester.generate_summary_report(backtest_results)
     
     print(f"\n📋 Strategy Summary:")
@@ -111,19 +111,19 @@ def run_comprehensive_analysis(symbols: List[str] = None,
     print(f"  Sharpe ratio: {summary['overview']['sharpe_ratio']:.2f}")
     print(f"  Average holding time: {summary['overview']['avg_holding_hours']:.1f} hours")
     
-    # 退出原因分析
+    # Exit reason analysis
     print(f"\n🚪 Exit Analysis:")
     for reason, stats in summary['exit_analysis'].items():
         print(f"  {reason}: {stats['count']} trades ({stats['avg_return']:.2%} avg return)")
     
-    # 6. 保存结果
+    # 6. Save results
     if save_results:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 保存详细结果
+        # Save detailed results
         results_file = f"v_reversal_analysis_{timestamp}.json"
         
-        # 准备可序列化的结果
+        # Prepare serializable results
         serializable_results = {
             "metadata": {
                 "timestamp": timestamp,
@@ -148,7 +148,7 @@ def run_comprehensive_analysis(symbols: List[str] = None,
             "pattern_details": {}
         }
         
-        # 添加模式详情
+        # Add pattern details
         for symbol, patterns in all_patterns.items():
             serializable_results["pattern_details"][symbol] = []
             for pattern in patterns:
@@ -165,7 +165,7 @@ def run_comprehensive_analysis(symbols: List[str] = None,
                     "recovery_price": pattern.recovery_price
                 })
         
-        # 保存到data目录
+        # Save to data directory
         parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         data_dir = os.path.join(parent_dir, 'data')
         results_path = os.path.join(data_dir, results_file)
@@ -178,11 +178,11 @@ def run_comprehensive_analysis(symbols: List[str] = None,
     return summary
 
 def quick_test():
-    """快速测试V型反转策略"""
+    """Quick test V-shaped reversal strategy"""
     print("⚡ Quick V-Reversal Test")
     print("=" * 40)
     
-    # 使用较少币种和较短时间进行快速测试
+    # Use fewer cryptocurrencies and shorter time for quick test
     result = run_comprehensive_analysis(
         symbols=['BTC-USDT', 'ETH-USDT', '1INCH-USDT'], 
         months=3,
@@ -192,13 +192,13 @@ def quick_test():
     return result
 
 def full_analysis():
-    """完整分析"""
+    """Full analysis"""
     print("🔬 Full V-Reversal Analysis")
     print("=" * 40)
     
-    # 使用更多币种和更长时间进行完整分析
+    # Use more cryptocurrencies and longer time for full analysis
     result = run_comprehensive_analysis(
-        symbols=None,  # 使用默认币种列表
+        symbols=None,  # Use default cryptocurrency list
         months=6,
         save_results=True
     )
@@ -206,7 +206,7 @@ def full_analysis():
     return result
 
 def main():
-    """主函数"""
+    """Main function"""
     print("🎯 V-shaped Reversal Strategy Analysis")
     print("=" * 50)
     print("1. Quick test (3 symbols, 3 months)")

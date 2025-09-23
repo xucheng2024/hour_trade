@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 V-shaped Reversal Pattern Detection
-V型反转模式检测器
+V-shaped reversal pattern detector
 """
 
 import numpy as np
@@ -15,42 +15,42 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class VPattern:
-    """V型反转模式数据结构"""
+    """V-shaped reversal pattern data structure"""
     symbol: str
-    start_idx: int          # 下跌开始位置
-    bottom_idx: int         # 底部位置
-    recovery_idx: int       # 恢复位置
-    start_price: float      # 开始价格
-    bottom_price: float     # 底部价格
-    recovery_price: float   # 恢复价格
-    depth_pct: float        # V的深度百分比
-    recovery_time: int      # 恢复时间(小时)
-    total_time: int         # 总时间(小时)
+    start_idx: int          # Decline start position
+    bottom_idx: int         # Bottom position
+    recovery_idx: int       # Recovery position
+    start_price: float      # Start price
+    bottom_price: float     # Bottom price
+    recovery_price: float   # Recovery price
+    depth_pct: float        # V depth percentage
+    recovery_time: int      # Recovery time (hours)
+    total_time: int         # Total time (hours)
     start_time: pd.Timestamp
     bottom_time: pd.Timestamp
     recovery_time_stamp: pd.Timestamp
-    volume_spike: float     # 底部成交量放大倍数
+    volume_spike: float     # Bottom volume spike multiplier
 
 class VPatternDetector:
-    """V型反转模式检测器"""
+    """V-shaped reversal pattern detector"""
     
     def __init__(self, 
-                 min_depth_pct: float = 0.05,      # 最小下跌深度5%
-                 max_depth_pct: float = 0.30,      # 最大下跌深度30%
-                 min_recovery_pct: float = 0.80,   # 最小恢复比例80%
-                 max_total_time: int = 48,         # 最大总时间48小时
-                 min_total_time: int = 6,          # 最小总时间6小时
-                 max_recovery_time: int = 24):     # 最大恢复时间24小时
+                 min_depth_pct: float = 0.05,      # Minimum decline depth 5%
+                 max_depth_pct: float = 0.30,      # Maximum decline depth 30%
+                 min_recovery_pct: float = 0.80,   # Minimum recovery ratio 80%
+                 max_total_time: int = 48,         # Maximum total time 48 hours
+                 min_total_time: int = 6,          # Minimum total time 6 hours
+                 max_recovery_time: int = 24):     # Maximum recovery time 24 hours
         """
-        初始化V型反转检测器
+        Initialize V-shaped reversal detector
         
         Args:
-            min_depth_pct: 最小下跌深度百分比
-            max_depth_pct: 最大下跌深度百分比  
-            min_recovery_pct: 最小恢复比例
-            max_total_time: 最大总时间(小时)
-            min_total_time: 最小总时间(小时)
-            max_recovery_time: 最大恢复时间(小时)
+            min_depth_pct: Minimum decline depth percentage
+            max_depth_pct: Maximum decline depth percentage  
+            min_recovery_pct: Minimum recovery ratio
+            max_total_time: Maximum total time (hours)
+            min_total_time: Minimum total time (hours)
+            max_recovery_time: Maximum recovery time (hours)
         """
         self.min_depth_pct = min_depth_pct
         self.max_depth_pct = max_depth_pct
@@ -66,34 +66,34 @@ class VPatternDetector:
     
     def detect_patterns(self, df: pd.DataFrame) -> List[VPattern]:
         """
-        检测V型反转模式
+        Detect V-shaped reversal patterns
         
         Args:
-            df: 包含OHLCV数据的DataFrame
+            df: DataFrame containing OHLCV data
             
         Returns:
-            检测到的V型模式列表
+            List of detected V-shaped patterns
         """
         patterns = []
         symbol = df['symbol'].iloc[0] if 'symbol' in df.columns else 'UNKNOWN'
         
-        # 寻找局部高点作为潜在起点
+        # Find local peaks as potential starting points
         high_points = self._find_local_peaks(df['high'].values, window=3)
         
         for start_idx in high_points:
-            # 寻找这个高点之后的V型模式
+            # Find V-shaped patterns after this peak
             pattern = self._search_v_pattern_from_start(df, start_idx, symbol)
             if pattern:
                 patterns.append(pattern)
         
-        # 去重和过滤重叠模式
+        # Remove duplicates and filter overlapping patterns
         patterns = self._filter_overlapping_patterns(patterns)
         
         logger.info(f"Detected {len(patterns)} V-patterns for {symbol}")
         return patterns
     
     def _find_local_peaks(self, prices: np.ndarray, window: int = 3) -> List[int]:
-        """寻找局部高点"""
+        """Find local peaks"""
         peaks = []
         for i in range(window, len(prices) - window):
             if all(prices[i] >= prices[i-j] for j in range(1, window+1)) and \
@@ -102,29 +102,29 @@ class VPatternDetector:
         return peaks
     
     def _search_v_pattern_from_start(self, df: pd.DataFrame, start_idx: int, symbol: str) -> Optional[VPattern]:
-        """从给定起点搜索V型模式"""
+        """Search for V-shaped pattern from given starting point"""
         if start_idx >= len(df) - self.min_total_time:
             return None
         
         start_price = df['high'].iloc[start_idx]
         start_time = df['timestamp'].iloc[start_idx]
         
-        # 在最大时间窗口内搜索
+        # Search within maximum time window
         end_search_idx = min(start_idx + self.max_total_time, len(df))
         search_window = df.iloc[start_idx:end_search_idx]
         
-        # 寻找底部
+        # Find bottom
         bottom_candidates = self._find_bottom_candidates(search_window, start_price)
         
         for bottom_rel_idx, bottom_price in bottom_candidates:
             bottom_idx = start_idx + bottom_rel_idx
             depth_pct = (start_price - bottom_price) / start_price
             
-            # 检查深度是否在合理范围内
+            # Check if depth is within reasonable range
             if not (self.min_depth_pct <= depth_pct <= self.max_depth_pct):
                 continue
             
-            # 寻找恢复点
+            # Find recovery point
             recovery_pattern = self._find_recovery_point(df, start_idx, bottom_idx, start_price, bottom_price, symbol)
             if recovery_pattern:
                 return recovery_pattern
@@ -132,13 +132,13 @@ class VPatternDetector:
         return None
     
     def _find_bottom_candidates(self, window_df: pd.DataFrame, start_price: float) -> List[Tuple[int, float]]:
-        """寻找底部候选点"""
+        """Find bottom candidate points"""
         candidates = []
         
-        # 寻找局部低点
+        # Find local lows
         lows = window_df['low'].values
         for i in range(2, len(lows) - 2):
-            # 局部最低点条件
+            # Local minimum conditions
             if lows[i] <= lows[i-1] and lows[i] <= lows[i+1] and \
                lows[i] <= lows[i-2] and lows[i] <= lows[i+2]:
                 
@@ -146,16 +146,16 @@ class VPatternDetector:
                 if self.min_depth_pct <= depth_pct <= self.max_depth_pct:
                     candidates.append((i, lows[i]))
         
-        # 按深度排序，优先考虑较深的底部
-        candidates.sort(key=lambda x: x[1])  # 按价格升序排序
+        # Sort by depth, prioritize deeper bottoms
+        candidates.sort(key=lambda x: x[1])  # Sort by price ascending
         return candidates
     
     def _find_recovery_point(self, df: pd.DataFrame, start_idx: int, bottom_idx: int, 
                            start_price: float, bottom_price: float, symbol: str) -> Optional[VPattern]:
-        """寻找恢复点"""
+        """Find recovery point"""
         recovery_threshold = bottom_price + (start_price - bottom_price) * self.min_recovery_pct
         
-        # 从底部开始搜索恢复
+        # Search for recovery starting from bottom
         search_start = bottom_idx + 1
         max_search_end = min(bottom_idx + self.max_recovery_time, len(df))
         
@@ -163,14 +163,14 @@ class VPatternDetector:
             recovery_price = df['high'].iloc[recovery_idx]
             
             if recovery_price >= recovery_threshold:
-                # 找到恢复点，验证时间约束
+                # Found recovery point, verify time constraints
                 total_time = recovery_idx - start_idx
                 recovery_time = recovery_idx - bottom_idx
                 
                 if self.min_total_time <= total_time <= self.max_total_time and \
                    recovery_time <= self.max_recovery_time:
                     
-                    # 计算成交量放大
+                    # Calculate volume spike
                     volume_spike = self._calculate_volume_spike(df, bottom_idx)
                     
                     return VPattern(
@@ -193,11 +193,11 @@ class VPatternDetector:
         return None
     
     def _calculate_volume_spike(self, df: pd.DataFrame, bottom_idx: int) -> float:
-        """计算底部成交量放大倍数"""
+        """Calculate bottom volume spike multiplier"""
         if 'volume' not in df.columns:
             return 1.0
         
-        # 计算底部前10小时的平均成交量
+        # Calculate average volume 10 hours before bottom
         start_avg = max(0, bottom_idx - 10)
         avg_volume = df['volume'].iloc[start_avg:bottom_idx].mean()
         bottom_volume = df['volume'].iloc[bottom_idx]
@@ -207,20 +207,20 @@ class VPatternDetector:
         return 1.0
     
     def _filter_overlapping_patterns(self, patterns: List[VPattern]) -> List[VPattern]:
-        """过滤重叠的模式，保留质量最好的"""
+        """Filter overlapping patterns, keep the best quality ones"""
         if len(patterns) <= 1:
             return patterns
         
-        # 按开始时间排序
+        # Sort by start time
         patterns.sort(key=lambda p: p.start_idx)
         
         filtered = []
         for pattern in patterns:
-            # 检查是否与已有模式重叠
+            # Check if overlapping with existing patterns
             overlap = False
             for existing in filtered:
                 if self._patterns_overlap(pattern, existing):
-                    # 如果重叠，比较质量，保留更好的
+                    # If overlapping, compare quality, keep the better one
                     if self._pattern_quality_score(pattern) > self._pattern_quality_score(existing):
                         filtered.remove(existing)
                         filtered.append(pattern)
@@ -233,20 +233,20 @@ class VPatternDetector:
         return filtered
     
     def _patterns_overlap(self, p1: VPattern, p2: VPattern) -> bool:
-        """检查两个模式是否重叠"""
+        """Check if two patterns overlap"""
         return not (p1.recovery_idx < p2.start_idx or p2.recovery_idx < p1.start_idx)
     
     def _pattern_quality_score(self, pattern: VPattern) -> float:
-        """计算模式质量分数，分数越高质量越好"""
-        # 基于深度、恢复速度、成交量放大等因素
-        depth_score = min(pattern.depth_pct / 0.15, 1.0)  # 深度15%为满分
-        speed_score = max(0, 1.0 - pattern.recovery_time / self.max_recovery_time)  # 恢复越快分数越高
-        volume_score = min(pattern.volume_spike / 3.0, 1.0)  # 成交量放大3倍为满分
+        """Calculate pattern quality score, higher score means better quality"""
+        # Based on depth, recovery speed, volume spike and other factors
+        depth_score = min(pattern.depth_pct / 0.15, 1.0)  # 15% depth is full score
+        speed_score = max(0, 1.0 - pattern.recovery_time / self.max_recovery_time)  # Faster recovery gets higher score
+        volume_score = min(pattern.volume_spike / 3.0, 1.0)  # 3x volume spike is full score
         
         return depth_score * 0.4 + speed_score * 0.4 + volume_score * 0.2
     
     def analyze_patterns(self, patterns: List[VPattern]) -> Dict:
-        """分析检测到的模式统计信息"""
+        """Analyze detected pattern statistics"""
         if not patterns:
             return {"count": 0}
         
@@ -287,7 +287,7 @@ class VPatternDetector:
 
 
 def print_pattern_summary(patterns: List[VPattern]):
-    """打印模式摘要"""
+    """Print pattern summary"""
     if not patterns:
         print("❌ No V-patterns detected")
         return
@@ -304,12 +304,12 @@ def print_pattern_summary(patterns: List[VPattern]):
 
 
 if __name__ == "__main__":
-    # 测试模式检测器
+    # Test pattern detector
     logging.basicConfig(level=logging.INFO)
     
     print("🚀 Testing V-Pattern Detector")
     
-    # 这里可以加载实际数据进行测试
+    # Can load actual data for testing here
     # from data_loader import load_sample_data
     # data = load_sample_data()
     # 

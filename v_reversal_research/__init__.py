@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 V-shaped Reversal Research Module
-V型反转研究模块
+V-shaped reversal research module
 """
 
 __version__ = "1.0.0"

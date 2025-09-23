@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Run Profit Maximization for V-Pattern Strategy
-运行V型反转策略利润最大化
+Run V-shaped reversal strategy profit maximization
 """
 
 import os
@@ -29,37 +29,37 @@ def run_profit_maximization(symbols: List[str] = None,
                            total_months: int = 9,
                            test_months: int = 3) -> Dict[str, MaxProfitParams]:
     """
-    运行利润最大化优化
+    Run profit maximization optimization
     
     Args:
-        symbols: 要优化的币种列表
-        total_months: 总数据月数
-        test_months: 测试期月数
+        symbols: List of cryptocurrencies to optimize
+        total_months: Total data months
+        test_months: Test period months
         
     Returns:
-        优化结果字典
+        Optimization results dictionary
     """
     print("💰 V-Pattern Strategy Profit Maximization")
     print("=" * 60)
-    print(f"🎯 目标: 通过优化所有参数实现利润最大化")
+    print(f"🎯 Goal: Achieve maximum profit through optimizing all parameters")
     print(f"📊 Configuration:")
     print(f"  Total data period: {total_months} months")
     print(f"  Training period: {total_months - test_months} months")
     print(f"  Test period: {test_months} months")
-    print(f"  优化参数: V型检测 + 止盈止损 + 持有时间")
+    print(f"  Optimization parameters: V-pattern detection + stop loss/take profit + holding time")
     print()
     
-    # 1. 加载数据
+    # 1. Load data
     print("📊 Loading data...")
     start_time = time.time()
     
     data_loader = VReversalDataLoader()
     
     if symbols is None:
-        # 选择主要币种
+        # Select main cryptocurrencies
         available_symbols = data_loader.get_available_symbols()
         symbols = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT']
-        symbols = [s for s in symbols if s in available_symbols][:2]  # 限制为2个币种以提高速度
+        symbols = [s for s in symbols if s in available_symbols][:2]  # Limit to 2 cryptocurrencies for speed
     
     data_dict = data_loader.load_multiple_symbols(symbols, months=total_months)
     
@@ -70,27 +70,27 @@ def run_profit_maximization(symbols: List[str] = None,
     load_time = time.time() - start_time
     print(f"✅ Loaded data for {len(data_dict)} symbols in {load_time:.1f}s")
     
-    # 显示数据信息
+    # Display data information
     for symbol, df in data_dict.items():
         print(f"  {symbol}: {len(df)} records, "
               f"{df['timestamp'].min().strftime('%Y-%m-%d')} to "
               f"{df['timestamp'].max().strftime('%Y-%m-%d')}")
     print()
     
-    # 2. 创建利润最大化器
+    # 2. Create profit maximizer
     print("🔧 Initializing profit maximizer...")
     maximizer = VectorizedProfitMaximizer(test_months=test_months)
     
-    print(f"📋 优化参数范围:")
-    print(f"  V型深度: 2%-25%")
-    print(f"  恢复要求: 60%-80%")
-    print(f"  时间限制: 24-48小时")
-    print(f"  止损: 3%-10%")
-    print(f"  止盈: 8%-25%")
-    print(f"  持有时间: 6-72小时 (重点优化)")
+    print(f"📋 Optimization parameter ranges:")
+    print(f"  V-pattern depth: 2%-25%")
+    print(f"  Recovery requirement: 60%-80%")
+    print(f"  Time limits: 24-48 hours")
+    print(f"  Stop loss: 3%-10%")
+    print(f"  Take profit: 8%-25%")
+    print(f"  Holding time: 6-72 hours (key optimization)")
     print()
     
-    # 3. 运行优化
+    # 3. Run optimization
     print("⚡ Starting profit maximization...")
     print("   This will test thousands of parameter combinations...")
     print("   Focus: Maximum profit with acceptable risk")
@@ -108,10 +108,10 @@ def run_profit_maximization(symbols: List[str] = None,
     print(f"⚡ Speed: {optimization_time/len(data_dict):.1f}s per symbol")
     print()
     
-    # 4. 显示结果
+    # 4. Display results
     print_profit_maximization_results(results)
     
-    # 5. 详细参数显示
+    # 5. Detailed parameter display
     print(f"\n📋 Optimized Parameters for Maximum Profit:")
     print("=" * 80)
     
@@ -135,23 +135,23 @@ def run_profit_maximization(symbols: List[str] = None,
         print(f"    Profit Factor: {result.profit_factor:.2f}")
         print(f"    Max Drawdown: {result.max_drawdown:.2%}")
     
-    # 6. 性能分析
+    # 6. Performance analysis
     print(f"\n🚀 Performance Analysis:")
     print(f"  Total time: {load_time + optimization_time:.1f}s")
     print(f"  Data loading: {load_time:.1f}s")
     print(f"  Optimization: {optimization_time:.1f}s")
     print(f"  Average per symbol: {optimization_time/len(data_dict):.1f}s")
     
-    # 7. 对比分析
+    # 7. Comparative analysis
     print(f"\n📈 Profit Enhancement Analysis:")
-    baseline_return = 0.05  # 假设基线5%收益
+    baseline_return = 0.05  # Assume baseline 5% return
     
     for symbol, result in results.items():
         enhancement = (result.test_return - baseline_return) / baseline_return * 100
         print(f"  {symbol}: {result.test_return:.2%} vs {baseline_return:.1%} baseline "
               f"({enhancement:+.0f}% enhancement)")
     
-    # 8. 保存结果
+    # 8. Save results
     print(f"\n💾 Saving profit maximization results...")
     saved_file = maximizer.save_results(results)
     print(f"✅ Results saved to: {saved_file}")
@@ -159,7 +159,7 @@ def run_profit_maximization(symbols: List[str] = None,
     return results
 
 def quick_profit_test():
-    """快速利润最大化测试"""
+    """Quick profit maximization test"""
     print("⚡ Quick Profit Maximization Test")
     print("=" * 50)
     
@@ -172,14 +172,14 @@ def quick_profit_test():
     return result
 
 def compare_strategies(results: Dict[str, MaxProfitParams]):
-    """对比不同策略配置"""
+    """Compare different strategy configurations"""
     if not results:
         return
     
     print(f"\n🔍 Strategy Configuration Analysis")
     print("=" * 80)
     
-    # 分析最佳配置模式
+    # Analyze optimal configuration patterns
     sl_values = [r.stop_loss_pct for r in results.values()]
     tp_values = [r.take_profit_pct for r in results.values()]
     holding_values = [r.holding_hours for r in results.values()]
@@ -189,14 +189,14 @@ def compare_strategies(results: Dict[str, MaxProfitParams]):
     print(f"  Average Take Profit: {np.mean(tp_values):.1%}")
     print(f"  Average Holding Time: {np.mean(holding_values):.1f} hours")
     
-    # 风险收益分析
+    # Risk-return analysis
     print(f"\n⚖️ Risk-Return Analysis:")
     for symbol, result in results.items():
         risk_adj_return = result.test_return / abs(result.max_drawdown) if result.max_drawdown != 0 else float('inf')
         print(f"  {symbol}: Risk-Adjusted Return = {risk_adj_return:.2f}")
 
 def main():
-    """主函数"""
+    """Main function"""
     print("💰 V-Pattern Profit Maximization System")
     print("=" * 60)
     print("🎯 Find the BEST parameters for maximum profit!")
@@ -251,7 +251,7 @@ def main():
             print("Invalid choice")
             return
         
-        # 策略对比分析
+        # Strategy comparison analysis
         if result:
             compare_strategies(result)
         
@@ -267,6 +267,6 @@ def main():
 
 if __name__ == "__main__":
     import numpy as np
-    # 直接运行快速测试
+    # Run quick test directly
     print("💰 Running Quick Profit Maximization Test...")
     quick_profit_test()

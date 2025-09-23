@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Vectorized V-Pattern Parameter Optimizer
-向量化V型模式参数优化器 - 高性能版本
+Vectorized V-shaped pattern parameter optimizer - high performance version
 """
 
 import numpy as np
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OptimizedParams:
-    """优化后的参数"""
+    """Optimized parameters"""
     symbol: str
     min_depth_pct: float
     max_depth_pct: float
@@ -37,28 +37,28 @@ class OptimizedParams:
 
 def find_local_peaks_and_troughs(prices: np.ndarray, window: int = 3) -> Tuple[np.ndarray, np.ndarray]:
     """
-    寻找局部高点和低点
+    Find local peaks and troughs
     
     Returns:
         (peak_indices, trough_indices)
     """
-    # 使用scipy的signal.find_peaks
+    # Use scipy signal.find_peaks
     try:
         from scipy.signal import find_peaks
         peaks, _ = find_peaks(prices, distance=window)
         troughs, _ = find_peaks(-prices, distance=window)
     except ImportError:
-        # 如果没有scipy，使用简单的方法
+        # If no scipy, use simple method
         peaks = []
         troughs = []
         
         for i in range(window, len(prices) - window):
-            # 检查局部高点
+            # Check local peaks
             if all(prices[i] >= prices[i-j] for j in range(1, window+1)) and \
                all(prices[i] >= prices[i+j] for j in range(1, window+1)):
                 peaks.append(i)
             
-            # 检查局部低点
+            # Check local troughs
             if all(prices[i] <= prices[i-j] for j in range(1, window+1)) and \
                all(prices[i] <= prices[i+j] for j in range(1, window+1)):
                 troughs.append(i)
@@ -75,26 +75,26 @@ def vectorized_pattern_detection(prices: np.ndarray,
                                 max_total_time: int,
                                 max_recovery_time: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    向量化V型模式检测
+    Vectorized V-shaped pattern detection
     
     Returns:
         (start_indices, bottom_indices, recovery_indices)
     """
-    # 寻找局部高点和低点
+    # Find local peaks and troughs
     peaks, troughs = find_local_peaks_and_troughs(prices)
     
     patterns_start = []
     patterns_bottom = []
     patterns_recovery = []
     
-    # 对每个高点，寻找后续的V型模式
+    # For each peak, find subsequent V-shaped patterns
     for peak_idx in peaks:
         if peak_idx >= len(prices) - max_total_time:
             continue
             
         start_price = prices[peak_idx]
         
-        # 寻找该高点后的低点
+        # Find troughs after this peak
         valid_troughs = troughs[(troughs > peak_idx) & 
                                (troughs <= peak_idx + max_total_time)]
         
@@ -102,17 +102,17 @@ def vectorized_pattern_detection(prices: np.ndarray,
             bottom_price = prices[trough_idx]
             depth_pct = (start_price - bottom_price) / start_price
             
-            # 检查深度是否符合要求
+            # Check if depth meets requirements
             if not (min_depth_pct <= depth_pct <= max_depth_pct):
                 continue
             
             recovery_threshold = bottom_price + (start_price - bottom_price) * min_recovery_pct
             
-            # 寻找恢复点
+            # Find recovery point
             recovery_end = min(trough_idx + max_recovery_time, len(prices))
             recovery_slice = prices[trough_idx+1:recovery_end]
             
-            # 向量化检查恢复
+            # Vectorized recovery check
             recovery_hits = recovery_slice >= recovery_threshold
             if recovery_hits.any():
                 recovery_idx = trough_idx + 1 + np.argmax(recovery_hits)
@@ -120,7 +120,7 @@ def vectorized_pattern_detection(prices: np.ndarray,
                 patterns_start.append(peak_idx)
                 patterns_bottom.append(trough_idx)
                 patterns_recovery.append(recovery_idx)
-                break  # 找到第一个恢复点就停止
+                break  # Stop after finding first recovery point
     
     return (np.array(patterns_start), np.array(patterns_bottom), np.array(patterns_recovery))
 
@@ -128,15 +128,15 @@ def vectorized_backtest(prices: np.ndarray,
                        entry_indices: np.ndarray,
                        holding_hours: int) -> np.ndarray:
     """
-    向量化回测
+    Vectorized backtesting
     
     Returns:
         returns array
     """
-    # 向量化计算退出索引
+    # Vectorized exit index calculation
     exit_indices = np.minimum(entry_indices + holding_hours, len(prices) - 1)
     
-    # 向量化计算收益率
+    # Vectorized return calculation
     entry_prices = prices[entry_indices]
     exit_prices = prices[exit_indices]
     
@@ -145,18 +145,18 @@ def vectorized_backtest(prices: np.ndarray,
     return returns
 
 class VectorizedParameterOptimizer:
-    """向量化参数优化器"""
+    """Vectorized parameter optimizer"""
     
     def __init__(self, test_months: int = 3):
         """
-        初始化优化器
+        Initialize optimizer
         
         Args:
-            test_months: 测试期月数
+            test_months: Test period months
         """
         self.test_months = test_months
         
-        # 优化后的参数网格 - 减少组合数量但保持覆盖面
+        # Optimized parameter grid - reduce combinations while maintaining coverage
         self.param_ranges = {
             'min_depth_pct': np.array([0.02, 0.03, 0.05]),
             'max_depth_pct': np.array([0.15, 0.20, 0.25]),
@@ -169,11 +169,11 @@ class VectorizedParameterOptimizer:
         logger.info(f"Vectorized optimizer initialized with {total_combinations} parameter combinations")
     
     def prepare_data(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, pd.Timestamp]:
-        """准备向量化计算所需的数据"""
-        # 确保时间排序
+        """Prepare data for vectorized computation"""
+        # Ensure time sorting
         df = df.sort_values('timestamp').reset_index(drop=True)
         
-        # 提取价格和时间戳
+        # Extract prices and timestamps
         prices = df['close'].values.astype(np.float64)
         timestamps = df['timestamp'].values
         split_time = df['timestamp'].max() - pd.Timedelta(days=self.test_months * 30)
@@ -181,13 +181,13 @@ class VectorizedParameterOptimizer:
         return prices, timestamps, split_time
     
     def split_data_indices(self, timestamps: np.ndarray, split_time: pd.Timestamp) -> Tuple[np.ndarray, np.ndarray]:
-        """分割训练和测试数据索引"""
-        # 将时间戳转换为相同类型进行比较
+        """Split training and test data indices"""
+        # Convert timestamps to same type for comparison
         if isinstance(timestamps[0], pd.Timestamp):
             train_indices = np.where(timestamps < split_time)[0]
             test_indices = np.where(timestamps >= split_time)[0]
         else:
-            # 转换为pandas时间戳进行比较
+            # Convert to pandas timestamps for comparison
             timestamps_pd = pd.to_datetime(timestamps)
             train_indices = np.where(timestamps_pd < split_time)[0]
             test_indices = np.where(timestamps_pd >= split_time)[0]
@@ -196,19 +196,19 @@ class VectorizedParameterOptimizer:
     
     def optimize_single_symbol_vectorized(self, symbol: str, df: pd.DataFrame) -> Optional[OptimizedParams]:
         """
-        向量化单币种参数优化
+        Vectorized single cryptocurrency parameter optimization
         
         Args:
-            symbol: 币种符号
-            df: 价格数据
+            symbol: Cryptocurrency symbol
+            df: Price data
             
         Returns:
-            优化后的参数
+            Optimized parameters
         """
         logger.info(f"🚀 Vectorized optimization for {symbol}")
         
         try:
-            # 准备数据
+            # Prepare data
             prices, timestamps, split_time = self.prepare_data(df)
             train_indices, test_indices = self.split_data_indices(timestamps, split_time)
             
@@ -225,7 +225,7 @@ class VectorizedParameterOptimizer:
             best_params = None
             best_stats = None
             
-            # 向量化参数搜索
+            # Vectorized parameter search
             param_combinations = 0
             
             for min_depth in self.param_ranges['min_depth_pct']:
@@ -241,7 +241,7 @@ class VectorizedParameterOptimizer:
                                 
                                 param_combinations += 1
                                 
-                                # 训练阶段检测
+                                # Training phase detection
                                 train_starts, train_bottoms, train_recoveries = vectorized_pattern_detection(
                                     train_prices,
                                     min_depth, max_depth, min_recovery,
@@ -251,23 +251,23 @@ class VectorizedParameterOptimizer:
                                 if len(train_starts) == 0:
                                     continue
                                 
-                                # 训练阶段回测
-                                entry_indices = train_recoveries + 1  # 恢复后下一小时入场
+                                # Training phase backtesting
+                                entry_indices = train_recoveries + 1  # Enter next hour after recovery
                                 valid_entries = entry_indices[entry_indices < len(train_prices) - 20]
                                 
                                 if len(valid_entries) == 0:
                                     continue
                                 
                                 train_returns = vectorized_backtest(train_prices, valid_entries, 20)
-                                train_returns = train_returns - 0.002  # 扣除交易费用
+                                train_returns = train_returns - 0.002  # Deduct trading fees
                                 
-                                # 计算训练指标
+                                # Calculate training metrics
                                 train_win_rate = np.mean(train_returns > 0)
                                 train_avg_return = np.mean(train_returns)
                                 train_total_return = np.prod(1 + train_returns) - 1
                                 
-                                # 计算训练评分
-                                if len(train_returns) < 5:  # 至少5笔交易
+                                # Calculate training score
+                                if len(train_returns) < 5:  # At least 5 trades
                                     continue
                                 
                                 score = (train_win_rate * 0.5 + 
@@ -297,7 +297,7 @@ class VectorizedParameterOptimizer:
             
             logger.info(f"  Tested {param_combinations} combinations, best score: {best_score:.3f}")
             
-            # 在测试数据上验证
+            # Validate on test data
             test_starts, test_bottoms, test_recoveries = vectorized_pattern_detection(
                 test_prices,
                 best_params['min_depth_pct'],
@@ -311,7 +311,7 @@ class VectorizedParameterOptimizer:
                 logger.warning(f"No test patterns for {symbol}")
                 return None
             
-            # 测试阶段回测
+            # Test phase backtesting
             test_entry_indices = test_recoveries + 1
             test_valid_entries = test_entry_indices[test_entry_indices < len(test_prices) - 20]
             
@@ -320,9 +320,9 @@ class VectorizedParameterOptimizer:
                 return None
             
             test_returns = vectorized_backtest(test_prices, test_valid_entries, 20)
-            test_returns = test_returns - 0.002  # 扣除交易费用
+            test_returns = test_returns - 0.002  # Deduct trading fees
             
-            # 计算测试指标
+            # Calculate test metrics
             test_win_rate = np.mean(test_returns > 0)
             test_avg_return = np.mean(test_returns)
             test_total_return = np.prod(1 + test_returns) - 1
@@ -363,7 +363,7 @@ class VectorizedParameterOptimizer:
             return None
     
     def optimize_multiple_symbols(self, data_dict: Dict[str, pd.DataFrame]) -> Dict[str, OptimizedParams]:
-        """优化多个币种"""
+        """Optimize multiple cryptocurrencies"""
         logger.info(f"🚀 Starting vectorized optimization for {len(data_dict)} symbols")
         
         results = {}
@@ -377,12 +377,12 @@ class VectorizedParameterOptimizer:
         return results
     
     def save_results(self, results: Dict[str, OptimizedParams], filename: Optional[str] = None) -> str:
-        """保存优化结果"""
+        """Save optimization results"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"vectorized_optimization_{timestamp}.json"
         
-        # 准备可序列化的结果
+        # Prepare serializable results
         serializable_results = {
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
@@ -416,7 +416,7 @@ class VectorizedParameterOptimizer:
                 }
             }
         
-        # 保存到data目录
+        # Save to data directory
         import os
         parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         data_dir = os.path.join(parent_dir, 'data')
@@ -431,7 +431,7 @@ class VectorizedParameterOptimizer:
 
 
 def print_vectorized_results(results: Dict[str, OptimizedParams]):
-    """打印向量化优化结果"""
+    """Print vectorized optimization results"""
     if not results:
         print("❌ No optimization results")
         return
@@ -447,7 +447,7 @@ def print_vectorized_results(results: Dict[str, OptimizedParams]):
               f"{result.consistency_ratio:>10.2f} {result.test_win_rate:>8.1%} "
               f"{result.test_return:>10.2%}")
     
-    # 汇总统计
+    # Summary statistics
     avg_consistency = np.mean([r.consistency_ratio for r in results.values()])
     avg_test_win_rate = np.mean([r.test_win_rate for r in results.values()])
     avg_test_return = np.mean([r.test_return for r in results.values()])
@@ -463,12 +463,12 @@ def print_vectorized_results(results: Dict[str, OptimizedParams]):
 
 
 if __name__ == "__main__":
-    # 测试向量化优化器
+    # Test vectorized optimizer
     logging.basicConfig(level=logging.INFO)
     
     print("⚡ Testing Vectorized V-Pattern Optimizer")
     
-    # 这里可以加载实际数据进行测试
+    # Can load actual data for testing here
     # from data_loader import VReversalDataLoader
     # 
     # loader = VReversalDataLoader()

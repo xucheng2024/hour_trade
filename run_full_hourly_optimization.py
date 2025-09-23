@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-对所有加密货币运行小时策略优化
-基于现有的日策略参数，测试最优卖出时机
+Run hourly strategy optimization for all cryptocurrencies
+Based on existing daily strategy parameters, test optimal sell timing
 """
 
 import json
@@ -13,51 +13,51 @@ import time
 
 def test_hourly_strategy_for_crypto(crypto, params, lookahead_hours=24):
     """
-    测试单个加密货币的小时策略
+    Test hourly strategy for a single cryptocurrency
     
     Args:
-        crypto: 加密货币名称
-        params: 优化参数 (包含high_open_ratio_threshold和volume_ratio_threshold)
-        lookahead_hours: 向前看的小时数
+        crypto: Cryptocurrency name
+        params: Optimization parameters (including high_open_ratio_threshold and volume_ratio_threshold)
+        lookahead_hours: Number of hours to look ahead
     """
     p_threshold = params['high_open_ratio_threshold']
     v_threshold = params['volume_ratio_threshold']
     
     try:
-        # 获取小时数据
+        # Get hourly data
         data_file = f"data/{crypto}_1H.npz"
         if not os.path.exists(data_file):
             return None
         
-        # 加载数据
+        # Load data
         data = np.load(data_file)
         raw_data = data['data']
         
-        # 转换为DataFrame (小时数据有9列)
+        # Convert to DataFrame (hourly data has 9 columns)
         if raw_data.shape[1] == 9:
-            # 小时数据格式: timestamp, open, high, low, close, volume, volume_ccy, volume_ccy, confirm
+            # Hourly data format: timestamp, open, high, low, close, volume, volume_ccy, volume_ccy, confirm
             df = pd.DataFrame(raw_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'volume_ccy', 'volume_ccy2', 'confirm'])
-            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]  # 只保留需要的列
+            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]  # Keep only needed columns
         else:
-            # 日数据格式: timestamp, open, high, low, close, volume
+            # Daily data format: timestamp, open, high, low, close, volume
             df = pd.DataFrame(raw_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
         df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms')
         
-        # 转换数值列为float
+        # Convert numeric columns to float
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = df[col].astype(float)
         
-        # 获取最近3个月的数据
+        # Get last 3 months of data
         end_date = df['timestamp'].max()
         start_date = end_date - timedelta(days=90)
         
         recent_data = df[df['timestamp'] >= start_date].copy()
         
-        if len(recent_data) < 100:  # 至少需要100小时的数据
+        if len(recent_data) < 100:  # Need at least 100 hours of data
             return None
         
-        # 寻找买入信号
+        # Find buy signals
         buy_signals = []
         
         for i in range(len(recent_data) - lookahead_hours):
@@ -66,11 +66,11 @@ def test_hourly_strategy_for_crypto(crypto, params, lookahead_hours=24):
             current_volume = recent_data.iloc[i]['volume']
             previous_volume = recent_data.iloc[i-1]['volume'] if i > 0 else current_volume
             
-            # 计算价格比率和成交量比率
+            # Calculate price ratio and volume ratio
             price_ratio = (current_high - current_open) / current_open
             volume_ratio = current_volume / previous_volume if previous_volume > 0 else 1
             
-            # 检查是否满足买入条件
+            # Check if buy conditions are met
             if price_ratio >= p_threshold and volume_ratio >= v_threshold:
                 buy_signals.append({
                     'buy_hour': i,
@@ -83,24 +83,24 @@ def test_hourly_strategy_for_crypto(crypto, params, lookahead_hours=24):
         if len(buy_signals) == 0:
             return None
         
-        # 测试不同卖出时机
+        # Test different sell timings
         sell_timing_results = {}
         
-        for sell_hours in range(1, 25):  # 1-24小时
+        for sell_hours in range(1, 25):  # 1-24 hours
             profits = []
             
             for signal in buy_signals:
                 buy_time_idx = signal['buy_hour']
                 buy_price = signal['buy_price']
                 
-                # 计算卖出价格（包含手续费）
+                # Calculate sell price (including fees)
                 sell_time_idx = buy_time_idx + sell_hours
                 if sell_time_idx < len(recent_data):
                     sell_price = recent_data.iloc[sell_time_idx]['close']
                     
-                    # 计算利润（包含手续费）
-                    buy_price_with_fee = buy_price * 1.001  # 买入手续费
-                    sell_price_with_fee = sell_price * 0.999  # 卖出手续费
+                    # Calculate profit (including fees)
+                    buy_price_with_fee = buy_price * 1.001  # Buy fee
+                    sell_price_with_fee = sell_price * 0.999  # Sell fee
                     profit = (sell_price_with_fee / buy_price_with_fee) - 1
                     profits.append(profit)
             
@@ -121,18 +121,18 @@ def test_hourly_strategy_for_crypto(crypto, params, lookahead_hours=24):
         if not sell_timing_results:
             return None
         
-        # 找到最佳卖出时机
+        # Find best sell timing
         best_hours = max(sell_timing_results.keys(), 
                         key=lambda h: sell_timing_results[h]['compound_return'])
         best_result = sell_timing_results[best_hours]
         
-        # 计算卖出价格比例
+        # Calculate sell price ratio
         compound_return = best_result['compound_return']
         avg_return = best_result['mean_return']
-        sell_price_ratio = 1.0 + avg_return + 0.002  # 补偿手续费
-        sell_price_ratio = min(max(sell_price_ratio, 1.01), 1.15)  # 限制在1%-15%之间
+        sell_price_ratio = 1.0 + avg_return + 0.002  # Compensate for fees
+        sell_price_ratio = min(max(sell_price_ratio, 1.01), 1.15)  # Limit to 1%-15%
         
-        # 确定风险等级
+        # Determine risk level
         win_rate = best_result['win_rate']
         if win_rate >= 0.8:
             risk_level = "low"
@@ -160,67 +160,67 @@ def test_hourly_strategy_for_crypto(crypto, params, lookahead_hours=24):
         }
         
     except Exception as e:
-        print(f"  ❌ {crypto} 测试失败: {e}")
+        print(f"  ❌ {crypto} test failed: {e}")
         return None
 
 def run_full_hourly_optimization():
-    """对所有加密货币运行小时策略优化"""
+    """Run hourly strategy optimization for all cryptocurrencies"""
     
-    print("🚀 开始对所有加密货币进行小时策略优化")
+    print("🚀 Starting hourly strategy optimization for all cryptocurrencies")
     print("=" * 80)
     
-    # 加载日策略优化参数
+    # Load daily strategy optimization parameters
     try:
         with open('crypto_trading_triggers.json', 'r') as f:
             config = json.load(f)
             triggers = config.get('triggers', {})
-        print(f"✅ 加载了 {len(triggers)} 个加密货币的日策略参数")
+        print(f"✅ Loaded daily strategy parameters for {len(triggers)} cryptocurrencies")
     except Exception as e:
-        print(f"❌ 加载配置失败: {e}")
+        print(f"❌ Failed to load configuration: {e}")
         return
     
     results = {}
     success_count = 0
     total_count = len(triggers)
     
-    print(f"📊 开始处理 {total_count} 个加密货币...")
+    print(f"📊 Starting to process {total_count} cryptocurrencies...")
     print("-" * 80)
     
     start_time = time.time()
     
     for i, (crypto, params) in enumerate(triggers.items(), 1):
-        print(f"[{i:3d}/{total_count}] 处理 {crypto}...", end=" ")
+        print(f"[{i:3d}/{total_count}] Processing {crypto}...", end=" ")
         
         result = test_hourly_strategy_for_crypto(crypto, params)
         
         if result:
             results[crypto] = result
             success_count += 1
-            print(f"✅ 成功 - 最佳{result['best_timing']}小时, 收益{result['performance']['compound_return']:.3f}×, 胜率{result['performance']['win_rate']:.1%}")
+            print(f"✅ Success - Best {result['best_timing']} hours, return {result['performance']['compound_return']:.3f}×, win rate {result['performance']['win_rate']:.1%}")
         else:
-            print("❌ 失败")
+            print("❌ Failed")
         
-        # 每10个显示进度
+        # Show progress every 10
         if i % 10 == 0:
             elapsed = time.time() - start_time
             avg_time = elapsed / i
             remaining = (total_count - i) * avg_time
-            print(f"    进度: {i}/{total_count} ({i/total_count:.1%}), 预计剩余: {remaining/60:.1f}分钟")
+            print(f"    Progress: {i}/{total_count} ({i/total_count:.1%}), estimated remaining: {remaining/60:.1f} minutes")
     
     print("\n" + "=" * 80)
-    print("📊 小时策略优化完成!")
-    print(f"成功处理: {success_count}/{total_count} ({success_count/total_count:.1%})")
+    print("📊 Hourly strategy optimization completed!")
+    print(f"Successfully processed: {success_count}/{total_count} ({success_count/total_count:.1%})")
     
     if success_count == 0:
-        print("❌ 没有成功处理任何加密货币")
+        print("❌ No cryptocurrencies were successfully processed")
         return
     
-    # 生成配置
+    # Generate configuration
     hourly_config = {
         "strategy_type": "hourly_sell_timing",
-        "description": "基于优化参数的小时数据卖出时机配置 - 全量优化",
+        "description": "Hourly data sell timing configuration based on optimized parameters - full optimization",
         "last_updated": datetime.now().strftime("%Y-%m-%d"),
-        "data_period": "最近3个月小时数据",
+        "data_period": "Last 3 months hourly data",
         "fees": {
             "buy_fee": 0.001,
             "sell_fee": 0.001
@@ -228,7 +228,7 @@ def run_full_hourly_optimization():
         "crypto_configs": {}
     }
     
-    # 转换结果格式
+    # Convert result format
     for crypto, result in results.items():
         hourly_config["crypto_configs"][crypto] = {
             "buy_conditions": {
@@ -238,14 +238,14 @@ def run_full_hourly_optimization():
             "sell_timing": {
                 "best_hours": result['best_timing'],
                 "sell_price_ratio": result['sell_price_ratio'],
-                "description": f"买入后{result['best_timing']}小时卖出，卖出价格为目标开盘价的{result['sell_price_ratio']:.1%}"
+                "description": f"Sell {result['best_timing']} hours after buying, sell price is {result['sell_price_ratio']:.1%} of target open price"
             },
             "performance": result['performance'],
             "risk_level": result['risk_level'],
             "recommended": bool(result['recommended'])
         }
     
-    # 添加统计信息
+    # Add statistics
     all_compound_returns = [r['performance']['compound_return'] for r in results.values()]
     all_win_rates = [r['performance']['win_rate'] for r in results.values()]
     all_best_hours = [r['best_timing'] for r in results.values()]
@@ -273,32 +273,32 @@ def run_full_hourly_optimization():
         }
     }
     
-    # 保存配置
+    # Save configuration
     try:
         with open('crypto_hourly_sell_config_full.json', 'w', encoding='utf-8') as f:
             json.dump(hourly_config, f, indent=2, ensure_ascii=False)
-        print(f"✅ 完整配置已保存到: crypto_hourly_sell_config_full.json")
+        print(f"✅ Complete configuration saved to: crypto_hourly_sell_config_full.json")
     except Exception as e:
-        print(f"❌ 保存配置失败: {e}")
+        print(f"❌ Failed to save configuration: {e}")
     
-    # 显示统计摘要
-    print(f"\n📈 统计摘要:")
-    print(f"  复合收益范围: {np.min(all_compound_returns):.3f}× - {np.max(all_compound_returns):.3f}×")
-    print(f"  平均复合收益: {np.mean(all_compound_returns):.3f}×")
-    print(f"  胜率范围: {np.min(all_win_rates):.1%} - {np.max(all_win_rates):.1%}")
-    print(f"  平均胜率: {np.mean(all_win_rates):.1%}")
-    print(f"  最佳卖出时机范围: {np.min(all_best_hours)} - {np.max(all_best_hours)} 小时")
-    print(f"  平均最佳卖出时机: {np.mean(all_best_hours):.1f} 小时")
+    # Display statistics summary
+    print(f"\n📈 Statistics Summary:")
+    print(f"  Compound return range: {np.min(all_compound_returns):.3f}× - {np.max(all_compound_returns):.3f}×")
+    print(f"  Average compound return: {np.mean(all_compound_returns):.3f}×")
+    print(f"  Win rate range: {np.min(all_win_rates):.1%} - {np.max(all_win_rates):.1%}")
+    print(f"  Average win rate: {np.mean(all_win_rates):.1%}")
+    print(f"  Best sell timing range: {np.min(all_best_hours)} - {np.max(all_best_hours)} hours")
+    print(f"  Average best sell timing: {np.mean(all_best_hours):.1f} hours")
     
-    # 显示前10名
+    # Display top 10
     sorted_results = sorted(results.items(), 
                           key=lambda x: x[1]['performance']['compound_return'], 
                           reverse=True)[:10]
     
-    print(f"\n🏆 前10名最佳表现:")
+    print(f"\n🏆 Top 10 Best Performance:")
     for i, (crypto, result) in enumerate(sorted_results, 1):
         perf = result['performance']
-        print(f"  {i:2d}. {crypto:12s}: {perf['compound_return']:.3f}×, {perf['win_rate']:.1%}, {result['best_timing']:2d}小时")
+        print(f"  {i:2d}. {crypto:12s}: {perf['compound_return']:.3f}×, {perf['win_rate']:.1%}, {result['best_timing']:2d} hours")
 
 if __name__ == "__main__":
     run_full_hourly_optimization()

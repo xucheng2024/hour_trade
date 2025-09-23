@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 V-Pattern Parameter Optimization Runner
-V型模式参数优化运行器
+V-shaped pattern parameter optimization runner
 """
 
 import os
@@ -28,15 +28,15 @@ def run_parameter_optimization(symbols: List[str] = None,
                              total_months: int = 9,
                              test_months: int = 3) -> Dict[str, ValidationResult]:
     """
-    运行V型模式参数优化
+    Run V-shaped pattern parameter optimization
     
     Args:
-        symbols: 要优化的币种列表
-        total_months: 总数据月数
-        test_months: 测试期月数
+        symbols: List of cryptocurrencies to optimize
+        total_months: Total data months
+        test_months: Test period months
         
     Returns:
-        优化验证结果字典
+        Optimization validation results dictionary
     """
     print("🚀 V-Pattern Parameter Optimization")
     print("=" * 60)
@@ -46,15 +46,15 @@ def run_parameter_optimization(symbols: List[str] = None,
     print(f"  Test period: {test_months} months")
     print()
     
-    # 1. 加载数据
+    # 1. Load data
     print("📊 Loading data...")
     data_loader = VReversalDataLoader()
     
     if symbols is None:
-        # 选择一些主要币种进行优化
+        # Select some main cryptocurrencies for optimization
         available_symbols = data_loader.get_available_symbols()
         symbols = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT', '1INCH-USDT', 'AAVE-USDT']
-        symbols = [s for s in symbols if s in available_symbols][:3]  # 限制为3个币种以加快速度
+        symbols = [s for s in symbols if s in available_symbols][:3]  # Limit to 3 cryptocurrencies for speed
     
     data_dict = data_loader.load_multiple_symbols(symbols, months=total_months)
     
@@ -64,22 +64,22 @@ def run_parameter_optimization(symbols: List[str] = None,
     
     print(f"✅ Loaded data for {len(data_dict)} symbols")
     
-    # 显示数据信息
+    # Display data information
     for symbol, df in data_dict.items():
         print(f"  {symbol}: {len(df)} records, "
               f"{df['timestamp'].min().strftime('%Y-%m-%d')} to "
               f"{df['timestamp'].max().strftime('%Y-%m-%d')}")
     print()
     
-    # 2. 创建优化器
+    # 2. Create optimizer
     print("🔧 Initializing parameter optimizer...")
     optimizer = VPatternParameterOptimizer(
         test_months=test_months,
         min_train_months=total_months - test_months - 1,
-        max_workers=2  # 减少并发以避免过载
+        max_workers=2  # Reduce concurrency to avoid overload
     )
     
-    # 3. 运行优化和验证
+    # 3. Run optimization and validation
     print("⚡ Starting parameter optimization...")
     print("   This may take a few minutes...")
     print()
@@ -90,10 +90,10 @@ def run_parameter_optimization(symbols: List[str] = None,
         print("❌ No successful optimizations")
         return {}
     
-    # 4. 显示结果
+    # 4. Display results
     print_optimization_summary(validation_results)
     
-    # 5. 详细参数显示
+    # 5. Detailed parameter display
     print(f"\n📋 Optimized Parameters for Each Symbol:")
     print("=" * 80)
     
@@ -109,7 +109,7 @@ def run_parameter_optimization(symbols: List[str] = None,
               f"({result.test_win_rate:.1%} win rate, {result.test_total_return:.1%} return)")
         print(f"  Consistency: {result.consistency_ratio:.2f}")
     
-    # 6. 保存结果
+    # 6. Save results
     print(f"\n💾 Saving optimization results...")
     saved_file = optimizer.save_optimization_results(validation_results)
     print(f"✅ Results saved to: {saved_file}")
@@ -117,42 +117,42 @@ def run_parameter_optimization(symbols: List[str] = None,
     return validation_results
 
 def quick_optimization():
-    """快速优化测试"""
+    """Quick optimization test"""
     print("⚡ Quick Parameter Optimization Test")
     print("=" * 50)
     
-    # 使用较少币种和较短时间进行快速测试
+    # Use fewer cryptocurrencies and shorter time for quick test
     result = run_parameter_optimization(
-        symbols=['BTC-USDT', 'ETH-USDT'],  # 只测试2个币种
-        total_months=6,                    # 总共6个月数据
-        test_months=2                      # 测试期2个月
+        symbols=['BTC-USDT', 'ETH-USDT'],  # Only test 2 cryptocurrencies
+        total_months=6,                    # Total 6 months data
+        test_months=2                      # Test period 2 months
     )
     
     return result
 
 def full_optimization():
-    """完整优化"""
+    """Full optimization"""
     print("🔬 Full Parameter Optimization")
     print("=" * 50)
     
-    # 使用更多币种和更长时间进行完整优化
+    # Use more cryptocurrencies and longer time for full optimization
     result = run_parameter_optimization(
-        symbols=None,      # 使用默认币种列表
-        total_months=9,    # 总共9个月数据
-        test_months=3      # 测试期3个月
+        symbols=None,      # Use default cryptocurrency list
+        total_months=9,    # Total 9 months data
+        test_months=3      # Test period 3 months
     )
     
     return result
 
 def compare_with_default_params(validation_results: Dict[str, ValidationResult]):
-    """与默认参数对比"""
+    """Compare with default parameters"""
     if not validation_results:
         return
     
     print(f"\n🔍 Comparing with Default Parameters")
     print("=" * 80)
     
-    # 默认参数设置
+    # Default parameter settings
     default_params = {
         'min_depth_pct': 0.03,
         'max_depth_pct': 0.25,
@@ -172,11 +172,11 @@ def compare_with_default_params(validation_results: Dict[str, ValidationResult])
     
     for symbol, result in validation_results.items():
         optimized_return = result.test_total_return
-        # 这里可以添加与默认参数的对比逻辑
+        # Can add comparison logic with default parameters here
         print(f"{symbol:<12} {optimized_return:>14.2%} {'(Optimized)':>11}")
 
 def main():
-    """主函数"""
+    """Main function"""
     print("🎯 V-Pattern Parameter Optimization System")
     print("=" * 60)
     print("1. Quick optimization (2 symbols, 6 months data)")
@@ -226,7 +226,7 @@ def main():
             print("Invalid choice")
             return
         
-        # 对比分析
+        # Comparison analysis
         if result:
             compare_with_default_params(result)
         

@@ -1,151 +1,151 @@
 # V-shaped Reversal Strategy Research
 
-V型反转策略研究模块 - 基于小时数据检测和交易V型反转模式
+V-shaped reversal strategy research module - Detecting and trading V-shaped reversal patterns based on hourly data
 
-## 📊 策略概述
+## 📊 Strategy Overview
 
-V型反转策略旨在捕捉加密货币市场中的短期V型反转模式：
+The V-shaped reversal strategy aims to capture short-term V-shaped reversal patterns in cryptocurrency markets:
 
-1. **检测阶段**: 识别快速下跌后快速恢复的V型价格模式
-2. **确认阶段**: 在价格恢复到一定水平后确认模式
-3. **交易阶段**: 在恢复确认后买入，持有20小时后卖出
+1. **Detection Phase**: Identify V-shaped price patterns that fall rapidly and then recover quickly
+2. **Confirmation Phase**: Confirm the pattern after price recovers to a certain level
+3. **Trading Phase**: Buy after recovery confirmation, hold for 20 hours, then sell
 
-## 🎯 策略参数
+## 🎯 Strategy Parameters
 
-### V型模式检测参数
-- **最小下跌深度**: 3-25% (可配置)
-- **最小恢复比例**: 70% (从底部恢复到起点的70%)
-- **最大总时间**: 48小时 (从开始下跌到恢复完成)
-- **最大恢复时间**: 24小时 (从底部到恢复的时间)
+### V-pattern Detection Parameters
+- **Minimum decline depth**: 3-25% (configurable)
+- **Minimum recovery ratio**: 70% (recovery from bottom to 70% of starting point)
+- **Maximum total time**: 48 hours (from start of decline to recovery completion)
+- **Maximum recovery time**: 24 hours (time from bottom to recovery)
 
-### 交易参数
-- **入场时机**: V型恢复确认后下一小时
-- **持有时间**: 20小时 (固定)
-- **退出方式**: 仅固定时间退出，无止损止盈
-- **最小模式质量**: 0.2 (基于深度、速度、成交量的综合评分)
+### Trading Parameters
+- **Entry timing**: Next hour after V-pattern recovery confirmation
+- **Holding time**: 20 hours (fixed)
+- **Exit method**: Fixed time exit only, no stop loss or take profit
+- **Minimum pattern quality**: 0.2 (comprehensive score based on depth, speed, and volume)
 
-## 📁 文件结构
+## 📁 File Structure
 
 ```
 v_reversal_research/
-├── __init__.py                    # 模块初始化
-├── data_loader.py                 # 数据加载器
-├── v_pattern_detector.py          # V型模式检测器
-├── v_strategy_backtester.py       # 策略回测系统
-├── run_v_analysis.py             # 分析运行器
-└── README.md                     # 说明文档
+├── __init__.py                    # Module initialization
+├── data_loader.py                 # Data loader
+├── v_pattern_detector.py          # V-pattern detector
+├── v_strategy_backtester.py       # Strategy backtesting system
+├── run_v_analysis.py             # Analysis runner
+└── README.md                     # Documentation
 ```
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-### 运行分析
+### Running Analysis
 
 ```bash
-# 进入V型反转研究目录
+# Enter V-shaped reversal research directory
 cd v_reversal_research
 
-# 运行完整分析
+# Run complete analysis
 python run_v_analysis.py
 
-# 或者直接快速测试
+# Or run quick test directly
 python -c "from run_v_analysis import quick_test; quick_test()"
 ```
 
-### 选项
-1. **快速测试**: 3个币种，3个月数据
-2. **完整分析**: 5个币种，6个月数据  
-3. **自定义分析**: 自定义币种和时间范围
+### Options
+1. **Quick test**: 3 cryptocurrencies, 3 months data
+2. **Full analysis**: 5 cryptocurrencies, 6 months data  
+3. **Custom analysis**: Custom cryptocurrencies and time range
 
-## 📈 分析流程
+## 📈 Analysis Process
 
-### 1. 数据加载
-- 从现有OKX数据基础设施加载小时K线数据
-- 添加技术指标（移动平均线、波动率等）
-- 数据预处理和格式标准化
+### 1. Data Loading
+- Load hourly candlestick data from existing OKX data infrastructure
+- Add technical indicators (moving averages, volatility, etc.)
+- Data preprocessing and format standardization
 
-### 2. V型模式检测
-- 寻找局部高点作为下跌起点
-- 识别符合条件的底部位置
-- 验证恢复速度和程度
-- 计算模式质量分数
+### 2. V-pattern Detection
+- Find local highs as decline starting points
+- Identify qualified bottom positions
+- Verify recovery speed and extent
+- Calculate pattern quality score
 
-### 3. 策略回测
-- 模拟V型恢复确认后的买入
-- 固定持有20小时后退出
-- 计算交易收益率和持有时间
-- 不使用止损止盈，纯粹测试V型反转效果
+### 3. Strategy Backtesting
+- Simulate buying after V-pattern recovery confirmation
+- Fixed holding for 20 hours then exit
+- Calculate trading returns and holding time
+- No stop loss or take profit, purely testing V-shaped reversal effectiveness
 
-### 4. 结果分析
-- 胜率和平均收益统计
-- 夏普比率计算
-- 不同退出原因的收益分析
-- 各币种表现对比
+### 4. Result Analysis
+- Win rate and average return statistics
+- Sharpe ratio calculation
+- Return analysis by different exit reasons
+- Performance comparison across cryptocurrencies
 
-## 📊 输出结果
+## 📊 Output Results
 
-### 控制台输出
-- V型模式检测结果
-- 策略回测性能统计
-- 详细的交易分析报告
+### Console Output
+- V-pattern detection results
+- Strategy backtesting performance statistics
+- Detailed trading analysis reports
 
-### JSON结果文件
-保存在 `../data/v_reversal_analysis_TIMESTAMP.json`，包含：
-- 检测器和回测器配置
-- 所有检测到的V型模式详情
-- 交易记录和性能统计
-- 汇总分析结果
+### JSON Result Files
+Saved in `../data/v_reversal_analysis_TIMESTAMP.json`, containing:
+- Detector and backtester configuration
+- Details of all detected V-patterns
+- Trading records and performance statistics
+- Summary analysis results
 
-## 🔧 核心算法
+## 🔧 Core Algorithms
 
-### V型模式检测算法
-1. **局部高点识别**: 使用滑动窗口找到价格局部最高点
-2. **底部搜索**: 在高点后寻找满足深度要求的局部最低点
-3. **恢复验证**: 检查价格是否在规定时间内恢复到阈值
-4. **质量评分**: 基于深度、速度、成交量综合评分
-5. **重叠过滤**: 移除重叠模式，保留质量最高的
+### V-pattern Detection Algorithm
+1. **Local High Identification**: Use sliding window to find local price highs
+2. **Bottom Search**: Find local lows after highs that meet depth requirements
+3. **Recovery Verification**: Check if price recovers to threshold within specified time
+4. **Quality Scoring**: Comprehensive scoring based on depth, speed, and volume
+5. **Overlap Filtering**: Remove overlapping patterns, keep highest quality ones
 
-### 质量评分公式
+### Quality Scoring Formula
 ```
-质量分数 = 深度分数 × 0.4 + 速度分数 × 0.4 + 成交量分数 × 0.2
+Quality Score = Depth Score × 0.4 + Speed Score × 0.4 + Volume Score × 0.2
 
-其中:
-- 深度分数 = min(下跌深度 / 15%, 1.0)
-- 速度分数 = max(0, 1.0 - 恢复时间 / 24小时)  
-- 成交量分数 = min(底部成交量放大倍数 / 3.0, 1.0)
+Where:
+- Depth Score = min(decline depth / 15%, 1.0)
+- Speed Score = max(0, 1.0 - recovery time / 24 hours)  
+- Volume Score = min(bottom volume spike / 3.0, 1.0)
 ```
 
-## 📝 使用示例
+## 📝 Usage Example
 
 ```python
 from v_reversal_research.data_loader import VReversalDataLoader
 from v_reversal_research.v_pattern_detector import VPatternDetector
 from v_reversal_research.v_strategy_backtester import VReversalBacktester
 
-# 加载数据
+# Load data
 loader = VReversalDataLoader()
 data = loader.load_multiple_symbols(['BTC-USDT', 'ETH-USDT'], months=3)
 
-# 检测V型模式
+# Detect V-patterns
 detector = VPatternDetector()
 patterns = detector.detect_patterns(data['BTC-USDT'])
 
-# 回测策略 (固定20小时持有，无止损止盈)
+# Backtest strategy (fixed 20-hour holding, no stop loss or take profit)
 backtester = VReversalBacktester(holding_hours=20)
 results = backtester.backtest_multiple_symbols(data, detector)
 ```
 
-## ⚠️ 注意事项
+## ⚠️ Important Notes
 
-1. **数据依赖**: 需要充足的小时K线历史数据
-2. **参数敏感性**: V型检测参数对结果影响较大，建议多次测试
-3. **市场环境**: 策略在不同市场环境下表现可能差异较大
-4. **交易费用**: 已考虑0.1%的单边交易费用
-5. **滑点影响**: 实际交易中可能存在滑点，影响收益
+1. **Data Dependency**: Requires sufficient historical hourly candlestick data
+2. **Parameter Sensitivity**: V-pattern detection parameters significantly affect results, recommend multiple tests
+3. **Market Environment**: Strategy performance may vary significantly across different market conditions
+4. **Trading Fees**: 0.1% one-way trading fees already considered
+5. **Slippage Impact**: Actual trading may have slippage affecting returns
 
-## 🔄 未来改进
+## 🔄 Future Improvements
 
-- [ ] 添加更多技术指标辅助检测
-- [ ] 实现动态参数优化
-- [ ] 增加市场环境分类分析
-- [ ] 支持更多时间框架分析
-- [ ] 添加风险管理模块
+- [ ] Add more technical indicators for detection assistance
+- [ ] Implement dynamic parameter optimization
+- [ ] Add market environment classification analysis
+- [ ] Support more timeframe analysis
+- [ ] Add risk management module

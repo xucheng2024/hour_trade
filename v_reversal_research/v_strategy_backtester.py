@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 V-shaped Reversal Strategy Backtester
-V型反转策略回测系统
+V-shaped reversal strategy backtesting system
 """
 
 import numpy as np
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Trade:
-    """交易记录"""
+    """Trade record"""
     symbol: str
     pattern: VPattern
     entry_time: pd.Timestamp
@@ -27,11 +27,11 @@ class Trade:
     exit_price: float
     holding_hours: int
     return_pct: float
-    reason: str  # 退出原因
+    reason: str  # Exit reason
 
 @dataclass
 class BacktestResult:
-    """回测结果"""
+    """Backtest results"""
     symbol: str
     total_patterns: int
     total_trades: int
@@ -47,19 +47,19 @@ class BacktestResult:
     trades: List[Trade]
 
 class VReversalBacktester:
-    """V型反转策略回测器"""
+    """V-shaped reversal strategy backtester"""
     
     def __init__(self, 
-                 holding_hours: int = 20,           # 持有时间20小时
-                 min_pattern_quality: float = 0.3,  # 最小模式质量分数
-                 transaction_cost: float = 0.001):  # 交易费用0.1%
+                 holding_hours: int = 20,           # Holding time 20 hours
+                 min_pattern_quality: float = 0.3,  # Minimum pattern quality score
+                 transaction_cost: float = 0.001):  # Transaction cost 0.1%
         """
-        初始化回测器
+        Initialize backtester
         
         Args:
-            holding_hours: 固定持有时间(小时)
-            min_pattern_quality: 最小模式质量分数
-            transaction_cost: 单边交易费用
+            holding_hours: Fixed holding time (hours)
+            min_pattern_quality: Minimum pattern quality score
+            transaction_cost: Single-side transaction cost
         """
         self.holding_hours = holding_hours
         self.min_pattern_quality = min_pattern_quality
@@ -73,19 +73,19 @@ class VReversalBacktester:
     
     def backtest_symbol(self, df: pd.DataFrame, patterns: List[VPattern]) -> BacktestResult:
         """
-        对单个币种进行回测
+        Backtest a single cryptocurrency
         
         Args:
-            df: 价格数据
-            patterns: 检测到的V型模式
+            df: Price data
+            patterns: Detected V-shaped patterns
             
         Returns:
-            回测结果
+            Backtest results
         """
         symbol = df['symbol'].iloc[0] if 'symbol' in df.columns else 'UNKNOWN'
         trades = []
         
-        # 过滤高质量模式
+        # Filter high-quality patterns
         quality_patterns = [p for p in patterns if self._calculate_pattern_quality(p) >= self.min_pattern_quality]
         
         logger.info(f"Backtesting {symbol}: {len(quality_patterns)}/{len(patterns)} quality patterns")
@@ -95,43 +95,43 @@ class VReversalBacktester:
             if trade:
                 trades.append(trade)
         
-        # 计算结果统计
+        # Calculate result statistics
         result = self._calculate_backtest_result(symbol, patterns, trades)
         return result
     
     def _calculate_pattern_quality(self, pattern: VPattern) -> float:
-        """计算模式质量分数"""
-        # 基于深度、恢复速度、成交量放大等因素
-        depth_score = min(pattern.depth_pct / 0.15, 1.0)  # 深度15%为满分
-        speed_score = max(0, 1.0 - pattern.recovery_time / 24)  # 24小时内恢复为满分
-        volume_score = min(pattern.volume_spike / 3.0, 1.0)  # 成交量放大3倍为满分
+        """Calculate pattern quality score"""
+        # Based on depth, recovery speed, volume spike and other factors
+        depth_score = min(pattern.depth_pct / 0.15, 1.0)  # 15% depth is full score
+        speed_score = max(0, 1.0 - pattern.recovery_time / 24)  # Recovery within 24 hours is full score
+        volume_score = min(pattern.volume_spike / 3.0, 1.0)  # 3x volume spike is full score
         
         return depth_score * 0.4 + speed_score * 0.4 + volume_score * 0.2
     
     def _simulate_trade(self, df: pd.DataFrame, pattern: VPattern) -> Optional[Trade]:
         """
-        模拟单次交易
+        Simulate a single trade
         
         Args:
-            df: 价格数据
-            pattern: V型模式
+            df: Price data
+            pattern: V-shaped pattern
             
         Returns:
-            交易记录或None
+            Trade record or None
         """
-        # 入场时机：V型恢复确认后
-        entry_idx = pattern.recovery_idx + 1  # 恢复确认后下一小时入场
+        # Entry timing: After V-shaped recovery confirmation
+        entry_idx = pattern.recovery_idx + 1  # Enter next hour after recovery confirmation
         
         if entry_idx >= len(df):
             return None
         
         entry_time = df['timestamp'].iloc[entry_idx]
-        entry_price = df['open'].iloc[entry_idx]  # 以开盘价入场
+        entry_price = df['open'].iloc[entry_idx]  # Enter at open price
         
-        # 计算计划退出时间
+        # Calculate planned exit time
         planned_exit_idx = entry_idx + self.holding_hours
         
-        # 固定时间退出，不使用止损止盈
+        # Fixed time exit, no stop loss or take profit
         exit_info = self._find_exit_point(df, entry_idx, planned_exit_idx)
         
         if not exit_info:
@@ -141,9 +141,9 @@ class VReversalBacktester:
         exit_time = df['timestamp'].iloc[exit_idx]
         holding_hours = exit_idx - entry_idx
         
-        # 计算收益率(扣除交易费用)
+        # Calculate return (deducting transaction costs)
         gross_return = (exit_price - entry_price) / entry_price
-        net_return = gross_return - 2 * self.transaction_cost  # 买卖两次手续费
+        net_return = gross_return - 2 * self.transaction_cost  # Buy and sell twice transaction cost
         
         return Trade(
             symbol=pattern.symbol,
@@ -159,14 +159,14 @@ class VReversalBacktester:
     
     def _find_exit_point(self, df: pd.DataFrame, entry_idx: int, planned_exit_idx: int) -> Optional[Tuple[int, float, str]]:
         """
-        寻找退出点 - 只使用固定时间退出
+        Find exit point - only use fixed time exit
         
         Returns:
-            (退出索引, 退出价格, 退出原因) 或 None
+            (exit index, exit price, exit reason) or None
         """
         max_search_idx = min(planned_exit_idx, len(df) - 1)
         
-        # 固定时间退出
+        # Fixed time exit
         if max_search_idx < len(df):
             exit_price = df['close'].iloc[max_search_idx]
             return max_search_idx, exit_price, "time_exit"
@@ -175,7 +175,7 @@ class VReversalBacktester:
     
     def _calculate_backtest_result(self, symbol: str, patterns: List[VPattern], 
                                  trades: List[Trade]) -> BacktestResult:
-        """计算回测结果统计"""
+        """Calculate backtest result statistics"""
         if not trades:
             return BacktestResult(
                 symbol=symbol,
@@ -200,13 +200,13 @@ class VReversalBacktester:
         losing_trades = len(returns) - winning_trades
         win_rate = winning_trades / len(returns)
         
-        # 累计收益率 (复利)
+        # Cumulative return (compound interest)
         total_return = np.prod([1 + r for r in returns]) - 1
         
         avg_return = np.mean(returns)
         avg_holding = np.mean(holding_hours)
         
-        # 夏普比率 (假设无风险利率为0)
+        # Sharpe ratio (assuming risk-free rate is 0)
         if np.std(returns) > 0:
             sharpe_ratio = avg_return / np.std(returns) * np.sqrt(365 * 24 / avg_holding)
         else:
@@ -231,24 +231,24 @@ class VReversalBacktester:
     def backtest_multiple_symbols(self, data_dict: Dict[str, pd.DataFrame], 
                                  detector: VPatternDetector) -> Dict[str, BacktestResult]:
         """
-        对多个币种进行回测
+        Backtest multiple cryptocurrencies
         
         Args:
-            data_dict: 币种数据字典
-            detector: V型模式检测器
+            data_dict: Cryptocurrency data dictionary
+            detector: V-shaped pattern detector
             
         Returns:
-            回测结果字典
+            Backtest results dictionary
         """
         results = {}
         
         for symbol, df in data_dict.items():
             logger.info(f"Backtesting {symbol}...")
             
-            # 检测模式
+            # Detect patterns
             patterns = detector.detect_patterns(df)
             
-            # 回测
+            # Backtest
             result = self.backtest_symbol(df, patterns)
             results[symbol] = result
             
@@ -259,7 +259,7 @@ class VReversalBacktester:
         return results
     
     def generate_summary_report(self, results: Dict[str, BacktestResult]) -> Dict:
-        """生成汇总报告"""
+        """Generate summary report"""
         if not results:
             return {"message": "No results to summarize"}
         
@@ -270,7 +270,7 @@ class VReversalBacktester:
         if not all_trades:
             return {"message": "No trades executed"}
         
-        # 汇总统计
+        # Summary statistics
         total_patterns = sum(r.total_patterns for r in results.values())
         total_trades = len(all_trades)
         winning_trades = sum(1 for t in all_trades if t.return_pct > 0)
@@ -278,7 +278,7 @@ class VReversalBacktester:
         returns = [t.return_pct for t in all_trades]
         holding_hours = [t.holding_hours for t in all_trades]
         
-        # 按退出原因分组
+        # Group by exit reason
         exit_reasons = {}
         for trade in all_trades:
             reason = trade.reason
@@ -315,7 +315,7 @@ class VReversalBacktester:
 
 
 def print_backtest_summary(results: Dict[str, BacktestResult]):
-    """打印回测结果摘要"""
+    """Print backtest results summary"""
     if not results:
         print("❌ No backtest results")
         return
@@ -330,7 +330,7 @@ def print_backtest_summary(results: Dict[str, BacktestResult]):
               f"{result.win_rate:>8.1%} {result.avg_return_per_trade:>10.2%} "
               f"{result.total_return:>11.2%} {result.sharpe_ratio:>7.2f}")
     
-    # 汇总统计
+    # Summary statistics
     all_patterns = sum(r.total_patterns for r in results.values())
     all_trades = sum(r.total_trades for r in results.values())
     if all_trades > 0:
@@ -349,12 +349,12 @@ def print_backtest_summary(results: Dict[str, BacktestResult]):
 
 
 if __name__ == "__main__":
-    # 测试回测系统
+    # Test backtesting system
     logging.basicConfig(level=logging.INFO)
     
     print("🚀 Testing V-Reversal Backtester")
     
-    # 这里可以加载实际数据进行测试
+    # Can load actual data for testing here
     # from data_loader import load_sample_data
     # from v_pattern_detector import VPatternDetector
     # 
