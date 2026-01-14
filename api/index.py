@@ -158,6 +158,15 @@ HTML_TEMPLATE = """
         .status-active { background: #fef3c7; color: #92400e; }
         .status-sold { background: #d1fae5; color: #065f46; }
         
+        .trades-table tbody tr.row-latest {
+            background: #d1fae5;
+            border-left: 3px solid #10b981;
+        }
+        
+        .trades-table tbody tr.row-latest:hover {
+            background: #a7f3d0;
+        }
+        
         .error {
             background: #fff;
             text-align: center;
@@ -238,7 +247,7 @@ HTML_TEMPLATE = """
                 </thead>
                 <tbody>
                     {% for trade in data.trades %}
-                    <tr>
+                    <tr {% if trade.is_latest %}class="row-latest"{% endif %}>
                         <td>
                             {% if trade.state == 'sold out' and trade.sell_time %}
                                 {{ trade.sell_time }}
@@ -378,6 +387,10 @@ def get_trading_records():
             if total_buy_amount > 0:
                 data["profit_pct"] = (total_profit / total_buy_amount) * 100
             data["trades"].sort(key=lambda x: x["time"], reverse=True)
+
+            # Mark the latest (first) trade
+            if data["trades"]:
+                data["trades"][0]["is_latest"] = True
 
         cur.close()
         conn.close()

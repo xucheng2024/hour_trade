@@ -172,6 +172,15 @@ HTML_TEMPLATE = """
         .state-sold { background: #d1fae5; color: #065f46; }
         .state-active { background: #fef3c7; color: #92400e; }
         
+        .trades-table tbody tr.row-latest {
+            background: #d1fae5;
+            border-left: 3px solid #10b981;
+        }
+        
+        .trades-table tbody tr.row-latest:hover {
+            background: #a7f3d0;
+        }
+        
         @media (max-width: 768px) {
             body { padding: 12px; }
             .summary { grid-template-columns: 1fr; }
@@ -222,7 +231,7 @@ HTML_TEMPLATE = """
                 </thead>
                 <tbody>
                     {% for trade in data.trades %}
-                    <tr>
+                    <tr {% if trade.is_latest %}class="row-latest"{% endif %}>
                         <td>
                             {% if trade.state == 'sold out' and trade.sell_time %}
                                 {{ trade.sell_time }}
@@ -349,6 +358,10 @@ def get_trading_records():
             # Sort trades by time
             data["trades"].sort(key=lambda x: x["time"], reverse=True)
 
+            # Mark the latest (first) trade
+            if data["trades"]:
+                data["trades"][0]["is_latest"] = True
+
         return dict(cryptos)
     finally:
         cur.close()
@@ -376,6 +389,6 @@ def index():
 
 
 if __name__ == "__main__":
-    print(f"Starting trading records viewer...")
-    print(f"Open http://localhost:5000 in your browser")
+    print("Starting trading records viewer...")
+    print("Open http://localhost:5000 in your browser")
     app.run(debug=True, host="0.0.0.0", port=5000)

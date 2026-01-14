@@ -31,11 +31,17 @@
 
 ## 步骤 2: 配置环境变量
 
-在 Railway Dashboard 中，进入项目设置：
+**重要**: 环境变量必须在 **Service 级别**配置，不是 Project 级别！
 
-1. **点击项目 → Settings → Variables**
+在 Railway Dashboard 中：
 
-2. **添加以下环境变量**：
+1. **点击服务卡片（hour_trade）**，进入服务详情页
+
+2. **点击 "Variables" 标签**
+
+3. **确保在 "Service Variables" 区域**（不是 Project Variables）
+
+4. **添加以下环境变量**（点击 "+ New Variable"）：
 
 ```bash
 # 数据库连接（与 Vercel 使用相同的 Neon 数据库）
@@ -54,7 +60,11 @@ SIMULATION_MODE=true
 STRATEGY_NAME=hourly_limit_ws
 ```
 
-3. **点击 "Save"**
+5. **点击 "Save"** 保存所有环境变量
+
+6. **重要**: 配置环境变量后，必须**重新部署**（Redeploy）才能生效！
+   - 方法1: 点击 "Deployments" → 最新部署 → "Redeploy"
+   - 方法2: 做一个小改动并推送到GitHub触发自动部署
 
 ---
 
@@ -128,7 +138,14 @@ STRATEGY_NAME=hourly_limit_ws
 
 ### 重启应用
 
-- Dashboard → Service → 点击 "Restart"
+**方法1: 快速重启（推荐）**
+- Dashboard → 点击服务卡片（hour_trade）
+- 点击右上角菜单（三个点）→ 选择 "Restart"
+
+**方法2: 重新部署**
+- Dashboard → Deployments → 点击最新部署 → "Redeploy"
+
+**重要**: 配置环境变量后**必须重启**应用才能生效！
 
 ### 停止应用
 
@@ -150,16 +167,28 @@ STRATEGY_NAME=hourly_limit_ws
 2. 查看部署日志中的错误信息
 3. 确保 Python 版本为 3.11+
 
-### 问题 2: 应用启动后立即退出
+### 问题 2: 应用启动后立即退出 / 找不到环境变量
 
 **可能原因**:
-- 环境变量未配置
-- 数据库连接失败
+- 环境变量未配置或配置在错误的级别（Project vs Service）
+- 环境变量配置后没有重新部署
+- 环境变量名称拼写错误
 
 **解决方法**:
-1. 检查所有环境变量是否已设置
-2. 验证 `DATABASE_URL` 是否正确
-3. 查看日志中的错误信息
+1. **确认环境变量在 Service 级别**：
+   - 点击服务卡片（hour_trade）→ Variables
+   - 确保在 "Service Variables" 区域，不是 "Project Variables"
+   
+2. **检查环境变量名称**（大小写敏感）：
+   - 必须是 `DATABASE_URL`（全大写）
+   - 不能是 `database_url` 或 `Database_Url`
+   
+3. **配置后必须重新部署**：
+   - 不是仅仅重启，需要 Redeploy
+   - Deployments → 最新部署 → Redeploy
+   
+4. 验证 `DATABASE_URL` 是否正确（与Vercel使用相同的URL）
+5. 查看日志中的错误信息
 
 ### 问题 3: WebSocket 连接失败
 
