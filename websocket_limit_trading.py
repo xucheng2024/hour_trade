@@ -414,19 +414,14 @@ def on_ticker_message(ws, msg_string):
                         with lock:
                             current_prices[instId] = last_price
 
-                            # Log price update
-                            limit_percent = crypto_limits[instId]
-                            limit_price = calculate_limit_price(
-                                last_price, limit_percent
-                            )
-
                             # Check if we should buy
                             if (
                                 instId not in pending_buys
                                 and instId not in active_orders
                             ):
-                                logger.info(
-                                    f"💰 {instId}: price={last_price:.6f}, limit={limit_percent}% ({limit_price:.6f}), diff={((last_price/limit_price-1)*100):.2f}%"
+                                limit_percent = crypto_limits[instId]
+                                limit_price = calculate_limit_price(
+                                    last_price, limit_percent
                                 )
 
                                 if last_price <= limit_price:
