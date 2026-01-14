@@ -23,150 +23,329 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📊 Trading Records</title>
+    <title>🚀 Crypto Trading Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --success: #10b981;
+            --danger: #ef4444;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
             min-height: 100vh;
             padding: 20px;
+            animation: gradientShift 15s ease infinite;
+            background-size: 200% 200%;
         }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
         .container {
-            max-width: 1200px;
+            max-width: 1600px;
             margin: 0 auto;
-            background: white;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: white;
+            font-size: 3rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+            text-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            color: rgba(255,255,255,0.95);
+            font-size: 1.1rem;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            background: rgba(255,255,255,0.25);
+            backdrop-filter: blur(10px);
+            color: white;
+            border: 2px solid rgba(255,255,255,0.3);
+            padding: 12px 28px;
             border-radius: 12px;
-            padding: 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
         }
-        h1 {
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 28px;
+
+        .btn:hover {
+            background: rgba(255,255,255,0.35);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
         }
+
         .summary {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
         }
+
         .stat-card {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            padding: 35px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 50px rgba(0,0,0,0.15);
+        }
+
+        .stat-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card:nth-child(1) .stat-icon {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-            border-radius: 8px;
-            color: white;
         }
+
+        .stat-card:nth-child(2) .stat-icon {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .stat-card:nth-child(3) .stat-icon {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
         .stat-label {
-            font-size: 14px;
-            opacity: 0.9;
+            font-size: 13px;
+            color: #64748b;
             margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
         }
+
         .stat-value {
-            font-size: 32px;
-            font-weight: bold;
+            font-size: 36px;
+            font-weight: 800;
+            color: #1e293b;
         }
+
         .crypto-section {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
             margin-bottom: 30px;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
+            border-radius: 20px;
             overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            transition: all 0.3s;
         }
+
+        .crypto-section:hover {
+            box-shadow: 0 15px 50px rgba(0,0,0,0.15);
+        }
+
         .crypto-header {
-            background: #f8f9fa;
-            padding: 15px 20px;
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            padding: 28px 35px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
         }
+
         .crypto-name {
-            font-size: 20px;
-            font-weight: bold;
-            color: #333;
+            font-size: 28px;
+            font-weight: 800;
+            color: white;
         }
+
+        .crypto-name::before {
+            content: '💎 ';
+        }
+
         .profit-badge {
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: bold;
-            font-size: 14px;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 18px;
+            backdrop-filter: blur(10px);
         }
+
         .profit-positive {
-            background: #d4edda;
-            color: #155724;
+            background: rgba(16, 185, 129, 0.2);
+            color: #dcfce7;
+            border: 2px solid rgba(255,255,255,0.3);
         }
+
+        .profit-positive::before {
+            content: '📈 ';
+        }
+
         .profit-negative {
-            background: #f8d7da;
-            color: #721c24;
+            background: rgba(239, 68, 68, 0.2);
+            color: #fee2e2;
+            border: 2px solid rgba(255,255,255,0.3);
         }
+
+        .profit-negative::before {
+            content: '📉 ';
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
         }
+
+        thead {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+        }
+
         th {
-            background: #667eea;
             color: white;
-            padding: 12px;
+            padding: 18px 20px;
             text-align: left;
-            font-weight: 600;
+            font-weight: 700;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
+
         td {
-            padding: 12px;
-            border-bottom: 1px solid #e0e0e0;
+            padding: 18px 20px;
+            border-bottom: 1px solid #e2e8f0;
+            color: #1e293b;
+            font-weight: 500;
         }
-        tr:hover {
-            background: #f8f9fa;
+
+        tbody tr {
+            transition: all 0.2s;
         }
+
+        tbody tr:hover {
+            background: linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%);
+            transform: translateX(5px);
+        }
+
+        .side-buy {
+            color: var(--success);
+            font-weight: 700;
+        }
+
+        .side-sell {
+            color: var(--danger);
+            font-weight: 700;
+        }
+
         .status-badge {
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-active {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            color: #1e40af;
+        }
+
+        .status-sold {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            color: #065f46;
+        }
+
+        .error {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            text-align: center;
+            padding: 80px 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        .error h3 {
+            font-size: 28px;
+            margin-bottom: 15px;
+            color: #1e293b;
+        }
+
+        .error p {
+            color: #64748b;
+            font-size: 16px;
+        }
+
+        .error code {
+            background: #f1f5f9;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-family: Monaco, monospace;
+            color: #6366f1;
             font-weight: 600;
         }
-        .status-sold {
-            background: #d4edda;
-            color: #155724;
-        }
-        .status-active {
-            background: #fff3cd;
-            color: #856404;
-        }
-        .refresh-btn {
-            background: #667eea;
-            color: white;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            margin-bottom: 20px;
-        }
-        .refresh-btn:hover {
-            background: #5568d3;
-        }
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
+
+        @media (max-width: 768px) {
+            .header h1 { font-size: 2rem; }
+            .crypto-header { padding: 20px; }
+            .crypto-name { font-size: 22px; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📊 Trading Records</h1>
-        <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
+        <div class="header">
+            <h1>🚀 Crypto Trading Dashboard</h1>
+            <p>Real-time trading records and performance analytics</p>
+        </div>
+
+        <div class="controls">
+            <button class="btn" onclick="location.reload()">🔄 Refresh Data</button>
+            <button class="btn" onclick="window.location.href='/api/orders'">
+                📊 JSON API
+            </button>
+        </div>
 
         <div class="summary">
             <div class="stat-card">
+                <div class="stat-icon">💰</div>
                 <div class="stat-label">Total Cryptos</div>
                 <div class="stat-value">{{ total_cryptos }}</div>
             </div>
             <div class="stat-card">
+                <div class="stat-icon">📈</div>
                 <div class="stat-label">Total Trades</div>
                 <div class="stat-value">{{ total_trades }}</div>
             </div>
             <div class="stat-card">
+                <div class="stat-icon">💎</div>
                 <div class="stat-label">Total Profit</div>
                 <div class="stat-value">{{ "%.2f"|format(total_profit) }} USDT</div>
             </div>
@@ -196,10 +375,12 @@ HTML_TEMPLATE = """
                     {% for trade in data.trades %}
                     <tr>
                         <td>{{ trade.time }}</td>
-                        <td>{{ trade.side|upper }}</td>
-                        <td>{{ trade.price }}</td>
-                        <td>{{ trade.size }}</td>
-                        <td>{{ "%.2f"|format(trade.amount) }} USDT</td>
+                        <td><span class="side-{{ trade.side }}">
+                            {{ trade.side|upper }}
+                        </span></td>
+                        <td>{{ "%.2f"|format(trade.price) }}</td>
+                        <td>{{ "%.6f"|format(trade.size) }}</td>
+                        <td><strong>{{ "%.2f"|format(trade.amount) }}</strong> USDT</td>
                         <td>
                             <span class="status-badge status-{{ trade.state_class }}">
                                 {{ trade.state }}
@@ -213,8 +394,9 @@ HTML_TEMPLATE = """
         {% endfor %}
         {% else %}
         <div class="error">
-            <h3>No trading records found</h3>
-            <p>Start the trading bot to generate records: <code>python websocket_limit_trading.py</code></p>
+            <h3>🔍 No Trading Records Found</h3>
+            <p>Start the trading bot to generate records:</p>
+            <p><code>python websocket_limit_trading.py</code></p>
         </div>
         {% endif %}
     </div>
