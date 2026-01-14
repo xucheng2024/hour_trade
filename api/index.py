@@ -396,11 +396,6 @@ def health():
     )
 
 
-# Vercel serverless function handler
-def handler(event, context):
-    """Vercel serverless handler"""
-    return app(event, context)
-
-
+# For local testing
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
