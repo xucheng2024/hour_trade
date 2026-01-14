@@ -182,8 +182,8 @@ def buy_limit_order(
     size = format_number(size)
 
     if SIMULATION_MODE:
-        # Simulation mode: generate fake ordId, skip actual trading
-        ordId = f"SIM-{uuid.uuid4().hex[:16]}"
+        # Simulation mode: generate fake ordId with strategy prefix for isolation
+        ordId = f"HLW-SIM-{uuid.uuid4().hex[:12]}"  # HLW = Hourly Limit WS
         logger.warning(
             f"{STRATEGY_NAME} [SIM] buy limit: {instId}, price={buy_price}, size={size}, ordId={ordId}"
         )
