@@ -11,17 +11,20 @@ import websocket
 import threading
 import requests
 
-
-import sqlite3
-
 import pandas as pd
 import numpy as np
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
 
 from okx.Trade import TradeAPI
 from okx.MarketData import MarketAPI
 from okx.Account import AccountAPI
 
 import okx_strategy
+
+# Load environment variables
+load_dotenv()
 
 
 import warnings
@@ -308,7 +311,11 @@ for initial_attempt in range(initial_attempts):
 
 
 
-conn = sqlite3.connect('/Users/mac/Downloads/stocks/ex_okx/okx.db')
+DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not found in environment variables")
+
+conn = psycopg2.connect(DATABASE_URL)
 
 time.sleep(60)
 

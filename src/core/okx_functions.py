@@ -8,8 +8,6 @@ import math
 import time
 from datetime import datetime, timedelta
 
-import sqlite3
-
 import pandas as pd
 import numpy as np
 
@@ -138,7 +136,7 @@ def buy_market(instId,size,tradeAPI,strategy,conn,minutes):
 
             if ordId is None: return
             cur.execute('''INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?)''', (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side))
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''', (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side))
             conn.commit()
 
             logging.warning("%s buy mrk:db:%s,%s,%s",strategy,instId,ordId)
@@ -204,7 +202,7 @@ def buy_limit(instId,buy_price,size,tradeAPI,strategy,conn,minutes):
             side = 'buy'
 
             cur.execute('''INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?)''', (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side))
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''', (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side))
             conn.commit()
             logging.warning("%s buy limit:db:%s,%s,%s",strategy,instId,ordId)
 
@@ -255,8 +253,8 @@ def sell_market(instId,ordId,size,tradeAPI,strategy,conn):
 
             sql_statement = """
             UPDATE orders
-            SET state = ?
-            WHERE instId = ? AND ordId = ?;
+            SET state = %s
+            WHERE instId = %s AND ordId = %s;
             """
             cur.execute(sql_statement, (new_state,instId, ordId))  
             conn.commit() 

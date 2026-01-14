@@ -8,10 +8,11 @@ import math
 import time
 from datetime import datetime, timedelta
 
-import sqlite3
-
 import pandas as pd
 import numpy as np
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
 
 from okx.Trade import TradeAPI
 from okx.MarketData import MarketAPI
@@ -19,6 +20,8 @@ from okx.Account import AccountAPI
 
 from src.core.okx_functions import sell_market
 
+# Load environment variables
+load_dotenv()
 
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -26,7 +29,7 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.WARNING) 
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s') 
-    file_handler = logging.FileHandler('/Users/mac/Downloads/stocks/ex_okx/order_management.log') 
+file_handler = logging.FileHandler('logs/order_management.log') 
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
@@ -88,15 +91,15 @@ def order_update(instId,ordId,tradeAPI,conn,cur):
             if new_state == 'completed':
                 sql_statement = """
                 UPDATE orders
-                SET state = ?, size = ?, price = ?
-                WHERE instId = ? AND ordId = ?;
+                SET state = %s, size = %s, price = %s
+                WHERE instId = %s AND ordId = %s;
                 """
                 cur.execute(sql_statement, (new_state, size, price, instId, ordId))
             else:
                 sql_statement = """
                 UPDATE orders
-                SET state = ?
-                WHERE instId = ? AND ordId = ?;
+                SET state = %s
+                WHERE instId = %s AND ordId = %s;
                 """
                 cur.execute(sql_statement, (new_state, instId, ordId))
             
@@ -146,7 +149,11 @@ for initial_attempt in range(initial_attempts):
 def main():
 
     is_checked = None
-    conn = sqlite3.connect('/Users/mac/Downloads/stocks/ex_okx/okx.db')
+    DATABASE_URL = os.getenv('DATABASE_URL')
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL not found in environment variables")
+    
+    conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
 
@@ -167,7 +174,7 @@ def main():
 
             state_value = ''
             create_time_value = int((now-timedelta(seconds=10)).timestamp()*1000)
-            sql_statement = "SELECT * FROM orders WHERE state = ? and create_time < ?;"
+            sql_statement = "SELECT * FROM orders WHERE state = %s and create_time < %s;"
             cur.execute(sql_statement, (state_value,create_time_value))
         except Exception as e:
             logger.error("ord mng update:%s",e)
@@ -196,7 +203,7 @@ def main():
         sell_time_value = int((now).timestamp()*1000)
         side = 'buy'
 
-        sql_statement = "SELECT * FROM orders WHERE state = ? and sell_time < ? and side = ?;"
+        sql_statement = "SELECT * FROM orders WHERE state = %s and sell_time < %s and side = %s;"
         cur.execute(sql_statement, (state_value,sell_time_value,side))
 
         rows = cur.fetchall()

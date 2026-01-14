@@ -5,16 +5,30 @@ Trading Records Web Viewer
 Display trading records grouped by cryptocurrency with profit calculation
 """
 
-import sqlite3
-from flask import Flask, render_template_string
-from datetime import datetime
-from collections import defaultdict
 import os
+from collections import defaultdict
+from datetime import datetime
+
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
+from flask import Flask, render_template_string
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 
-DB_FILE = 'okx.db'
+DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not found in environment variables")
+
 STRATEGY_NAME = "hourly_limit_ws"
+
+
+def get_db_connection():
+    """Get PostgreSQL database connection"""
+    return psycopg2.connect(DATABASE_URL)
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -207,16 +221,15 @@ HTML_TEMPLATE = """
 
 def get_trading_records():
     """Get trading records from database grouped by cryptocurrency"""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     
     try:
         # Get all orders for this strategy (including sell_price)
         cur.execute("""
             SELECT instId, ordId, create_time, orderType, state, price, size, sell_time, side, sell_price
             FROM orders
-            WHERE flag = ?
+            WHERE flag = %s
             ORDER BY create_time DESC
         """, (STRATEGY_NAME,))
         
