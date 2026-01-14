@@ -1,0 +1,17 @@
+# Railway Deployment Requirements
+# Core dependencies for websocket_limit_trading.py
+
+# Database
+psycopg2-binary==2.9.10
+
+# WebSocket (websocket-client is the correct package for websocket module)
+websocket-client==1.6.4
+
+# OKX API
+python-okx==0.4.0
+
+# Environment variables
+python-dotenv==1.0.1
+
+# Note: Railway will automatically detect this file
+# If this file doesn't exist, Railway will use requirements.txt
