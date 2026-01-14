@@ -38,7 +38,7 @@ HTML_TEMPLATE = """
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
             min-height: 100vh;
-            padding: 20px;
+            padding: 12px;
             animation: gradientShift 15s ease infinite;
             background-size: 200% 200%;
         }
@@ -50,33 +50,33 @@ HTML_TEMPLATE = """
         }
 
         .container {
-            max-width: 1600px;
+            max-width: 1800px;
             margin: 0 auto;
         }
 
         .header {
             text-align: center;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
         }
 
         .header h1 {
             color: white;
-            font-size: 3rem;
+            font-size: 2rem;
             font-weight: 800;
-            margin-bottom: 10px;
+            margin-bottom: 5px;
             text-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
 
         .header p {
             color: rgba(255,255,255,0.95);
-            font-size: 1.1rem;
+            font-size: 0.9rem;
         }
 
         .controls {
             display: flex;
             justify-content: center;
-            gap: 15px;
-            margin-bottom: 30px;
+            gap: 10px;
+            margin-bottom: 20px;
         }
 
         .btn {
@@ -84,10 +84,10 @@ HTML_TEMPLATE = """
             backdrop-filter: blur(10px);
             color: white;
             border: 2px solid rgba(255,255,255,0.3);
-            padding: 12px 28px;
-            border-radius: 12px;
+            padding: 8px 20px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             transition: all 0.3s;
         }
@@ -100,34 +100,34 @@ HTML_TEMPLATE = """
 
         .summary {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 25px;
-            margin-bottom: 40px;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
         }
 
         .stat-card {
             background: rgba(255,255,255,0.95);
             backdrop-filter: blur(10px);
-            padding: 35px;
-            border-radius: 20px;
+            padding: 20px;
+            border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
             transition: all 0.3s;
         }
 
         .stat-card:hover {
-            transform: translateY(-5px);
+            transform: translateY(-3px);
             box-shadow: 0 15px 50px rgba(0,0,0,0.15);
         }
 
         .stat-icon {
-            width: 60px;
-            height: 60px;
-            border-radius: 16px;
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 28px;
-            margin-bottom: 20px;
+            font-size: 20px;
+            margin-bottom: 12px;
         }
 
         .stat-card:nth-child(1) .stat-icon {
@@ -143,16 +143,16 @@ HTML_TEMPLATE = """
         }
 
         .stat-label {
-            font-size: 13px;
+            font-size: 11px;
             color: #64748b;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             text-transform: uppercase;
-            letter-spacing: 1.5px;
+            letter-spacing: 1px;
             font-weight: 600;
         }
 
         .stat-value {
-            font-size: 36px;
+            font-size: 28px;
             font-weight: 800;
             color: #1e293b;
         }
@@ -160,8 +160,8 @@ HTML_TEMPLATE = """
         .crypto-section {
             background: rgba(255,255,255,0.95);
             backdrop-filter: blur(10px);
-            margin-bottom: 30px;
-            border-radius: 20px;
+            margin-bottom: 15px;
+            border-radius: 12px;
             overflow: hidden;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
             transition: all 0.3s;
@@ -173,16 +173,16 @@ HTML_TEMPLATE = """
 
         .crypto-header {
             background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-            padding: 28px 35px;
+            padding: 16px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 15px;
+            gap: 10px;
         }
 
         .crypto-name {
-            font-size: 28px;
+            font-size: 20px;
             font-weight: 800;
             color: white;
         }
@@ -192,10 +192,10 @@ HTML_TEMPLATE = """
         }
 
         .profit-badge {
-            padding: 12px 24px;
-            border-radius: 12px;
+            padding: 8px 16px;
+            border-radius: 8px;
             font-weight: 700;
-            font-size: 18px;
+            font-size: 14px;
             backdrop-filter: blur(10px);
         }
 
@@ -230,19 +230,20 @@ HTML_TEMPLATE = """
 
         th {
             color: white;
-            padding: 18px 20px;
+            padding: 10px 12px;
             text-align: left;
             font-weight: 700;
-            font-size: 13px;
+            font-size: 11px;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
         }
 
         td {
-            padding: 18px 20px;
+            padding: 10px 12px;
             border-bottom: 1px solid #e2e8f0;
             color: #1e293b;
             font-weight: 500;
+            font-size: 13px;
         }
 
         tbody tr {
@@ -251,7 +252,7 @@ HTML_TEMPLATE = """
 
         tbody tr:hover {
             background: linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%);
-            transform: translateX(5px);
+            transform: translateX(3px);
         }
 
         .side-buy {
@@ -265,12 +266,12 @@ HTML_TEMPLATE = """
         }
 
         .status-badge {
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 10px;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.3px;
         }
 
         .status-active {
@@ -287,35 +288,37 @@ HTML_TEMPLATE = """
             background: rgba(255,255,255,0.95);
             backdrop-filter: blur(10px);
             text-align: center;
-            padding: 80px 40px;
-            border-radius: 20px;
+            padding: 40px 30px;
+            border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
         }
 
         .error h3 {
-            font-size: 28px;
-            margin-bottom: 15px;
+            font-size: 22px;
+            margin-bottom: 10px;
             color: #1e293b;
         }
 
         .error p {
             color: #64748b;
-            font-size: 16px;
+            font-size: 14px;
         }
 
         .error code {
             background: #f1f5f9;
-            padding: 8px 16px;
-            border-radius: 8px;
+            padding: 6px 12px;
+            border-radius: 6px;
             font-family: Monaco, monospace;
             color: #6366f1;
             font-weight: 600;
+            font-size: 13px;
         }
 
         @media (max-width: 768px) {
-            .header h1 { font-size: 2rem; }
-            .crypto-header { padding: 20px; }
-            .crypto-name { font-size: 22px; }
+            .header h1 { font-size: 1.5rem; }
+            .crypto-header { padding: 12px 15px; }
+            .crypto-name { font-size: 18px; }
+            td, th { padding: 8px 10px; font-size: 12px; }
         }
     </style>
 </head>
