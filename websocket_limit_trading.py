@@ -16,7 +16,7 @@ import time
 import uuid
 import warnings
 from datetime import datetime, timedelta
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from typing import Dict, Optional
 
 import psycopg2
@@ -34,7 +34,9 @@ load_dotenv()
 # Configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LIMITS_FILE = os.path.join(BASE_DIR, "valid_crypto_limits.json")
-LOG_FILE = os.path.join(BASE_DIR, "websocket_limit_trading.log")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "websocket_limit_trading.log")
 
 # Database Configuration - Use PostgreSQL instead of SQLite
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -62,13 +64,21 @@ SIMULATION_MODE = (
 )  # True=simulation (record only, no real trading), False=real trading
 
 # Setup logging
+# TimedRotatingFileHandler: rotate daily, keep 3 days
+file_handler = TimedRotatingFileHandler(
+    LOG_FILE,
+    when="midnight",
+    interval=1,
+    backupCount=3,
+    encoding="utf-8",
+)
+file_handler.suffix = "%Y-%m-%d"
+console_handler = logging.StreamHandler()
+
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        RotatingFileHandler(LOG_FILE, maxBytes=100 * 1024 * 1024, backupCount=3),
-        logging.StreamHandler(),
-    ],
+    handlers=[file_handler, console_handler],
 )
 logger = logging.getLogger(__name__)
 
@@ -153,19 +163,25 @@ def format_number(number):
 
 
 def load_crypto_limits():
-    """Load crypto limits from JSON file"""
+    """Load crypto limits from hour_limit table in database"""
     global crypto_limits
     try:
-        with open(LIMITS_FILE, "r") as f:
-            data = json.load(f)
-        crypto_limits = {
-            symbol: data["cryptos"][symbol]["limit_percent"]
-            for symbol in data["cryptos"].keys()
-        }
-        logger.warning(f"Loaded {len(crypto_limits)} crypto limits")
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Load limits from hour_limit table
+        cur.execute("SELECT inst_id, limit_percent FROM hour_limit")
+        rows = cur.fetchall()
+
+        crypto_limits = {row[0]: float(row[1]) for row in rows}
+
+        cur.close()
+        conn.close()
+
+        logger.warning(f"Loaded {len(crypto_limits)} crypto limits from database")
         return True
     except Exception as e:
-        logger.error(f"Failed to load crypto limits: {e}")
+        logger.error(f"Failed to load crypto limits from database: {e}")
         return False
 
 
@@ -184,8 +200,9 @@ def buy_limit_order(
     if SIMULATION_MODE:
         # Simulation mode: generate fake ordId with strategy prefix for isolation
         ordId = f"HLW-SIM-{uuid.uuid4().hex[:12]}"  # HLW = Hourly Limit WS
+        amount_usdt = float(buy_price) * float(size)
         logger.warning(
-            f"{STRATEGY_NAME} [SIM] buy limit: {instId}, price={buy_price}, size={size}, ordId={ordId}"
+            f"🛒 [SIM] BUY: {instId}, price={buy_price}, size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
         )
     else:
         # Real trading mode
@@ -210,8 +227,9 @@ def buy_limit_order(
                     result_msg = order_data.get("sMsg", "")
 
                     if ordId:
+                        amount_usdt = float(buy_price) * float(size)
                         logger.warning(
-                            f"{STRATEGY_NAME} buy limit: {instId}, price={buy_price}, size={size}, ordId={ordId}"
+                            f"🛒 BUY ORDER: {instId}, price={buy_price}, size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
                         )
                         failed_flag = 0
                         break
@@ -268,7 +286,10 @@ def buy_limit_order(
             ),
         )
         conn.commit()
-        logger.warning(f"{STRATEGY_NAME} buy limit DB: {instId}, ordId={ordId}")
+        amount_usdt = float(buy_price) * float(size)
+        logger.warning(
+            f"✅ BUY SAVED: {instId}, price={buy_price}, size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+        )
 
         # Play buy sound
         play_sound("buy")
@@ -293,8 +314,9 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
 
     if SIMULATION_MODE:
         # Simulation mode: skip actual trading, use current price as sell price
+        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
         logger.warning(
-            f"{STRATEGY_NAME} [SIM] sell market: {instId}, size={size}, price={sell_price}, ordId={ordId}"
+            f"💰 [SIM] SELL: {instId}, price={sell_price:.6f}, size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
         )
     else:
         # Real trading mode
@@ -318,8 +340,11 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                 if result.get("code") == "0":
                     order_data = result.get("data", [{}])[0]
                     order_id = order_data.get("ordId", "N/A")
+                    sell_amount_usdt = (
+                        float(sell_price) * float(size) if sell_price > 0 else 0
+                    )
                     logger.warning(
-                        f"{STRATEGY_NAME} sell market: {instId}, size={size}, ordId={order_id}"
+                        f"💰 SELL ORDER: {instId}, price={sell_price:.6f}, size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={order_id}"
                     )
                     failed_flag = 0
                     break
@@ -352,8 +377,9 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
             ("sold out", sell_price_str, instId, ordId, STRATEGY_NAME),
         )
         conn.commit()
+        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
         logger.warning(
-            f"{STRATEGY_NAME} sell market DB: {instId}, ordId={ordId}, sell_price={sell_price_str}"
+            f"✅ SELL SAVED: {instId}, price={sell_price_str}, size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
         )
 
         # Play sell sound
@@ -387,16 +413,26 @@ def on_ticker_message(ws, msg_string):
                     if last_price > 0:
                         with lock:
                             current_prices[instId] = last_price
+
+                            # Log price update
+                            limit_percent = crypto_limits[instId]
+                            limit_price = calculate_limit_price(
+                                last_price, limit_percent
+                            )
+
                             # Check if we should buy
                             if (
                                 instId not in pending_buys
                                 and instId not in active_orders
                             ):
-                                limit_percent = crypto_limits[instId]
-                                limit_price = calculate_limit_price(
-                                    last_price, limit_percent
+                                logger.info(
+                                    f"💰 {instId}: price={last_price:.6f}, limit={limit_percent}% ({limit_price:.6f}), diff={((last_price/limit_price-1)*100):.2f}%"
                                 )
+
                                 if last_price <= limit_price:
+                                    logger.warning(
+                                        f"🚀 BUY SIGNAL: {instId}, price={last_price:.6f} <= limit={limit_price:.6f} ({limit_percent}%)"
+                                    )
                                     pending_buys[instId] = True
                                     # Trigger buy in separate thread to avoid blocking
                                     threading.Thread(
@@ -544,7 +580,7 @@ def process_buy_signal(instId: str, limit_price: float):
                         "next_hour_close_time": next_hour,
                     }
                     logger.warning(
-                        f"{STRATEGY_NAME} Active order: {instId}, ordId={ordId}, sell_time={next_hour}"
+                        f"📊 ACTIVE ORDER: {instId}, ordId={ordId}, buy_price={limit_price:.6f}, sell_time={next_hour.strftime('%Y-%m-%d %H:%M:%S')}"
                     )
 
                     # Start 1-minute timeout check thread (only in real trading mode)
@@ -592,6 +628,12 @@ def on_candle_message(ws, msg_string):
                     # 'confirm' = '1' means candle is confirmed (closed)
                     if confirm == "1" and instId in active_orders:
                         # This hour's candle just closed, sell the position
+                        close_price = (
+                            float(candle_data[4]) if len(candle_data) > 4 else 0
+                        )
+                        logger.warning(
+                            f"🕐 KLINE CONFIRMED: {instId}, close_price={close_price:.6f}, trigger SELL"
+                        )
                         threading.Thread(
                             target=process_sell_signal, args=(instId,), daemon=True
                         ).start()
