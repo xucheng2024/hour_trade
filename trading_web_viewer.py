@@ -223,7 +223,13 @@ HTML_TEMPLATE = """
                 <tbody>
                     {% for trade in data.trades %}
                     <tr>
-                        <td>{{ trade.time }}</td>
+                        <td>
+                            {% if trade.state == 'sold out' and trade.sell_time %}
+                                {{ trade.sell_time }}
+                            {% else %}
+                                {{ trade.buy_time }}
+                            {% endif %}
+                        </td>
                         <td class="trade-{{ trade.side }}">{{ trade.side|upper }}</td>
                         <td>{{ trade.price }}</td>
                         <td>{{ trade.size }}</td>
@@ -281,18 +287,37 @@ def get_trading_records():
             buy_price = float(row["price"]) if row["price"] else 0.0
             sell_price = float(row["sell_price"]) if row.get("sell_price") else 0.0
             size = float(row["size"]) if row["size"] else 0.0
+            state = row["state"] if row["state"] else "active"
+
+            # Display sell time if sold, otherwise buy time
+            if state == "sold out" and row.get("sell_time"):
+                display_time = datetime.fromtimestamp(row["sell_time"] / 1000).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            else:
+                display_time = datetime.fromtimestamp(
+                    row["create_time"] / 1000
+                ).strftime("%Y-%m-%d %H:%M:%S")
 
             trade = {
                 "ordId": row["ordid"],
-                "time": datetime.fromtimestamp(row["create_time"] / 1000).strftime(
+                "time": display_time,
+                "buy_time": datetime.fromtimestamp(row["create_time"] / 1000).strftime(
                     "%Y-%m-%d %H:%M:%S"
+                ),
+                "sell_time": (
+                    datetime.fromtimestamp(row["sell_time"] / 1000).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                    if row.get("sell_time")
+                    else None
                 ),
                 "side": row["side"],
                 "price": buy_price,
                 "sell_price": sell_price,
                 "size": size,
-                "state": row["state"] if row["state"] else "active",
-                "state_class": "sold" if row["state"] == "sold out" else "active",
+                "state": state,
+                "state_class": "sold" if state == "sold out" else "active",
             }
 
             # Calculate amount based on buy price

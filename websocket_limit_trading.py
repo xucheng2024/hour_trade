@@ -247,6 +247,10 @@ def buy_limit_order(
         create_time = int(now.timestamp() * 1000)
         sell_time = int(next_hour.timestamp() * 1000)
 
+        # In simulation mode, assume order is filled immediately
+        # In real trading mode, state starts as "" and will be updated by timeout check
+        order_state = "filled" if SIMULATION_MODE else ""
+
         cur.execute(
             """INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time, side)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
@@ -256,7 +260,7 @@ def buy_limit_order(
                 ordId,
                 create_time,
                 "limit",
-                "",
+                order_state,
                 buy_price,
                 size,
                 sell_time,
@@ -408,6 +412,10 @@ def check_and_cancel_unfilled_order_after_timeout(
     instId: str, ordId: str, tradeAPI: TradeAPI
 ):
     """Check order status after 1 minute timeout, cancel if not filled"""
+    # Skip timeout check in simulation mode (orders are virtual)
+    if SIMULATION_MODE or ordId.startswith("HLW-SIM-"):
+        return
+
     try:
         time.sleep(60)  # Wait 1 minute
 
@@ -465,7 +473,7 @@ def check_and_cancel_unfilled_order_after_timeout(
                         logger.warning(
                             f"{STRATEGY_NAME} Order filled within 1 minute: {instId}, ordId={ordId}, fillSize={acc_fill_sz}, fillPrice={fill_px}"
                         )
-                        
+
                         # Update database with filled status and actual fill data
                         conn = get_db_connection()
                         try:
@@ -474,16 +482,25 @@ def check_and_cancel_unfilled_order_after_timeout(
                                 """UPDATE orders 
                                    SET state = %s, size = %s, price = %s 
                                    WHERE instId = %s AND ordId = %s AND flag = %s""",
-                                ("filled", acc_fill_sz, fill_px, instId, ordId, STRATEGY_NAME),
+                                (
+                                    "filled",
+                                    acc_fill_sz,
+                                    fill_px,
+                                    instId,
+                                    ordId,
+                                    STRATEGY_NAME,
+                                ),
                             )
                             conn.commit()
-                            
+
                             # Update active_orders with actual filled size
                             with lock:
                                 if instId in active_orders:
-                                    active_orders[instId]['filled_size'] = filled_size
-                                    active_orders[instId]['fill_price'] = float(fill_px) if fill_px else 0.0
-                            
+                                    active_orders[instId]["filled_size"] = filled_size
+                                    active_orders[instId]["fill_price"] = (
+                                        float(fill_px) if fill_px else 0.0
+                                    )
+
                             cur.close()
                         finally:
                             conn.close()
@@ -530,12 +547,14 @@ def process_buy_signal(instId: str, limit_price: float):
                         f"{STRATEGY_NAME} Active order: {instId}, ordId={ordId}, sell_time={next_hour}"
                     )
 
-                    # Start 1-minute timeout check thread
-                    threading.Thread(
-                        target=check_and_cancel_unfilled_order_after_timeout,
-                        args=(instId, ordId, trade_api),
-                        daemon=True,
-                    ).start()
+                    # Start 1-minute timeout check thread (only in real trading mode)
+                    # In simulation mode, orders are assumed to be filled immediately
+                    if not SIMULATION_MODE:
+                        threading.Thread(
+                            target=check_and_cancel_unfilled_order_after_timeout,
+                            args=(instId, ordId, trade_api),
+                            daemon=True,
+                        ).start()
         finally:
             conn.close()
     except Exception as e:
@@ -601,34 +620,32 @@ def process_sell_signal(instId: str):
         conn = get_db_connection()
         try:
             cur = conn.cursor()
-            
+
             # Query state and size together to validate order
             cur.execute(
                 "SELECT state, size FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
                 (instId, ordId, STRATEGY_NAME),
             )
             row = cur.fetchone()
-            
+
             if not row:
                 logger.error(f"{STRATEGY_NAME} Order not found: {instId}, {ordId}")
                 with lock:
                     if instId in active_orders:
                         del active_orders[instId]
                 return
-            
+
             db_state = row[0] if row[0] else ""
             db_size = row[1] if row[1] else "0"
-            
+
             # Prevent duplicate sells - check if already sold
             if db_state == "sold out":
-                logger.warning(
-                    f"{STRATEGY_NAME} Already sold: {instId}, {ordId}"
-                )
+                logger.warning(f"{STRATEGY_NAME} Already sold: {instId}, {ordId}")
                 with lock:
                     if instId in active_orders:
                         del active_orders[instId]
                 return
-            
+
             # Verify order was filled before selling
             if db_state not in ["filled", ""] or not db_size or db_size == "0":
                 logger.warning(
@@ -638,7 +655,7 @@ def process_sell_signal(instId: str):
                     if instId in active_orders:
                         del active_orders[instId]
                 return
-            
+
             size = float(db_size)
             cur.close()
 
