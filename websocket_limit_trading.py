@@ -91,10 +91,41 @@ active_orders: Dict[str, Dict] = (
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time}
 lock = threading.Lock()
 
+# Initialize TradeAPI instance (singleton pattern)
+trade_api: Optional[TradeAPI] = None
 
-def get_db_connection():
-    """Get PostgreSQL database connection"""
-    return psycopg2.connect(DATABASE_URL)
+
+def get_trade_api() -> TradeAPI:
+    """Get or initialize TradeAPI instance (singleton)"""
+    global trade_api
+    if trade_api is None:
+        trade_api = TradeAPI(API_KEY, API_SECRET, API_PASSPHRASE, False, TRADING_FLAG)
+    return trade_api
+
+
+def get_db_connection(max_retries=3, retry_delay=1):
+    """Get PostgreSQL database connection with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            # Test connection
+            cur = conn.cursor()
+            try:
+                cur.execute("SELECT 1")
+            finally:
+                cur.close()
+            return conn
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            if attempt < max_retries - 1:
+                logger.warning(
+                    f"Database connection failed (attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+            else:
+                logger.error(
+                    f"Database connection failed after {max_retries} attempts: {e}"
+                )
+                raise
 
 
 def play_sound(sound_type: str):
@@ -546,12 +577,8 @@ def check_and_cancel_unfilled_order_after_timeout(
 def process_buy_signal(instId: str, limit_price: float):
     """Process buy signal in separate thread"""
     try:
-        # Initialize trade API if not already done
-        if "trade_api" not in globals():
-            global trade_api
-            trade_api = TradeAPI(
-                API_KEY, API_SECRET, API_PASSPHRASE, False, TRADING_FLAG
-            )
+        # Get trade API instance
+        api = get_trade_api()
 
         # Calculate size
         size = TRADING_AMOUNT_USDT / limit_price
@@ -559,7 +586,7 @@ def process_buy_signal(instId: str, limit_price: float):
         # Place limit buy order
         conn = get_db_connection()
         try:
-            ordId = buy_limit_order(instId, limit_price, size, trade_api, conn)
+            ordId = buy_limit_order(instId, limit_price, size, api, conn)
             if ordId:
                 with lock:
                     if instId in pending_buys:
@@ -583,7 +610,7 @@ def process_buy_signal(instId: str, limit_price: float):
                     if not SIMULATION_MODE:
                         threading.Thread(
                             target=check_and_cancel_unfilled_order_after_timeout,
-                            args=(instId, ordId, trade_api),
+                            args=(instId, ordId, api),
                             daemon=True,
                         ).start()
         finally:
@@ -646,58 +673,55 @@ def process_sell_signal(instId: str):
             order_info = active_orders[instId].copy()
             ordId = order_info["ordId"]
 
-        # Initialize trade API if not already done
-        if "trade_api" not in globals():
-            global trade_api
-            trade_api = TradeAPI(
-                API_KEY, API_SECRET, API_PASSPHRASE, False, TRADING_FLAG
-            )
+        # Get trade API instance
+        api = get_trade_api()
 
         # ✅ FIX: Check order state and prevent duplicate sells
         conn = get_db_connection()
         try:
             cur = conn.cursor()
-
-            # Query state and size together to validate order
-            cur.execute(
-                "SELECT state, size FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
-                (instId, ordId, STRATEGY_NAME),
-            )
-            row = cur.fetchone()
-
-            if not row:
-                logger.error(f"{STRATEGY_NAME} Order not found: {instId}, {ordId}")
-                with lock:
-                    if instId in active_orders:
-                        del active_orders[instId]
-                return
-
-            db_state = row[0] if row[0] else ""
-            db_size = row[1] if row[1] else "0"
-
-            # Prevent duplicate sells - check if already sold
-            if db_state == "sold out":
-                logger.warning(f"{STRATEGY_NAME} Already sold: {instId}, {ordId}")
-                with lock:
-                    if instId in active_orders:
-                        del active_orders[instId]
-                return
-
-            # Verify order was filled before selling
-            if db_state not in ["filled", ""] or not db_size or db_size == "0":
-                logger.warning(
-                    f"{STRATEGY_NAME} Order not filled: {instId}, {ordId}, state={db_state}, size={db_size}"
+            try:
+                # Query state and size together to validate order
+                cur.execute(
+                    "SELECT state, size FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
+                    (instId, ordId, STRATEGY_NAME),
                 )
-                with lock:
-                    if instId in active_orders:
-                        del active_orders[instId]
-                return
+                row = cur.fetchone()
 
-            size = float(db_size)
-            cur.close()
+                if not row:
+                    logger.error(f"{STRATEGY_NAME} Order not found: {instId}, {ordId}")
+                    with lock:
+                        if instId in active_orders:
+                            del active_orders[instId]
+                    return
+
+                db_state = row[0] if row[0] else ""
+                db_size = row[1] if row[1] else "0"
+
+                # Prevent duplicate sells - check if already sold
+                if db_state == "sold out":
+                    logger.warning(f"{STRATEGY_NAME} Already sold: {instId}, {ordId}")
+                    with lock:
+                        if instId in active_orders:
+                            del active_orders[instId]
+                    return
+
+                # Verify order was filled before selling
+                if db_state not in ["filled", ""] or not db_size or db_size == "0":
+                    logger.warning(
+                        f"{STRATEGY_NAME} Order not filled: {instId}, {ordId}, state={db_state}, size={db_size}"
+                    )
+                    with lock:
+                        if instId in active_orders:
+                            del active_orders[instId]
+                    return
+
+                size = float(db_size)
+            finally:
+                cur.close()
 
             # Place market sell order
-            sell_market_order(instId, ordId, size, trade_api, conn)
+            sell_market_order(instId, ordId, size, api, conn)
 
             # Remove from active orders AFTER successful sell
             with lock:
@@ -753,14 +777,27 @@ def candle_open(ws):
 
 
 def connect_websocket(url, on_message, on_open):
-    """Connect to WebSocket with reconnection logic"""
+    """Connect to WebSocket with reconnection logic and exponential backoff"""
+    reconnect_delay = 1
+    max_delay = 60
+
     while True:
         try:
+
+            def on_close_handler(ws, close_status_code=None, close_msg=None):
+                """Handle WebSocket close event"""
+                if close_status_code is not None:
+                    logger.warning(
+                        f"WebSocket closed: code={close_status_code}, msg={close_msg}"
+                    )
+                else:
+                    logger.warning("WebSocket closed")
+
             ws = websocket.WebSocketApp(
                 url,
                 on_message=on_message,
                 on_error=lambda ws, error: logger.warning(f"WebSocket error: {error}"),
-                on_close=lambda ws: logger.warning("WebSocket closed"),
+                on_close=on_close_handler,
                 on_open=on_open,
             )
 
@@ -769,16 +806,25 @@ def connect_websocket(url, on_message, on_open):
                     time.sleep(20)
                     try:
                         ws.send("ping")
-                    except:
+                    except Exception:
                         break
 
             ping_thread = threading.Thread(target=send_ping, args=(ws,), daemon=True)
             ping_thread.start()
+
+            # Reset reconnect delay on successful connection
+            reconnect_delay = 1
             ws.run_forever()
+
+        except KeyboardInterrupt:
+            logger.warning("WebSocket connection interrupted by user")
+            raise
         except Exception as e:
             logger.error(f"WebSocket connection failed: {e}")
-            logger.warning("Retrying in 5 seconds...")
-            time.sleep(5)
+            logger.warning(f"Retrying in {reconnect_delay} seconds...")
+            time.sleep(reconnect_delay)
+            # Exponential backoff with max limit
+            reconnect_delay = min(reconnect_delay * 2, max_delay)
 
 
 def main():
@@ -796,13 +842,14 @@ def main():
 
     logger.warning(f"Loaded {len(crypto_limits)} cryptos with limits")
 
-    # Initialize database connection
+    # Initialize database connection with retry
     try:
         conn = get_db_connection()
         conn.close()
         logger.warning(f"✅ Connected to PostgreSQL database successfully")
     except Exception as e:
         logger.error(f"Database error: {e}")
+        logger.error("Failed to connect to database, exiting")
         return
 
     # Start ticker WebSocket
@@ -811,6 +858,7 @@ def main():
         target=connect_websocket,
         args=(ticker_url, on_ticker_message, ticker_open),
         daemon=True,
+        name="TickerWebSocket",
     )
     ticker_thread.start()
 
@@ -820,12 +868,13 @@ def main():
         target=connect_websocket,
         args=(candle_url, on_candle_message, candle_open),
         daemon=True,
+        name="CandleWebSocket",
     )
     candle_thread.start()
 
     logger.warning("WebSocket connections started, waiting for messages...")
 
-    # Keep main thread alive
+    # Keep main thread alive with health check
     try:
         while True:
             time.sleep(60)
@@ -834,8 +883,33 @@ def main():
                 logger.info(
                     f"Status: {len(current_prices)} prices, {len(active_orders)} active orders"
                 )
+
+            # Health check: verify WebSocket threads are alive
+            if not ticker_thread.is_alive():
+                logger.error("Ticker WebSocket thread died, restarting...")
+                ticker_thread = threading.Thread(
+                    target=connect_websocket,
+                    args=(ticker_url, on_ticker_message, ticker_open),
+                    daemon=True,
+                    name="TickerWebSocket",
+                )
+                ticker_thread.start()
+
+            if not candle_thread.is_alive():
+                logger.error("Candle WebSocket thread died, restarting...")
+                candle_thread = threading.Thread(
+                    target=connect_websocket,
+                    args=(candle_url, on_candle_message, candle_open),
+                    daemon=True,
+                    name="CandleWebSocket",
+                )
+                candle_thread.start()
+
     except KeyboardInterrupt:
-        logger.warning("Shutting down...")
+        logger.warning("Shutting down gracefully...")
+    except Exception as e:
+        logger.error(f"Unexpected error in main loop: {e}")
+        raise
 
 
 if __name__ == "__main__":
