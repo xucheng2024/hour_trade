@@ -1,5 +1,16 @@
-# Vercel Deployment - Minimal dependencies
+# Core dependencies for both Vercel and Railway
+# Database
+psycopg2-binary==2.9.10
+
+# WebSocket (for Railway trading bot)
+websocket-client==1.6.4
+
+# OKX API (for Railway trading bot)
+python-okx==0.4.0
+
+# Environment variables
+python-dotenv==1.0.1
+
+# Flask (for Vercel web dashboard)
 Flask==2.3.3
-psycopg2-binary==2.9.9
-python-dotenv==1.0.0
 Werkzeug==2.3.7
