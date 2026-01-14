@@ -19,7 +19,7 @@ load_dotenv()
 
 app = Flask(__name__)
 
-DATABASE_URL = os.getenv('DATABASE_URL')
+DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL not found in environment variables")
 
@@ -30,6 +30,7 @@ def get_db_connection():
     """Get PostgreSQL database connection"""
     return psycopg2.connect(DATABASE_URL)
 
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -38,140 +39,165 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trading Records</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f5f5f5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #fafafa;
+            color: #1a1a1a;
+            line-height: 1.5;
+            padding: 16px;
         }
+        
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
-            background-color: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
+        
         h1 {
-            color: #333;
-            margin-bottom: 30px;
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 16px;
         }
-        .crypto-section {
-            margin-bottom: 40px;
-            border: 1px solid #ddd;
+        
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .summary-item {
+            background: #fff;
+            padding: 12px;
             border-radius: 6px;
-            padding: 20px;
-            background-color: #fafafa;
+            border: 1px solid #e5e5e5;
         }
+        
+        .summary-label {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        
+        .summary-value {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+        
+        .summary-value.profit-positive { color: #10b981; }
+        .summary-value.profit-negative { color: #ef4444; }
+        
+        .crypto-section {
+            background: #fff;
+            border: 1px solid #e5e5e5;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+        
         .crypto-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #ddd;
+            padding: 12px 16px;
+            border-bottom: 1px solid #e5e5e5;
+            background: #fafafa;
         }
+        
         .crypto-name {
-            font-size: 24px;
-            font-weight: bold;
-            color: #333;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a1a1a;
         }
+        
         .crypto-profit {
-            font-size: 20px;
-            font-weight: bold;
-            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            padding: 4px 8px;
             border-radius: 4px;
         }
-        .profit-positive {
-            color: #00a86b;
-            background-color: #e6f7f0;
-        }
-        .profit-negative {
-            color: #dc3545;
-            background-color: #ffe6e6;
-        }
-        .profit-zero {
-            color: #666;
-            background-color: #f0f0f0;
-        }
+        
+        .profit-positive { color: #10b981; background: #d1fae5; }
+        .profit-negative { color: #ef4444; background: #fee2e2; }
+        .profit-zero { color: #666; background: #f3f4f6; }
+        
         .trades-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 15px;
+            font-size: 13px;
         }
+        
         .trades-table th {
-            background-color: #4a5568;
-            color: white;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-        }
-        .trades-table td {
-            padding: 12px;
-            border-bottom: 1px solid #ddd;
-        }
-        .trades-table tr:hover {
-            background-color: #f8f9fa;
-        }
-        .trade-buy {
-            color: #00a86b;
-        }
-        .trade-sell {
-            color: #dc3545;
-        }
-        .trade-state {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .state-sold {
-            background-color: #e6f7f0;
-            color: #00a86b;
-        }
-        .state-active {
-            background-color: #fff3cd;
-            color: #856404;
-        }
-        .summary {
-            background-color: #e9ecef;
-            padding: 20px;
-            border-radius: 6px;
-            margin-bottom: 30px;
-        }
-        .summary-item {
-            display: inline-block;
-            margin-right: 30px;
-            font-size: 16px;
-        }
-        .summary-label {
-            font-weight: 600;
+            background: #fafafa;
             color: #666;
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 8px 16px;
+            text-align: left;
+            border-bottom: 1px solid #e5e5e5;
         }
-        .summary-value {
-            font-weight: bold;
-            color: #333;
+        
+        .trades-table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            color: #1a1a1a;
+        }
+        
+        .trades-table tbody tr:hover {
+            background: #fafafa;
+        }
+        
+        .trades-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .trade-buy { color: #10b981; font-weight: 600; }
+        .trade-sell { color: #ef4444; font-weight: 600; }
+        
+        .trade-state {
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .state-sold { background: #d1fae5; color: #065f46; }
+        .state-active { background: #fef3c7; color: #92400e; }
+        
+        @media (max-width: 768px) {
+            body { padding: 12px; }
+            .summary { grid-template-columns: 1fr; }
+            .crypto-header { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .trades-table th, .trades-table td { padding: 8px 12px; font-size: 12px; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Trading Records - {{ strategy_name }}</h1>
+        <h1>Trading Records</h1>
         
         <div class="summary">
             <div class="summary-item">
-                <span class="summary-label">Total Cryptos:</span>
-                <span class="summary-value">{{ total_cryptos }}</span>
+                <div class="summary-label">Cryptos</div>
+                <div class="summary-value">{{ total_cryptos }}</div>
             </div>
             <div class="summary-item">
-                <span class="summary-label">Total Trades:</span>
-                <span class="summary-value">{{ total_trades }}</span>
+                <div class="summary-label">Trades</div>
+                <div class="summary-value">{{ total_trades }}</div>
             </div>
             <div class="summary-item">
-                <span class="summary-label">Total Profit:</span>
-                <span class="summary-value" style="color: {{ 'green' if total_profit > 0 else 'red' if total_profit < 0 else '#666' }}">
+                <div class="summary-label">Profit</div>
+                <div class="summary-value {{ 'profit-positive' if total_profit > 0 else 'profit-negative' if total_profit < 0 else '' }}">
                     {{ "%.2f"|format(total_profit) }} USDT
-                </span>
+                </div>
             </div>
         </div>
 
@@ -201,7 +227,7 @@ HTML_TEMPLATE = """
                         <td class="trade-{{ trade.side }}">{{ trade.side|upper }}</td>
                         <td>{{ trade.price }}</td>
                         <td>{{ trade.size }}</td>
-                        <td>{{ "%.2f"|format(trade.amount) }} USDT</td>
+                        <td>{{ "%.2f"|format(trade.amount) }}</td>
                         <td>
                             <span class="trade-state state-{{ trade.state_class }}">
                                 {{ trade.state }}
@@ -223,132 +249,108 @@ def get_trading_records():
     """Get trading records from database grouped by cryptocurrency"""
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    
+
     try:
         # Get all orders for this strategy (including sell_price)
-        cur.execute("""
+        # Use LIKE to match both 'hourly_limit_ws' and 'hourly_limit_ws_test'
+        cur.execute(
+            """
             SELECT instId, ordId, create_time, orderType, state, price, size, sell_time, side, sell_price
             FROM orders
-            WHERE flag = %s
+            WHERE flag LIKE %s
             ORDER BY create_time DESC
-        """, (STRATEGY_NAME,))
-        
+        """,
+            (f"{STRATEGY_NAME}%",),
+        )
+
         rows = cur.fetchall()
-        
+
         # Group by cryptocurrency
-        cryptos = defaultdict(lambda: {
-            'trades': [],
-            'profit': 0.0,
-            'profit_pct': 0.0,
-            'buy_amount': 0.0,
-            'sell_amount': 0.0
-        })
-        
-        for row in rows:
-            instId = row['instId']
-            buy_price = float(row['price']) if row['price'] else 0.0
-            sell_price = float(row['sell_price']) if row.get('sell_price') else 0.0
-            size = float(row['size']) if row['size'] else 0.0
-            
-            trade = {
-                'ordId': row['ordId'],
-                'time': datetime.fromtimestamp(row['create_time'] / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                'side': row['side'],
-                'price': buy_price,
-                'sell_price': sell_price,
-                'size': size,
-                'state': row['state'] if row['state'] else 'active',
-                'state_class': 'sold' if row['state'] == 'sold out' else 'active'
+        cryptos = defaultdict(
+            lambda: {
+                "trades": [],
+                "profit": 0.0,
+                "profit_pct": 0.0,
+                "buy_amount": 0.0,
+                "sell_amount": 0.0,
             }
-            
+        )
+
+        for row in rows:
+            instId = row["instid"]
+            buy_price = float(row["price"]) if row["price"] else 0.0
+            sell_price = float(row["sell_price"]) if row.get("sell_price") else 0.0
+            size = float(row["size"]) if row["size"] else 0.0
+
+            trade = {
+                "ordId": row["ordid"],
+                "time": datetime.fromtimestamp(row["create_time"] / 1000).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "side": row["side"],
+                "price": buy_price,
+                "sell_price": sell_price,
+                "size": size,
+                "state": row["state"] if row["state"] else "active",
+                "state_class": "sold" if row["state"] == "sold out" else "active",
+            }
+
             # Calculate amount based on buy price
             if buy_price > 0 and size > 0:
-                trade['amount'] = buy_price * size
+                trade["amount"] = buy_price * size
             else:
-                trade['amount'] = 0.0
-            
-            cryptos[instId]['trades'].append(trade)
-            
-            # Calculate profit using sell_price if available
-            if trade['side'] == 'buy':
-                cryptos[instId]['buy_amount'] += trade['amount']
-            elif trade['side'] == 'sell':
-                # Use sell_price if available, otherwise use price (shouldn't happen for sell orders)
+                trade["amount"] = 0.0
+
+            cryptos[instId]["trades"].append(trade)
+
+            # Calculate profit using sell_price from the same buy order
+            if trade["side"] == "buy":
+                cryptos[instId]["buy_amount"] += trade["amount"]
+                # If sell_price exists, calculate sell amount
                 if sell_price > 0 and size > 0:
                     sell_amount = sell_price * size
-                    cryptos[instId]['sell_amount'] += sell_amount
-                else:
-                    cryptos[instId]['sell_amount'] += trade['amount']
-        
-        # Match buy and sell orders by ordId to calculate profit
+                    cryptos[instId]["sell_amount"] += sell_amount
+
+        # Calculate profit for each crypto
         for instId, data in cryptos.items():
-            # Group trades by ordId
-            trades_by_ordId = {}
-            for trade in data['trades']:
-                ordId = trade['ordId']
-                if ordId not in trades_by_ordId:
-                    trades_by_ordId[ordId] = []
-                trades_by_ordId[ordId].append(trade)
-            
-            # Calculate profit by matching buy and sell orders
-            total_profit = 0.0
-            total_buy_amount = 0.0
-            
-            for ordId, trades in trades_by_ordId.items():
-                buy_trade = next((t for t in trades if t['side'] == 'buy'), None)
-                sell_trade = next((t for t in trades if t['side'] == 'sell'), None)
-                
-                if buy_trade:
-                    buy_amount = buy_trade['amount']
-                    total_buy_amount += buy_amount
-                    
-                    if sell_trade and sell_trade.get('sell_price', 0) > 0:
-                        # Use sell_price from database
-                        sell_amount = sell_trade['sell_price'] * sell_trade['size']
-                        trade_profit = sell_amount - buy_amount
-                        total_profit += trade_profit
-                    elif sell_trade:
-                        # Fallback: use price as sell price (for backward compatibility)
-                        sell_amount = sell_trade['price'] * sell_trade['size'] if sell_trade['price'] > 0 else 0
-                        trade_profit = sell_amount - buy_amount
-                        total_profit += trade_profit
-            
-            data['profit'] = total_profit
-            data['buy_amount'] = total_buy_amount
-            data['sell_amount'] = total_buy_amount + total_profit
+            total_buy_amount = data["buy_amount"]
+            total_sell_amount = data["sell_amount"]
+            total_profit = total_sell_amount - total_buy_amount
+
+            data["profit"] = total_profit
             if total_buy_amount > 0:
-                data['profit_pct'] = (total_profit / total_buy_amount) * 100
-            
+                data["profit_pct"] = (total_profit / total_buy_amount) * 100
+
             # Sort trades by time
-            data['trades'].sort(key=lambda x: x['time'], reverse=True)
-        
+            data["trades"].sort(key=lambda x: x["time"], reverse=True)
+
         return dict(cryptos)
     finally:
         cur.close()
         conn.close()
 
 
-@app.route('/')
+@app.route("/")
 def index():
     """Display trading records"""
     cryptos = get_trading_records()
-    
+
     # Calculate totals
     total_cryptos = len(cryptos)
-    total_trades = sum(len(data['trades']) for data in cryptos.values())
-    total_profit = sum(data['profit'] for data in cryptos.values())
-    
+    total_trades = sum(len(data["trades"]) for data in cryptos.values())
+    total_profit = sum(data["profit"] for data in cryptos.values())
+
     return render_template_string(
         HTML_TEMPLATE,
         strategy_name=STRATEGY_NAME,
         cryptos=cryptos,
         total_cryptos=total_cryptos,
         total_trades=total_trades,
-        total_profit=total_profit
+        total_profit=total_profit,
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(f"Starting trading records viewer...")
     print(f"Open http://localhost:5000 in your browser")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)
