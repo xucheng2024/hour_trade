@@ -1,60 +1,43 @@
-# Vercel Ignore - Files not needed for deployment
-
-# Python
+# Python cache
 __pycache__/
-*.py[cod]
 *.pyc
-.Python
 
 # Virtual Environment
 venv/
 env/
+.venv/
 
-# Environment Variables
-.env
-.env.local
-.env.*.local
+# Environment files
+.env*
 
 # Logs
 *.log
 logs/
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# IDE
-.vscode/
-.idea/
-.DS_Store
-
 # Git
 .git/
-.gitignore
+
+# Large modules not needed
+src/crypto_remote/
+src/core/
+src/system/
+
+# Scripts not needed
+websocket_limit_trading.py
+trading_web_viewer.py
+init_database.py
+*.sh
+
+# Documentation
+*.md
 
 # Data files
 data/
 *.npz
 *.csv
 *.pt
+*.db
+*.sqlite
 
-# Backup files
-backups/
-*.backup
-
-# Scripts not needed for web deployment
-websocket_limit_trading.py
-trading_web_viewer.py
-init_database.py
-push_to_github.sh
-
-# Crypto remote module (for background jobs, not web)
-src/crypto_remote/
-
-# Documentation (not needed on server)
-*.md
-
-# Test files
-test_*.py
-*_test.py
+# Config
+valid_crypto_limits.json

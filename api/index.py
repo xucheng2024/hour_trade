@@ -1,39 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Vercel API - Trading Records Viewer
-Read-only API for viewing trading records
+Vercel API - Trading Records Viewer (Standalone version)
 """
 
 import os
-import sys
-from datetime import datetime
 from collections import defaultdict
+from datetime import datetime
+
+import psycopg2
+import psycopg2.extras
 from flask import Flask, jsonify, render_template_string
-
-# Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-# Import database connection
-try:
-    from src.utils.db_connection import get_database_connection
-    import psycopg2.extras
-except ImportError as e:
-    print(f"Import error: {e}")
-    sys.exit(1)
 
 app = Flask(__name__)
 
 STRATEGY_NAME = "hourly_limit_ws"
 
-# HTML Template for web UI
+# HTML Template
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Records</title>
+    <title>📊 Trading Records</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -153,13 +143,20 @@ HTML_TEMPLATE = """
         .refresh-btn:hover {
             background: #5568d3;
         }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>📊 Trading Records</h1>
         <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
-        
+
         <div class="summary">
             <div class="stat-card">
                 <div class="stat-label">Total Cryptos</div>
@@ -175,12 +172,13 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
+        {% if cryptos %}
         {% for crypto, data in cryptos.items() %}
         <div class="crypto-section">
             <div class="crypto-header">
                 <div class="crypto-name">{{ crypto }}</div>
-                <div class="profit-badge {{ 'profit-positive' if data.profit > 0 else 'profit-negative' }}">
-                    {{ "%.2f"|format(data.profit) }} USDT ({{ "%.2f"|format(data.profit_pct) }}%)
+                <div class="profit-badge {{ 'profit-positive' if data.profit > 0 else 'profit-negative' }}">  # noqa: E501
+                    {{ "%.2f"|format(data.profit) }} USDT ({{ "%.2f"|format(data.profit_pct) }}%)  # noqa: E501
                 </div>
             </div>
             <table>
@@ -213,10 +211,29 @@ HTML_TEMPLATE = """
             </table>
         </div>
         {% endfor %}
+        {% else %}
+        <div class="error">
+            <h3>No trading records found</h3>
+            <p>Start the trading bot to generate records: <code>python websocket_limit_trading.py</code></p>
+        </div>
+        {% endif %}
     </div>
 </body>
 </html>
 """
+
+
+def get_database_connection():
+    """Get PostgreSQL database connection"""
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise ValueError("DATABASE_URL environment variable is required")
+
+    if not database_url.startswith("postgresql://"):
+        raise ValueError("DATABASE_URL must be a PostgreSQL connection string")
+
+    return psycopg2.connect(database_url)
 
 
 def get_trading_records():
@@ -224,116 +241,159 @@ def get_trading_records():
     try:
         conn = get_database_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        # Get all orders for this strategy
-        cur.execute("""
-            SELECT instId, ordId, create_time, orderType, state, price, size, sell_time, side, sell_price
+
+        cur.execute(
+            """
+            SELECT instId, ordId, create_time, orderType, state,
+                   price, size, sell_time, side, sell_price
             FROM orders
             WHERE flag = %s
             ORDER BY create_time DESC
             LIMIT 1000
-        """, (STRATEGY_NAME,))
-        
+        """,
+            (STRATEGY_NAME,),
+        )
+
         rows = cur.fetchall()
-        
-        # Group by cryptocurrency
-        cryptos = defaultdict(lambda: {
-            'trades': [],
-            'profit': 0.0,
-            'profit_pct': 0.0,
-            'buy_amount': 0.0,
-            'sell_amount': 0.0
-        })
-        
-        for row in rows:
-            instId = row['instid']
-            buy_price = float(row['price']) if row['price'] else 0.0
-            sell_price = float(row['sell_price']) if row.get('sell_price') else 0.0
-            size = float(row['size']) if row['size'] else 0.0
-            
-            trade = {
-                'ordId': row['ordid'],
-                'time': datetime.fromtimestamp(row['create_time'] / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                'side': row['side'],
-                'price': buy_price,
-                'sell_price': sell_price,
-                'size': size,
-                'state': row['state'] if row['state'] else 'active',
-                'state_class': 'sold' if row['state'] == 'sold out' else 'active'
+
+        cryptos = defaultdict(
+            lambda: {
+                "trades": [],
+                "profit": 0.0,
+                "profit_pct": 0.0,
+                "buy_amount": 0.0,
+                "sell_amount": 0.0,
             }
-            
-            # Calculate amount
+        )
+
+        for row in rows:
+            instId = row["instid"]
+            buy_price = float(row["price"]) if row["price"] else 0.0
+            sell_price = float(row["sell_price"]) if row.get("sell_price") else 0.0
+            size = float(row["size"]) if row["size"] else 0.0
+
+            trade = {
+                "ordId": row["ordid"],
+                "time": datetime.fromtimestamp(row["create_time"] / 1000).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "side": row["side"],
+                "price": buy_price,
+                "sell_price": sell_price,
+                "size": size,
+                "state": row["state"] if row["state"] else "active",
+                "state_class": "sold" if row["state"] == "sold out" else "active",
+            }
+
             if buy_price > 0 and size > 0:
-                trade['amount'] = buy_price * size
+                trade["amount"] = buy_price * size
             else:
-                trade['amount'] = 0.0
-            
-            cryptos[instId]['trades'].append(trade)
-            
-            # Calculate profit
-            if trade['side'] == 'buy':
-                cryptos[instId]['buy_amount'] += trade['amount']
-            elif trade['side'] == 'sell' and sell_price > 0 and size > 0:
-                cryptos[instId]['sell_amount'] += sell_price * size
-        
-        # Calculate profit percentages
+                trade["amount"] = 0.0
+
+            cryptos[instId]["trades"].append(trade)
+
+            if trade["side"] == "buy":
+                cryptos[instId]["buy_amount"] += trade["amount"]
+            elif trade["side"] == "sell" and sell_price > 0 and size > 0:
+                cryptos[instId]["sell_amount"] += sell_price * size
+
         for instId, data in cryptos.items():
-            total_profit = data['sell_amount'] - data['buy_amount']
-            data['profit'] = total_profit
-            if data['buy_amount'] > 0:
-                data['profit_pct'] = (total_profit / data['buy_amount']) * 100
-            data['trades'].sort(key=lambda x: x['time'], reverse=True)
-        
+            total_profit = data["sell_amount"] - data["buy_amount"]
+            data["profit"] = total_profit
+            if data["buy_amount"] > 0:
+                data["profit_pct"] = (total_profit / data["buy_amount"]) * 100
+            data["trades"].sort(key=lambda x: x["time"], reverse=True)
+
         cur.close()
         conn.close()
-        
+
         return dict(cryptos)
     except Exception as e:
         print(f"Database error: {e}")
         return {}
 
 
-@app.route('/')
+@app.route("/")
 def index():
     """Display trading records (HTML)"""
-    cryptos = get_trading_records()
-    
-    total_cryptos = len(cryptos)
-    total_trades = sum(len(data['trades']) for data in cryptos.values())
-    total_profit = sum(data['profit'] for data in cryptos.values())
-    
-    return render_template_string(
-        HTML_TEMPLATE,
-        cryptos=cryptos,
-        total_cryptos=total_cryptos,
-        total_trades=total_trades,
-        total_profit=total_profit
-    )
+    try:
+        cryptos = get_trading_records()
+
+        total_cryptos = len(cryptos)
+        total_trades = sum(len(data["trades"]) for data in cryptos.values())
+        total_profit = sum(data["profit"] for data in cryptos.values())
+
+        return render_template_string(
+            HTML_TEMPLATE,
+            cryptos=cryptos,
+            total_cryptos=total_cryptos,
+            total_trades=total_trades,
+            total_profit=total_profit,
+        )
+    except Exception as e:
+        return (
+            f"""
+        <html>
+        <body style="font-family: sans-serif; padding: 40px; background: #f5f5f5;">
+            <div style="max-width: 600px; margin: 0 auto; background: white;
+                        padding: 30px; border-radius: 8px;">
+                <h1 style="color: #dc3545;">⚠️ Error</h1>
+                <p><strong>Error message:</strong> {str(e)}</p>
+                <hr>
+                <h3>Troubleshooting:</h3>
+                <ol>
+                    <li>Check DATABASE_URL is configured in Vercel
+                        environment variables</li>
+                    <li>Verify database tables exist:
+                        run <code>python init_database.py</code></li>
+                    <li>Check database connection is working</li>
+                </ol>
+                <p>
+                    <a href="https://vercel.com/xuchengs-projects-27b3e479/hour-trade/settings/environment-variables">  # noqa: E501
+                        → Configure Environment Variables
+                    </a>
+                </p>
+            </div>
+        </body>
+        </html>
+        """,
+            500,
+        )
 
 
-@app.route('/api/orders')
+@app.route("/api/orders")
 def api_orders():
     """Get trading records (JSON API)"""
-    cryptos = get_trading_records()
-    
-    return jsonify({
-        'success': True,
-        'data': {
-            'total_cryptos': len(cryptos),
-            'total_trades': sum(len(data['trades']) for data in cryptos.values()),
-            'total_profit': sum(data['profit'] for data in cryptos.values()),
-            'cryptos': cryptos
-        }
-    })
+    try:
+        cryptos = get_trading_records()
+
+        return jsonify(
+            {
+                "success": True,
+                "data": {
+                    "total_cryptos": len(cryptos),
+                    "total_trades": sum(
+                        len(data["trades"]) for data in cryptos.values()
+                    ),
+                    "total_profit": sum(data["profit"] for data in cryptos.values()),
+                    "cryptos": cryptos,
+                },
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route('/api/health')
+@app.route("/api/health")
 def health():
     """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat()
-    })
+    return jsonify(
+        {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "service": "hour-trade-api",
+        }
+    )
 
 
 # Vercel serverless function handler
@@ -342,6 +402,5 @@ def handler(event, context):
     return app(event, context)
 
 
-if __name__ == '__main__':
-    # Local development
-    app.run(debug=True, host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
