@@ -426,6 +426,7 @@ def check_and_cancel_unfilled_order_after_timeout(
                 if result and result.get("data") and len(result["data"]) > 0:
                     order_data = result["data"][0]
                     acc_fill_sz = order_data.get("accFillSz", "0")
+                    fill_px = order_data.get("fillPx", "0")
                     state = order_data.get("state", "")
                     filled_size = (
                         float(acc_fill_sz) if acc_fill_sz and acc_fill_sz != "" else 0.0
@@ -456,13 +457,36 @@ def check_and_cancel_unfilled_order_after_timeout(
                             conn.close()
 
                         # Remove from active_orders
-                        if instId in active_orders:
-                            del active_orders[instId]
+                        with lock:
+                            if instId in active_orders:
+                                del active_orders[instId]
                     else:
-                        # Order is filled, do nothing
-                        logger.info(
-                            f"{STRATEGY_NAME} Order filled within 1 minute: {instId}, ordId={ordId}"
+                        # ✅ FIX: Order is filled, update database with actual fill info
+                        logger.warning(
+                            f"{STRATEGY_NAME} Order filled within 1 minute: {instId}, ordId={ordId}, fillSize={acc_fill_sz}, fillPrice={fill_px}"
                         )
+                        
+                        # Update database with filled status and actual fill data
+                        conn = get_db_connection()
+                        try:
+                            cur = conn.cursor()
+                            cur.execute(
+                                """UPDATE orders 
+                                   SET state = %s, size = %s, price = %s 
+                                   WHERE instId = %s AND ordId = %s AND flag = %s""",
+                                ("filled", acc_fill_sz, fill_px, instId, ordId, STRATEGY_NAME),
+                            )
+                            conn.commit()
+                            
+                            # Update active_orders with actual filled size
+                            with lock:
+                                if instId in active_orders:
+                                    active_orders[instId]['filled_size'] = filled_size
+                                    active_orders[instId]['fill_price'] = float(fill_px) if fill_px else 0.0
+                            
+                            cur.close()
+                        finally:
+                            conn.close()
             except Exception as e:
                 logger.error(
                     f"{STRATEGY_NAME} Error checking order status after timeout {instId}, {ordId}: {e}"
@@ -561,6 +585,7 @@ def process_sell_signal(instId: str):
     try:
         with lock:
             if instId not in active_orders:
+                logger.info(f"{STRATEGY_NAME} No active order for {instId}")
                 return
             order_info = active_orders[instId].copy()
             ordId = order_info["ordId"]
@@ -572,37 +597,69 @@ def process_sell_signal(instId: str):
                 API_KEY, API_SECRET, API_PASSPHRASE, False, TRADING_FLAG
             )
 
-        # Get order details to determine size
+        # ✅ FIX: Check order state and prevent duplicate sells
         conn = get_db_connection()
         try:
             cur = conn.cursor()
-            # Only query orders with our flag to avoid conflicts with other systems
+            
+            # Query state and size together to validate order
             cur.execute(
-                "SELECT size FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
+                "SELECT state, size FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
                 (instId, ordId, STRATEGY_NAME),
             )
             row = cur.fetchone()
-            if row and row[0]:
-                size = float(row[0])
-            else:
-                # Fallback: estimate size from buy price
-                size = TRADING_AMOUNT_USDT / order_info["buy_price"]
+            
+            if not row:
+                logger.error(f"{STRATEGY_NAME} Order not found: {instId}, {ordId}")
+                with lock:
+                    if instId in active_orders:
+                        del active_orders[instId]
+                return
+            
+            db_state = row[0] if row[0] else ""
+            db_size = row[1] if row[1] else "0"
+            
+            # Prevent duplicate sells - check if already sold
+            if db_state == "sold out":
+                logger.warning(
+                    f"{STRATEGY_NAME} Already sold: {instId}, {ordId}"
+                )
+                with lock:
+                    if instId in active_orders:
+                        del active_orders[instId]
+                return
+            
+            # Verify order was filled before selling
+            if db_state not in ["filled", ""] or not db_size or db_size == "0":
+                logger.warning(
+                    f"{STRATEGY_NAME} Order not filled: {instId}, {ordId}, state={db_state}, size={db_size}"
+                )
+                with lock:
+                    if instId in active_orders:
+                        del active_orders[instId]
+                return
+            
+            size = float(db_size)
             cur.close()
 
             # Place market sell order
             sell_market_order(instId, ordId, size, trade_api, conn)
 
-            # Remove from active orders
+            # Remove from active orders AFTER successful sell
             with lock:
                 if instId in active_orders:
                     del active_orders[instId]
                     logger.warning(
-                        f"{STRATEGY_NAME} Sold and removed: {instId}, ordId={ordId}"
+                        f"{STRATEGY_NAME} Sold and removed: {instId}, {ordId}"
                     )
         finally:
             conn.close()
     except Exception as e:
         logger.error(f"process_sell_signal error: {instId}, {e}")
+        # Clean up on error to prevent stuck orders
+        with lock:
+            if instId in active_orders:
+                del active_orders[instId]
 
 
 def ticker_open(ws):
