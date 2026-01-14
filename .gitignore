@@ -16,16 +16,34 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
 
 # Virtual Environment
-trading_env/
 venv/
 env/
 ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables - IMPORTANT: Never commit API keys!
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+*.log.*
 
 # IDE
 .vscode/
@@ -33,48 +51,44 @@ ENV/
 *.swp
 *.swo
 *~
-
-# Trading Data
-*.db
-*.sqlite
-*.sqlite3
-*.npz
-*.npy
-*.csv
-*.json
-!cryptos_selected.json
-!requirements.txt
-
-# Logs
-*.log
-logs/
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# pyenv
-.python-version
-
-# pytest
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
+.nox/
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
+# Data files
+data/*.npz
+data/*.csv
+data/*.json
+*.pt
+
+# Backup files
+backups/
+
+# Node modules (for crypto_remote)
+node_modules/
+package-lock.json
+
+# Vercel
+.vercel
+
+# Output files
+batch_test_output.log
+data_fetch.log
+websocket_limit_trading.log
+src/crypto_remote/logs/*.log
+
+# Results
+*_results.json
+hourly_limit_batch_results.json
+limit_timeslices_results.json
+recent_*_results.json
+
+# Temporary files
+*.tmp
+*.bak
+*.swp

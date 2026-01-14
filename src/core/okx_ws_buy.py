@@ -275,19 +275,16 @@ def on_open(ws):
 
 
 
-debug = True
-debug = False
+debug = False  # Set to True for testnet
 
-API_KEY = "d7c59f82-447b-4700-a051-8f011750ba75"
-API_SECRET = "86873D555F0401706057F68AD6FA9951"
-API_PASSPHARSE = 'sunSh1ne!'
-flag  = 0
+# Load API credentials from environment
+API_KEY = os.getenv('OKX_API_KEY', '')
+API_SECRET = os.getenv('OKX_SECRET', '')
+API_PASSPHARSE = os.getenv('OKX_PASSPHRASE', '')
+flag = 1 if os.getenv('OKX_TESTNET', 'false').lower() == 'true' else 0
 
-if debug:
-    API_KEY = "111e0580-6191-4b8e-aa49-c0bea07a8c4f"
-    API_SECRET = "773CB24672F1277A11F016F138A33B27"
-    API_PASSPHARSE = 'P@ssw0rd'
-    flag  = 1
+if not all([API_KEY, API_SECRET, API_PASSPHARSE]):
+    logging.error("OKX API credentials not found in environment variables")
 
 
 

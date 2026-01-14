@@ -1,0 +1,12 @@
+{
+  "generated_at": "2025-08-31T20:00:42.652248",
+  "total_cryptos": 100,
+  "sorting_criteria": {
+    "min_listing_days": 720,
+    "sort_by_amount": true,
+    "amount_period_days": 30,
+    "top_n": 100,
+    "state": "live",
+    "pair_type": "USDT"
+  }
+}

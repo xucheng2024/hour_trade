@@ -28,7 +28,8 @@ cur.execute('''CREATE TABLE IF NOT EXISTS orders
                 price TEXT,
                 size TEXT,
                 sell_time REAL,
-                side TEXT)''')
+                side TEXT,
+                sell_price TEXT)''')
 
 
 

@@ -43,10 +43,13 @@ m_file_handler.setFormatter(m_formatter)
 m_logger.addHandler(m_file_handler)
 
 flag = "0" 
-#master
-master_apikey = "520fe3fe-4938-45e9-8ddd-1fe779028803"
-master_secretkey = "C95FB7C700CE1B211C4C69ADDA499536"
-master_passphrase = "sunSh1ne1983!"
+# Master API credentials from environment
+master_apikey = os.getenv('OKX_API_KEY', '')
+master_secretkey = os.getenv('OKX_SECRET', '')
+master_passphrase = os.getenv('OKX_PASSPHRASE', '')
+
+if not all([master_apikey, master_secretkey, master_passphrase]):
+    m_logger.error("OKX API credentials not found in environment variables")
 
 
 def get_announcements(api_key, secret_key, passphrase, ann_type=None, page=1):
