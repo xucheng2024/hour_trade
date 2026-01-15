@@ -32,156 +32,171 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont,
-                'Segoe UI', Roboto, sans-serif;
-            background: #fafafa;
-            color: #1a1a1a;
-            line-height: 1.5;
-            padding: 16px;
+                'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: #f8f9fa;
+            color: #212529;
+            line-height: 1.4;
+            padding: 12px;
+            font-size: 13px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         h1 {
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 600;
-            color: #1a1a1a;
-            margin-bottom: 16px;
+            color: #212529;
+            margin-bottom: 12px;
+            letter-spacing: -0.3px;
         }
         .summary {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 16px;
+            gap: 8px;
+            margin-bottom: 12px;
         }
         .summary-item {
             background: #fff;
-            padding: 12px;
-            border-radius: 6px;
-            border: 1px solid #e5e5e5;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
         }
         .summary-label {
-            font-size: 11px;
-            color: #666;
+            font-size: 10px;
+            color: #6c757d;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
+            font-weight: 600;
         }
         .summary-value {
-            font-size: 20px;
-            font-weight: 600;
-            color: #1a1a1a;
+            font-size: 18px;
+            font-weight: 700;
+            color: #212529;
+            letter-spacing: -0.2px;
         }
-        .summary-value.profit-positive { color: #10b981; }
-        .summary-value.profit-negative { color: #ef4444; }
+        .summary-value.profit-positive { color: #198754; }
+        .summary-value.profit-negative { color: #dc3545; }
         .crypto-section {
             background: #fff;
-            border: 1px solid #e5e5e5;
-            border-radius: 6px;
-            margin-bottom: 12px;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 8px;
             overflow: hidden;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
         }
         .crypto-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px 16px;
-            border-bottom: 1px solid #e5e5e5;
-            background: #fafafa;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e9ecef;
+            background: #f8f9fa;
         }
         .crypto-name {
             font-size: 14px;
             font-weight: 600;
-            color: #1a1a1a;
+            color: #212529;
+            letter-spacing: -0.2px;
         }
         .crypto-profit {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
-            padding: 4px 8px;
-            border-radius: 4px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            letter-spacing: -0.1px;
         }
-        .profit-positive { color: #10b981; background: #d1fae5; }
-        .profit-negative { color: #ef4444; background: #fee2e2; }
-        .profit-zero { color: #666; background: #f3f4f6; }
+        .profit-positive { color: #0f5132; background: #d1e7dd; }
+        .profit-negative { color: #842029; background: #f8d7da; }
+        .profit-zero { color: #495057; background: #e9ecef; }
         .trades-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 13px;
+            font-size: 12px;
         }
         .trades-table th {
-            background: #fafafa;
-            color: #666;
+            background: #f8f9fa;
+            color: #6c757d;
             font-weight: 600;
-            font-size: 11px;
+            font-size: 10px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            padding: 8px 16px;
+            padding: 6px 12px;
             text-align: left;
-            border-bottom: 1px solid #e5e5e5;
+            border-bottom: 1px solid #e9ecef;
         }
         .trades-table td {
-            padding: 10px 16px;
-            border-bottom: 1px solid #f0f0f0;
-            color: #1a1a1a;
+            padding: 8px 12px;
+            border-bottom: 1px solid #f1f3f5;
+            color: #212529;
         }
         .trades-table tbody tr:hover {
-            background: #fafafa;
+            background: #f8f9fa;
         }
         .trades-table tbody tr:last-child td {
             border-bottom: none;
         }
-        .side-buy { color: #10b981; font-weight: 600; }
-        .side-sell { color: #ef4444; font-weight: 600; }
+        .side-buy { color: #198754; font-weight: 600; }
+        .side-sell { color: #dc3545; font-weight: 600; }
         .status-badge {
             padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 11px;
+            border-radius: 4px;
+            font-size: 10px;
             font-weight: 600;
             text-transform: uppercase;
+            letter-spacing: 0.3px;
         }
-        .status-active { background: #fef3c7; color: #92400e; }
-        .status-sold { background: #d1fae5; color: #065f46; }
+        .status-active { background: #fff3cd; color: #856404; }
+        .status-sold { background: #d1e7dd; color: #0f5132; }
         .trades-table tbody tr.row-latest {
-            background: #d1fae5;
-            border-left: 3px solid #10b981;
+            background: #d1e7dd;
+            border-left: 3px solid #198754;
         }
         .trades-table tbody tr.row-latest:hover {
-            background: #a7f3d0;
+            background: #bfe0d0;
         }
         .error {
             background: #fff;
             text-align: center;
-            padding: 40px 30px;
-            border-radius: 6px;
-            border: 1px solid #e5e5e5;
+            padding: 32px 24px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
         }
         .error h3 {
-            font-size: 18px;
-            margin-bottom: 8px;
-            color: #1a1a1a;
+            font-size: 16px;
+            margin-bottom: 6px;
+            color: #212529;
         }
         .error p {
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 8px;
+            color: #6c757d;
+            font-size: 13px;
+            margin-bottom: 6px;
         }
         .error code {
-            background: #f5f5f5;
-            padding: 4px 8px;
+            background: #f8f9fa;
+            padding: 3px 6px;
             border-radius: 4px;
-            font-family: Monaco, monospace;
-            color: #1a1a1a;
-            font-size: 12px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            color: #212529;
+            font-size: 11px;
         }
         @media (max-width: 768px) {
-            body { padding: 12px; }
-            .summary { grid-template-columns: 1fr; }
+            body { padding: 8px; font-size: 12px; }
+            h1 { font-size: 18px; margin-bottom: 10px; }
+            .summary { grid-template-columns: 1fr; gap: 6px; margin-bottom: 10px; }
+            .summary-item { padding: 8px 10px; }
             .crypto-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 8px;
+                gap: 6px;
+                padding: 8px 10px;
             }
-            .trades-table th, .trades-table td { padding: 8px 12px; font-size: 12px; }
+            .trades-table th, .trades-table td {
+                padding: 6px 8px;
+                font-size: 11px;
+            }
         }
     </style>
 </head>
