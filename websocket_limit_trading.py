@@ -17,6 +17,7 @@ import uuid
 import warnings
 from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 from typing import Dict, Optional
 
 import psycopg2
@@ -25,6 +26,13 @@ import websocket
 from dotenv import load_dotenv
 from okx.MarketData import MarketAPI
 from okx.Trade import TradeAPI
+
+# Add src directory to path to import blacklist_manager
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+try:
+    from crypto_remote.blacklist_manager import BlacklistManager
+except ImportError:
+    BlacklistManager = None
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -90,6 +98,11 @@ active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time}
 lock = threading.Lock()
+
+# WebSocket connections for unsubscribe
+ticker_ws: Optional[websocket.WebSocketApp] = None
+candle_ws: Optional[websocket.WebSocketApp] = None
+ws_lock = threading.Lock()
 
 # Initialize TradeAPI instance (singleton pattern)
 trade_api: Optional[TradeAPI] = None
@@ -193,6 +206,118 @@ def format_number(number):
     return f"{number}"
 
 
+def extract_base_currency(instId):
+    """Extract base currency from instId (e.g., 'BTC-USDT' -> 'BTC')"""
+    if "-" in instId:
+        return instId.split("-")[0]
+    return instId
+
+
+def remove_crypto_from_system(instId: str):
+    """Remove crypto from hour_limit table, memory, and unsubscribe from WebSocket"""
+    try:
+        # Remove from database hour_limit table
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM hour_limit WHERE inst_id = %s", (instId,))
+            conn.commit()
+            logger.warning(f"🗑️ Removed {instId} from hour_limit table")
+            cur.close()
+        finally:
+            conn.close()
+
+        # Remove from memory
+        with lock:
+            if instId in crypto_limits:
+                del crypto_limits[instId]
+            if instId in current_prices:
+                del current_prices[instId]
+            if instId in pending_buys:
+                del pending_buys[instId]
+            if instId in active_orders:
+                del active_orders[instId]
+            logger.warning(f"🗑️ Removed {instId} from memory")
+
+        # Unsubscribe from WebSocket
+        unsubscribe_from_websocket(instId)
+
+        return True
+    except Exception as e:
+        logger.error(f"Error removing {instId} from system: {e}")
+        return False
+
+
+def unsubscribe_from_websocket(instId: str):
+    """Unsubscribe from ticker and candle WebSocket for a specific crypto"""
+    try:
+        with ws_lock:
+            # Unsubscribe from ticker
+            if ticker_ws:
+                try:
+                    msg = {
+                        "op": "unsubscribe",
+                        "args": [{"channel": "tickers", "instId": instId}],
+                    }
+                    ticker_ws.send(json.dumps(msg))
+                    logger.warning(f"📡 Unsubscribed ticker for {instId}")
+                except Exception as e:
+                    logger.error(f"Error unsubscribing ticker for {instId}: {e}")
+
+            # Unsubscribe from candle
+            if candle_ws:
+                try:
+                    msg = {
+                        "op": "unsubscribe",
+                        "args": [{"channel": "candle1H", "instId": instId}],
+                    }
+                    candle_ws.send(json.dumps(msg))
+                    logger.warning(f"📡 Unsubscribed candle for {instId}")
+                except Exception as e:
+                    logger.error(f"Error unsubscribing candle for {instId}: {e}")
+    except Exception as e:
+        logger.error(f"Error in unsubscribe_from_websocket for {instId}: {e}")
+
+
+def check_blacklist_before_buy(instId, auto_remove=True):
+    """Check if crypto is blacklisted. If blacklisted and auto_remove=True,
+    remove from system."""
+    if BlacklistManager is None:
+        logger.warning(
+            f"BlacklistManager not available, skipping blacklist check " f"for {instId}"
+        )
+        return False
+
+    try:
+        blacklist_manager = BlacklistManager(logger=logger)
+        base_currency = extract_base_currency(instId)
+
+        # Check if already blacklisted
+        if blacklist_manager.is_blacklisted(base_currency):
+            reason = blacklist_manager.get_blacklist_reason(base_currency)
+            logger.warning(
+                f"🚫 BLOCKED BUY: {instId} (base: {base_currency}) "
+                f"is blacklisted: {reason}"
+            )
+
+            # Remove from system: unsubscribe and remove from hour_limit
+            if auto_remove:
+                logger.warning(
+                    f"🗑️ Removing {instId} from system "
+                    f"(unsubscribe + remove from hour_limit)"
+                )
+                remove_crypto_from_system(instId)
+
+            return True
+
+        # If not blacklisted, return False to allow buy
+        return False
+    except Exception as e:
+        logger.error(f"Error checking blacklist for {instId}: {e}")
+        # On error, allow buy (fail open) but log the error
+        return False
+
+
 def load_crypto_limits():
     """Load crypto limits from hour_limit table in database"""
     global crypto_limits
@@ -225,6 +350,11 @@ def buy_limit_order(
     instId: str, limit_price: float, size: float, tradeAPI: TradeAPI, conn
 ) -> Optional[str]:
     """Place limit buy order and record in database"""
+    # Check blacklist before buying
+    if check_blacklist_before_buy(instId):
+        # Already blacklisted, block the buy
+        return None
+
     buy_price = format_number(limit_price)
     size = format_number(size)
 
@@ -461,6 +591,7 @@ def on_ticker_message(ws, msg_string):
                                     )
                                     pending_buys[instId] = True
                                     # Trigger buy in separate thread to avoid blocking
+                                    # Blacklist check will happen in process_buy_signal
                                     threading.Thread(
                                         target=process_buy_signal,
                                         args=(instId, limit_price),
@@ -577,6 +708,14 @@ def check_and_cancel_unfilled_order_after_timeout(
 def process_buy_signal(instId: str, limit_price: float):
     """Process buy signal in separate thread"""
     try:
+        # Check blacklist before processing buy signal
+        if check_blacklist_before_buy(instId):
+            logger.warning(f"🚫 Skipping buy signal for {instId} - blacklisted")
+            with lock:
+                if instId in pending_buys:
+                    del pending_buys[instId]
+            return
+
         # Get trade API instance
         api = get_trade_api()
 
@@ -776,8 +915,9 @@ def candle_open(ws):
         logger.error("No symbols to subscribe!")
 
 
-def connect_websocket(url, on_message, on_open):
+def connect_websocket(url, on_message, on_open, ws_type="ticker"):
     """Connect to WebSocket with reconnection logic and exponential backoff"""
+    global ticker_ws, candle_ws
     reconnect_delay = 1
     max_delay = 60
 
@@ -786,6 +926,13 @@ def connect_websocket(url, on_message, on_open):
 
             def on_close_handler(ws, close_status_code=None, close_msg=None):
                 """Handle WebSocket close event"""
+                global ticker_ws, candle_ws
+                with ws_lock:
+                    if ws_type == "ticker":
+                        ticker_ws = None
+                    elif ws_type == "candle":
+                        candle_ws = None
+
                 if close_status_code is not None:
                     logger.warning(
                         f"WebSocket closed: code={close_status_code}, msg={close_msg}"
@@ -800,6 +947,13 @@ def connect_websocket(url, on_message, on_open):
                 on_close=on_close_handler,
                 on_open=on_open,
             )
+
+            # Store WebSocket reference
+            with ws_lock:
+                if ws_type == "ticker":
+                    ticker_ws = ws
+                elif ws_type == "candle":
+                    candle_ws = ws
 
             def send_ping(ws):
                 while True:
@@ -856,7 +1010,7 @@ def main():
     ticker_url = "wss://ws.okx.com:8443/ws/v5/public"
     ticker_thread = threading.Thread(
         target=connect_websocket,
-        args=(ticker_url, on_ticker_message, ticker_open),
+        args=(ticker_url, on_ticker_message, ticker_open, "ticker"),
         daemon=True,
         name="TickerWebSocket",
     )
@@ -866,7 +1020,7 @@ def main():
     candle_url = "wss://ws.okx.com:8443/ws/v5/business"
     candle_thread = threading.Thread(
         target=connect_websocket,
-        args=(candle_url, on_candle_message, candle_open),
+        args=(candle_url, on_candle_message, candle_open, "candle"),
         daemon=True,
         name="CandleWebSocket",
     )
@@ -889,7 +1043,7 @@ def main():
                 logger.error("Ticker WebSocket thread died, restarting...")
                 ticker_thread = threading.Thread(
                     target=connect_websocket,
-                    args=(ticker_url, on_ticker_message, ticker_open),
+                    args=(ticker_url, on_ticker_message, ticker_open, "ticker"),
                     daemon=True,
                     name="TickerWebSocket",
                 )
@@ -899,7 +1053,7 @@ def main():
                 logger.error("Candle WebSocket thread died, restarting...")
                 candle_thread = threading.Thread(
                     target=connect_websocket,
-                    args=(candle_url, on_candle_message, candle_open),
+                    args=(candle_url, on_candle_message, candle_open, "candle"),
                     daemon=True,
                     name="CandleWebSocket",
                 )

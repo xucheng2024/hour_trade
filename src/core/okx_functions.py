@@ -1,23 +1,32 @@
-import requests
-import json
-import hmac
-import hashlib
 import base64
-import os
+import hashlib
+import hmac
+import json
 import math
+import os
 import time
+import warnings
 from datetime import datetime, timedelta
 
-import pandas as pd
 import numpy as np
-
-from okx.Trade import TradeAPI
-from okx.MarketData import MarketAPI
+import pandas as pd
+import requests
 from okx.Account import AccountAPI
+from okx.MarketData import MarketAPI
+from okx.Trade import TradeAPI
 
-import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 import logging
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import blacklist_manager
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from crypto_remote.blacklist_manager import BlacklistManager
+except ImportError:
+    # Fallback if import fails
+    BlacklistManager = None
 
 
 # def pre_buy(instId,marketDataAPI):
@@ -36,7 +45,7 @@ import logging
 #         except Exception as e:
 #             logging.error("rkt pre_buy:%s,%s",instId,e)
 #             count = count + 1
-       
+
 #         if count>3 or last <= bidPx:
 #             return bidPx
 
@@ -74,22 +83,63 @@ import logging
 
 def format_number(number):
     number = float(number)
-    if number>100:number = int(number)
-    elif number > 1:number = int(number *100)/100
+    if number > 100:
+        number = int(number)
+    elif number > 1:
+        number = int(number * 100) / 100
     else:
-        digit = int(-math.log(number,10)+1)
+        digit = int(-math.log(number, 10) + 1)
         scale_factor = (10**digit) * 100
         number = int(number * scale_factor) / scale_factor
-        decimal_places = digit+2
+        decimal_places = digit + 2
         formatted_number = f"{number:.{decimal_places}f}"
         return formatted_number
-    
+
     return f"{number}"
 
 
+def extract_base_currency(instId):
+    """Extract base currency from instId (e.g., 'BTC-USDT' -> 'BTC')"""
+    if "-" in instId:
+        return instId.split("-")[0]
+    return instId
 
-def buy_market(instId,size,tradeAPI,strategy,conn,minutes):
-    
+
+def check_blacklist_before_buy(instId, strategy):
+    """Check if crypto is blacklisted before buying."""
+    if BlacklistManager is None:
+        logging.warning(
+            f"{strategy} BlacklistManager not available, skipping blacklist check"
+        )
+        return False
+
+    try:
+        blacklist_manager = BlacklistManager(logger=logging.getLogger(__name__))
+        base_currency = extract_base_currency(instId)
+
+        # Check if already blacklisted
+        if blacklist_manager.is_blacklisted(base_currency):
+            reason = blacklist_manager.get_blacklist_reason(base_currency)
+            logging.warning(
+                f"{strategy} 🚫 BLOCKED BUY: {instId} "
+                f"(base: {base_currency}) is blacklisted: {reason}"
+            )
+            return True
+
+        # If not blacklisted, return False to allow buy
+        return False
+    except Exception as e:
+        logging.error(f"{strategy} Error checking blacklist for {instId}: {e}")
+        # On error, allow buy (fail open) but log the error
+        return False
+
+
+def buy_market(instId, size, tradeAPI, strategy, conn, minutes):
+    # Check blacklist before buying
+    if check_blacklist_before_buy(instId, strategy):
+        # Already blacklisted, block the buy
+        return None
+
     size = format_number(size)
     max_attempts = 3
 
@@ -98,60 +148,79 @@ def buy_market(instId,size,tradeAPI,strategy,conn,minutes):
     for attempt in range(max_attempts):
         try:
             result = tradeAPI.place_order(
-                    instId=instId,
-                    tdMode="cash",
-                    side="buy",
-                    ordType="market",
-                    sz=size,
-                    tgtCcy='base_ccy'
-                )
-            
-            result_msg = result['data'][0]['sMsg']
-            logging.warning("%s buy mrk:%s,%s,%s",strategy,instId,size,result_msg)
+                instId=instId,
+                tdMode="cash",
+                side="buy",
+                ordType="market",
+                sz=size,
+                tgtCcy="base_ccy",
+            )
+
+            result_msg = result["data"][0]["sMsg"]
+            logging.warning("%s buy mrk:%s,%s,%s", strategy, instId, size, result_msg)
             if "failed" in result_msg:
                 time.sleep(1)
                 failed_flag = 1
                 continue
             failed_flag = 0
-            break          
+            break
         except Exception as e:
-            logging.error("%s buy mrk:%s,%s,%s",strategy,instId,size,e)
-            failed_flag =1
-    
-    if failed_flag>0:return
+            logging.error("%s buy mrk:%s,%s,%s", strategy, instId, size, e)
+            failed_flag = 1
+
+    if failed_flag > 0:
+        return
     cur = conn.cursor()
     for attempt in range(max_attempts):
         try:
             now = datetime.now()
-            ordId = result['data'][0]['ordId']
+            ordId = result["data"][0]["ordId"]
             flag = strategy
-            create_time = int(now.timestamp()*1000)
-            orderType = 'mrk'
-            state = ''
-            price = ''
-            size = ''
-            
-            sell_time = int((now+timedelta(minutes=minutes)).timestamp()*1000)
-            side = 'buy'
+            create_time = int(now.timestamp() * 1000)
+            orderType = "mrk"
+            state = ""
+            price = ""
+            size = ""
 
-            if ordId is None: return
-            cur.execute('''INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''', (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side))
+            sell_time = int((now + timedelta(minutes=minutes)).timestamp() * 1000)
+            side = "buy"
+
+            if ordId is None:
+                return
+            cur.execute(
+                """INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    instId,
+                    flag,
+                    ordId,
+                    create_time,
+                    orderType,
+                    state,
+                    price,
+                    size,
+                    sell_time,
+                    side,
+                ),
+            )
             conn.commit()
 
-            logging.warning("%s buy mrk:db:%s,%s,%s",strategy,instId,ordId)
+            logging.warning("%s buy mrk:db:%s,%s,%s", strategy, instId, ordId)
 
             break
         except Exception as e:
-            logging.error("%s buy mrk:db:%s,%s,%s",strategy,instId,ordId,e)
+            logging.error("%s buy mrk:db:%s,%s,%s", strategy, instId, ordId, e)
 
     cur.close()
-    return instId,ordId
+    return instId, ordId
 
 
+def buy_limit(instId, buy_price, size, tradeAPI, strategy, conn, minutes):
+    # Check blacklist before buying
+    if check_blacklist_before_buy(instId, strategy):
+        # Already blacklisted, block the buy
+        return None
 
-def buy_limit(instId,buy_price,size,tradeAPI,strategy,conn,minutes):
-    
     buy_price = format_number(buy_price)
     size = format_number(size)
     max_attempts = 3
@@ -159,62 +228,85 @@ def buy_limit(instId,buy_price,size,tradeAPI,strategy,conn,minutes):
 
     for attempt in range(max_attempts):
         try:
-            result =tradeAPI.place_order(
-                    instId=instId,
-                    tdMode="cash",
-                    side="buy",
-                    ordType="limit",
-                    px=buy_price,
-                    sz=size
-                )
-            result_msg = result['data'][0]['sMsg']
-            main_msg = result['msg']
+            result = tradeAPI.place_order(
+                instId=instId,
+                tdMode="cash",
+                side="buy",
+                ordType="limit",
+                px=buy_price,
+                sz=size,
+            )
+            result_msg = result["data"][0]["sMsg"]
+            main_msg = result["msg"]
 
-            logging.warning("%s buy limit:%s,%s,%s,%s,%s",strategy,instId,buy_price,size,result_msg,main_msg)
-            
+            logging.warning(
+                "%s buy limit:%s,%s,%s,%s,%s",
+                strategy,
+                instId,
+                buy_price,
+                size,
+                result_msg,
+                main_msg,
+            )
 
             if "failed" in result_msg:
                 failed_flag = 1
                 continue
             failed_flag = 0
-            break          
+            break
         except Exception as e:
-            logging.warning("%s buy limit:%s,%s,%s,%s",strategy,instId,buy_price,size,e)
+            logging.warning(
+                "%s buy limit:%s,%s,%s,%s", strategy, instId, buy_price, size, e
+            )
             failed_flag = 1
-    
-    if failed_flag>0:return
+
+    if failed_flag > 0:
+        return
     cur = conn.cursor()
     for attempt in range(max_attempts):
         try:
             now = datetime.now()
-            ordId = result['data'][0]['ordId']
+            ordId = result["data"][0]["ordId"]
 
-            if ordId is None: return
-
+            if ordId is None:
+                return
 
             flag = strategy
-            create_time = int(now.timestamp()*1000)
-            orderType = 'limit'
-            state = ''
-            price = ''
-            size = ''
-            sell_time = int((now+timedelta(minutes=minutes)).timestamp()*1000)
-            side = 'buy'
+            create_time = int(now.timestamp() * 1000)
+            orderType = "limit"
+            state = ""
+            price = ""
+            size = ""
+            sell_time = int((now + timedelta(minutes=minutes)).timestamp() * 1000)
+            side = "buy"
 
-            cur.execute('''INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''', (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side))
+            cur.execute(
+                """INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    instId,
+                    flag,
+                    ordId,
+                    create_time,
+                    orderType,
+                    state,
+                    price,
+                    size,
+                    sell_time,
+                    side,
+                ),
+            )
             conn.commit()
-            logging.warning("%s buy limit:db:%s,%s,%s",strategy,instId,ordId)
+            logging.warning("%s buy limit:db:%s,%s,%s", strategy, instId, ordId)
 
             break
         except Exception as e:
-            logging.warning("%s buy limit db:%s,%s,%s",strategy,instId,ordId,e)
+            logging.warning("%s buy limit db:%s,%s,%s", strategy, instId, ordId, e)
     cur.close()
-    return instId,ordId
+    return instId, ordId
 
 
-
-def sell_market(instId,ordId,size,tradeAPI,strategy,conn):
+def sell_market(instId, ordId, size, tradeAPI, strategy, conn):
     size = format_number(size)
     max_attempts = 3
     failed_flag = 0
@@ -228,43 +320,41 @@ def sell_market(instId,ordId,size,tradeAPI,strategy,conn):
                 side="sell",
                 ordType="market",
                 sz=size,
-                tgtCcy='base_ccy'
-
+                tgtCcy="base_ccy",
             )
 
-            result_msg = result['data'][0]['sMsg']
-            logging.warning("%s sell mrk:%s,%s,%s",strategy,instId,size,result_msg)  
+            result_msg = result["data"][0]["sMsg"]
+            logging.warning("%s sell mrk:%s,%s,%s", strategy, instId, size, result_msg)
 
             if "failed" in result_msg:
                 failed_flag = 1
                 continue
-            
+
             failed_flag = 0
-            break              
+            break
         except Exception as e:
-            logging.error("%s sell mrk:%s,%s,%s",strategy,instId,size,e)
+            logging.error("%s sell mrk:%s,%s,%s", strategy, instId, size, e)
             failed_flag = 1
 
-    if failed_flag>0:return
+    if failed_flag > 0:
+        return
     cur = conn.cursor()
     for attempts in range(max_attempts):
         try:
-            new_state = 'sold out'
+            new_state = "sold out"
 
             sql_statement = """
             UPDATE orders
             SET state = %s
             WHERE instId = %s AND ordId = %s;
             """
-            cur.execute(sql_statement, (new_state,instId, ordId))  
-            conn.commit() 
-            logging.warning("%s sell mrk:db:%s,%s,%s",strategy,instId,ordId)
+            cur.execute(sql_statement, (new_state, instId, ordId))
+            conn.commit()
+            logging.warning("%s sell mrk:db:%s,%s,%s", strategy, instId, ordId)
 
             break
         except Exception as e:
-            logging.error("%s sell mrk db:%s,%s,%s",strategy,instId,ordId,e)
-       
+            logging.error("%s sell mrk db:%s,%s,%s", strategy, instId, ordId, e)
+
     cur.close()
-    return instId,ordId
-
-
+    return instId, ordId
