@@ -291,30 +291,48 @@ HTML_TEMPLATE = """  # noqa: E501
 
 def get_database_connection():
     """Get PostgreSQL database connection"""
-    database_url = os.getenv("DATABASE_URL")
+    try:
+        database_url = os.getenv("DATABASE_URL")
 
-    if not database_url:
-        raise ValueError("DATABASE_URL environment variable is required")
+        if not database_url:
+            error_msg = "DATABASE_URL environment variable is required"
+            print(f"[ERROR] {error_msg}")
+            raise ValueError(error_msg)
 
-    if not database_url.startswith("postgresql://"):
-        raise ValueError("DATABASE_URL must be a PostgreSQL connection string")
+        if not database_url.startswith("postgresql://"):
+            error_msg = "DATABASE_URL must be a PostgreSQL connection string"
+            print(f"[ERROR] {error_msg}")
+            raise ValueError(error_msg)
 
-    return psycopg2.connect(database_url)
+        print("[DB] Connecting to database...")
+        conn = psycopg2.connect(database_url)
+        print("[DB] Connection successful")
+        return conn
+    except Exception as e:
+        print(f"[DB ERROR] Failed to connect: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise
 
 
 def get_trading_records():
     """Get trading records from PostgreSQL database"""
     global _cache_data, _cache_timestamp
 
-    # Check cache
-    current_time = time.time()
-    if _cache_data is not None and (current_time - _cache_timestamp) < CACHE_TTL:
-        age = current_time - _cache_timestamp
-        print(f"[Cache Hit] Returning cached data (age: {age:.1f}s)")
-        return _cache_data
+    try:
+        # Check cache
+        current_time = time.time()
+        if _cache_data is not None and (current_time - _cache_timestamp) < CACHE_TTL:
+            age = current_time - _cache_timestamp
+            print(f"[Cache Hit] Returning cached data (age: {age:.1f}s)")
+            return _cache_data
 
-    print("[Cache Miss] Querying database...")
-    query_start = time.time()
+        print("[Cache Miss] Querying database...")
+        query_start = time.time()
+    except Exception as e:
+        print(f"[Cache Error] {e}, continuing with fresh query...")
+        query_start = time.time()
 
     try:
         conn = get_database_connection()
@@ -417,10 +435,13 @@ def get_trading_records():
         print(f"[Process Time] Processed data in {time.time() - process_start:.2f}s")
         print(f"[Total Time] {time.time() - query_start:.2f}s")
 
-        # Update cache
-        global _cache_data, _cache_timestamp
-        _cache_data = result
-        _cache_timestamp = time.time()
+        # Update cache (may not persist in serverless, but helps with warm instances)
+        try:
+            global _cache_data, _cache_timestamp
+            _cache_data = result
+            _cache_timestamp = time.time()
+        except Exception as cache_err:
+            print(f"[Cache Update Warning] {cache_err}")
 
         cur.close()
         conn.close()
@@ -428,6 +449,9 @@ def get_trading_records():
         return result
     except Exception as e:
         print(f"Database error: {e}")
+        import traceback
+
+        traceback.print_exc()
         return {}
 
 
@@ -514,6 +538,10 @@ def health():
     )
 
 
-# For local testing
+# Export app for Vercel
+# Vercel will automatically use the 'app' variable
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
+
+# For Vercel serverless
+handler = app
