@@ -5,26 +5,28 @@ Database Connection - Neon PostgreSQL Only
 """
 
 import os
-from typing import Optional, Any
 from contextlib import contextmanager
+from typing import Optional
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 # Load environment variables
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
 
 # Database configuration
-DATABASE_URL = os.getenv('DATABASE_URL', '')
-DB_TYPE = 'postgresql'
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+DB_TYPE = "postgresql"
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is required")
 
-if not DATABASE_URL.startswith('postgresql://'):
+if not DATABASE_URL.startswith("postgresql://"):
     raise ValueError("DATABASE_URL must be a PostgreSQL connection string")
 
 
@@ -49,7 +51,7 @@ def get_db_cursor():
         conn.close()
 
 
-def execute_query(query: str, params: tuple = None):
+def execute_query(query: str, params: Optional[tuple] = None):
     """Execute query and return results"""
     with get_db_cursor() as cursor:
         if params:
@@ -59,7 +61,7 @@ def execute_query(query: str, params: tuple = None):
         return cursor.fetchall()
 
 
-def execute_update(query: str, params: tuple = None):
+def execute_update(query: str, params: Optional[tuple] = None):
     """Execute update query"""
     with get_db_cursor() as cursor:
         if params:
@@ -70,7 +72,7 @@ def execute_update(query: str, params: tuple = None):
 
 def get_placeholder():
     """Get SQL placeholder style (%s for PostgreSQL)"""
-    return '%s'
+    return "%s"
 
 
 def get_orders_table_schema():
@@ -98,29 +100,49 @@ def init_orders_table():
     """Initialize orders table"""
     with get_db_cursor() as cursor:
         cursor.execute(get_orders_table_schema())
-        
+
         # Add sell_price column if it doesn't exist (for existing databases)
-        cursor.execute("""
-            ALTER TABLE orders 
+        cursor.execute(
+            """
+            ALTER TABLE orders
             ADD COLUMN IF NOT EXISTS sell_price VARCHAR(50)
-        """)
-        
+        """
+        )
+
         # Create indexes for better performance
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_orders_flag ON orders(flag)
-        """)
-        cursor.execute("""
+        """
+        )
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_orders_instId ON orders(instId)
-        """)
-        cursor.execute("""
+        """
+        )
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_orders_ordId ON orders(ordId)
-        """)
-        cursor.execute("""
+        """
+        )
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_orders_create_time ON orders(create_time)
-        """)
-        cursor.execute("""
+        """
+        )
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_orders_flag_instId ON orders(flag, instId)
-        """)
+        """
+        )
+        # Composite index for optimized web viewer queries
+        # (flag LIKE + ORDER BY create_time)
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_orders_flag_create_time
+            ON orders(flag, create_time DESC)
+        """
+        )
 
 
 if __name__ == "__main__":

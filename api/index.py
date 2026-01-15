@@ -5,6 +5,7 @@ Vercel API - Trading Records Viewer (Standalone version)
 """
 
 import os
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -16,8 +17,13 @@ app = Flask(__name__)
 
 STRATEGY_NAME = "hourly_limit_ws"
 
+# Simple in-memory cache (TTL: 5 seconds)
+_cache_data = None
+_cache_timestamp = 0
+CACHE_TTL = 5  # seconds
+
 # HTML Template
-HTML_TEMPLATE = """
+HTML_TEMPLATE = """  # noqa: E501
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -26,7 +32,7 @@ HTML_TEMPLATE = """
     <title>Trading Records</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #fafafa;
@@ -34,33 +40,33 @@ HTML_TEMPLATE = """
             line-height: 1.5;
             padding: 16px;
         }
-        
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
         }
-        
+
         h1 {
             font-size: 18px;
             font-weight: 600;
             color: #1a1a1a;
             margin-bottom: 16px;
         }
-        
+
         .summary {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 12px;
             margin-bottom: 16px;
         }
-        
+
         .summary-item {
             background: #fff;
             padding: 12px;
             border-radius: 6px;
             border: 1px solid #e5e5e5;
         }
-        
+
         .summary-label {
             font-size: 11px;
             color: #666;
@@ -68,16 +74,16 @@ HTML_TEMPLATE = """
             letter-spacing: 0.5px;
             margin-bottom: 4px;
         }
-        
+
         .summary-value {
             font-size: 20px;
             font-weight: 600;
             color: #1a1a1a;
         }
-        
+
         .summary-value.profit-positive { color: #10b981; }
         .summary-value.profit-negative { color: #ef4444; }
-        
+
         .crypto-section {
             background: #fff;
             border: 1px solid #e5e5e5;
@@ -85,7 +91,7 @@ HTML_TEMPLATE = """
             margin-bottom: 12px;
             overflow: hidden;
         }
-        
+
         .crypto-header {
             display: flex;
             justify-content: space-between;
@@ -94,30 +100,30 @@ HTML_TEMPLATE = """
             border-bottom: 1px solid #e5e5e5;
             background: #fafafa;
         }
-        
+
         .crypto-name {
             font-size: 14px;
             font-weight: 600;
             color: #1a1a1a;
         }
-        
+
         .crypto-profit {
             font-size: 14px;
             font-weight: 600;
             padding: 4px 8px;
             border-radius: 4px;
         }
-        
+
         .profit-positive { color: #10b981; background: #d1fae5; }
         .profit-negative { color: #ef4444; background: #fee2e2; }
         .profit-zero { color: #666; background: #f3f4f6; }
-        
+
         .trades-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
         }
-        
+
         .trades-table th {
             background: #fafafa;
             color: #666;
@@ -129,24 +135,24 @@ HTML_TEMPLATE = """
             text-align: left;
             border-bottom: 1px solid #e5e5e5;
         }
-        
+
         .trades-table td {
             padding: 10px 16px;
             border-bottom: 1px solid #f0f0f0;
             color: #1a1a1a;
         }
-        
+
         .trades-table tbody tr:hover {
             background: #fafafa;
         }
-        
+
         .trades-table tbody tr:last-child td {
             border-bottom: none;
         }
-        
+
         .side-buy { color: #10b981; font-weight: 600; }
         .side-sell { color: #ef4444; font-weight: 600; }
-        
+
         .status-badge {
             padding: 2px 6px;
             border-radius: 3px;
@@ -154,19 +160,19 @@ HTML_TEMPLATE = """
             font-weight: 600;
             text-transform: uppercase;
         }
-        
+
         .status-active { background: #fef3c7; color: #92400e; }
         .status-sold { background: #d1fae5; color: #065f46; }
-        
+
         .trades-table tbody tr.row-latest {
             background: #d1fae5;
             border-left: 3px solid #10b981;
         }
-        
+
         .trades-table tbody tr.row-latest:hover {
             background: #a7f3d0;
         }
-        
+
         .error {
             background: #fff;
             text-align: center;
@@ -174,19 +180,19 @@ HTML_TEMPLATE = """
             border-radius: 6px;
             border: 1px solid #e5e5e5;
         }
-        
+
         .error h3 {
             font-size: 18px;
             margin-bottom: 8px;
             color: #1a1a1a;
         }
-        
+
         .error p {
             color: #666;
             font-size: 14px;
             margin-bottom: 8px;
         }
-        
+
         .error code {
             background: #f5f5f5;
             padding: 4px 8px;
@@ -195,7 +201,7 @@ HTML_TEMPLATE = """
             color: #1a1a1a;
             font-size: 12px;
         }
-        
+
         @media (max-width: 768px) {
             body { padding: 12px; }
             .summary { grid-template-columns: 1fr; }
@@ -207,7 +213,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="container">
         <h1>Trading Records</h1>
-        
+
         <div class="summary">
             <div class="summary-item">
                 <div class="summary-label">Cryptos</div>
@@ -298,6 +304,18 @@ def get_database_connection():
 
 def get_trading_records():
     """Get trading records from PostgreSQL database"""
+    global _cache_data, _cache_timestamp
+
+    # Check cache
+    current_time = time.time()
+    if _cache_data is not None and (current_time - _cache_timestamp) < CACHE_TTL:
+        age = current_time - _cache_timestamp
+        print(f"[Cache Hit] Returning cached data (age: {age:.1f}s)")
+        return _cache_data
+
+    print("[Cache Miss] Querying database...")
+    query_start = time.time()
+
     try:
         conn = get_database_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -315,6 +333,9 @@ def get_trading_records():
         )
 
         rows = cur.fetchall()
+        print(
+            f"[Query Time] Fetched {len(rows)} rows in {time.time() - query_start:.2f}s"
+        )
 
         cryptos = defaultdict(
             lambda: {
@@ -326,6 +347,13 @@ def get_trading_records():
             }
         )
 
+        # Optimize timestamp formatting - define format function once
+        def format_time(ts):
+            if ts:
+                return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
+            return None
+
+        process_start = time.time()
         for row in rows:
             instId = row["instid"]
             buy_price = float(row["price"]) if row["price"] else 0.0
@@ -333,29 +361,22 @@ def get_trading_records():
             size = float(row["size"]) if row["size"] else 0.0
             state = row["state"] if row["state"] else "active"
 
+            # Optimize timestamp conversions - only convert once
+            create_time_ts = row["create_time"]
+            sell_time_ts = row.get("sell_time")
+            buy_time_str = format_time(create_time_ts)
+
             # Display sell time if sold, otherwise buy time
-            if state == "sold out" and row.get("sell_time"):
-                display_time = datetime.fromtimestamp(row["sell_time"] / 1000).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+            if state == "sold out" and sell_time_ts:
+                display_time = format_time(sell_time_ts)
             else:
-                display_time = datetime.fromtimestamp(
-                    row["create_time"] / 1000
-                ).strftime("%Y-%m-%d %H:%M:%S")
+                display_time = buy_time_str
 
             trade = {
                 "ordId": row["ordid"],
                 "time": display_time,
-                "buy_time": datetime.fromtimestamp(row["create_time"] / 1000).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
-                "sell_time": (
-                    datetime.fromtimestamp(row["sell_time"] / 1000).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    if row.get("sell_time")
-                    else None
-                ),
+                "buy_time": buy_time_str,
+                "sell_time": format_time(sell_time_ts),
                 "side": row["side"],
                 "price": buy_price,
                 "sell_price": sell_price,
@@ -392,10 +413,19 @@ def get_trading_records():
             if data["trades"]:
                 data["trades"][0]["is_latest"] = True
 
+        result = dict(cryptos)
+        print(f"[Process Time] Processed data in {time.time() - process_start:.2f}s")
+        print(f"[Total Time] {time.time() - query_start:.2f}s")
+
+        # Update cache
+        global _cache_data, _cache_timestamp
+        _cache_data = result
+        _cache_timestamp = time.time()
+
         cur.close()
         conn.close()
 
-        return dict(cryptos)
+        return result
     except Exception as e:
         print(f"Database error: {e}")
         return {}
