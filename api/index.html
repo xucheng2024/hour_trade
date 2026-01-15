@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Records</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa; color: #212529; padding: 12px; font-size: 13px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        h1 { font-size: 20px; font-weight: 600; }
+        .refresh-info { font-size: 11px; color: #6c757d; }
+        .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+        .summary-item { background: #fff; padding: 10px 12px; border-radius: 8px; border: 1px solid #e9ecef; }
+        .summary-label { font-size: 10px; color: #6c757d; text-transform: uppercase; margin-bottom: 3px; }
+        .summary-value { font-size: 18px; font-weight: 700; }
+        .profit-positive { color: #198754; }
+        .profit-negative { color: #dc3545; }
+        .crypto-section { background: #fff; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 8px; }
+        .crypto-header { display: flex; justify-content: space-between; padding: 10px 12px; background: #f8f9fa; }
+        .crypto-name { font-size: 14px; font-weight: 600; }
+        .crypto-profit { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th { background: #f8f9fa; color: #6c757d; font-weight: 600; font-size: 10px; 
+             text-transform: uppercase; padding: 6px 12px; text-align: left; }
+        td { padding: 8px 12px; border-bottom: 1px solid #f1f3f5; }
+        tr:hover { background: #f8f9fa; }
+        .side-buy { color: #198754; font-weight: 600; }
+        .side-sell { color: #dc3545; font-weight: 600; }
+        .status-badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+        .status-active { background: #fff3cd; color: #856404; }
+        .status-sold { background: #d1e7dd; color: #0f5132; }
+        .loading { text-align: center; padding: 48px; }
+        @media (max-width: 768px) {
+            .summary { grid-template-columns: 1fr; }
+            .crypto-header { flex-direction: column; gap: 6px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Trading Records</h1>
+            <div class="refresh-info" id="refresh-info">Loading...</div>
+        </div>
+        <div class="summary">
+            <div class="summary-item">
+                <div class="summary-label">Cryptos</div>
+                <div class="summary-value" id="total-cryptos">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">Trades</div>
+                <div class="summary-value" id="total-trades">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">Profit</div>
+                <div class="summary-value" id="total-profit">-</div>
+            </div>
+        </div>
+        <div id="crypto-list" class="loading">Loading data...</div>
+    </div>
+
+    <script>
+        let refreshTimer;
+
+        async function loadData() {
+            try {
+                const response = await fetch('/api/orders');
+                const result = await response.json();
+                
+                if (result.success) {
+                    updateUI(result.data);
+                    document.getElementById('refresh-info').textContent = 'Auto-refresh: 30s';
+                }
+            } catch (error) {
+                console.error('Failed to load data:', error);
+                document.getElementById('crypto-list').innerHTML = 
+                    '<div class="loading">Failed to load data. Retrying...</div>';
+            }
+            
+            // Auto refresh every 30 seconds
+            clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(loadData, 30000);
+        }
+
+        function updateUI(data) {
+            // Update summary
+            document.getElementById('total-cryptos').textContent = data.total_cryptos;
+            document.getElementById('total-trades').textContent = data.total_trades;
+            
+            const profitEl = document.getElementById('total-profit');
+            profitEl.textContent = data.total_profit.toFixed(2) + ' USDT';
+            profitEl.className = 'summary-value ' + 
+                (data.total_profit > 0 ? 'profit-positive' : 
+                 data.total_profit < 0 ? 'profit-negative' : '');
+            
+            // Render crypto list
+            const cryptoList = document.getElementById('crypto-list');
+            
+            if (Object.keys(data.cryptos).length === 0) {
+                cryptoList.innerHTML = '<div class="loading">No trading records found</div>';
+                return;
+            }
+            
+            let html = '';
+            for (const [crypto, cryptoData] of Object.entries(data.cryptos)) {
+                const profitClass = cryptoData.profit > 0 ? 'profit-positive' : 
+                                   cryptoData.profit < 0 ? 'profit-negative' : '';
+                
+                html += `
+                    <div class="crypto-section">
+                        <div class="crypto-header">
+                            <div class="crypto-name">${crypto}</div>
+                            <div class="crypto-profit ${profitClass}">
+                                ${cryptoData.profit.toFixed(2)} USDT (${cryptoData.profit_pct.toFixed(2)}%)
+                            </div>
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th><th>Type</th><th>Buy Price</th><th>Sell Price</th>
+                                    <th>Size</th><th>Amount</th><th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+                
+                for (const trade of cryptoData.trades) {
+                    const timeStr = trade.state === 'sold out' && trade.sell_time ? 
+                                   trade.sell_time : trade.buy_time;
+                    const sellPrice = trade.sell_price > 0 ? trade.sell_price.toFixed(2) : '-';
+                    const statusClass = trade.state === 'sold out' ? 'status-sold' : 'status-active';
+                    
+                    html += `
+                        <tr>
+                            <td>${timeStr}</td>
+                            <td><span class="side-${trade.side}">${trade.side.toUpperCase()}</span></td>
+                            <td>${trade.price.toFixed(2)}</td>
+                            <td>${sellPrice}</td>
+                            <td>${trade.size.toFixed(6)}</td>
+                            <td>${trade.amount.toFixed(2)}</td>
+                            <td><span class="status-badge ${statusClass}">${trade.state}</span></td>
+                        </tr>`;
+                }
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>`;
+            }
+            
+            cryptoList.innerHTML = html;
+        }
+
+        // Load data on page load
+        loadData();
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => clearTimeout(refreshTimer));
+    </script>
+</body>
+</html>
