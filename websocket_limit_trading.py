@@ -1936,64 +1936,6 @@ def on_candle_message(ws, msg_string):
                                                         ),
                                                         daemon=True,
                                                     ).start()
-                    
-                    # ✅ ENHANCEMENT: Also check buy signal on unconfirmed candles (for intra-hour triggers)
-                    # This allows buying during the hour if conditions are met
-                    # Note: History is only updated on confirmed candles to maintain 1H time scale
-                    # But we can check signals on any candle update using current price
-                    if momentum_strategy is not None and instId in crypto_limits:
-                        # Use current close price from unconfirmed candle for signal check
-                        # (but don't update history - that only happens on confirm)
-                        current_close_price = (
-                            float(candle_data[4])
-                            if len(candle_data) > 4
-                            else open_price
-                        )
-                        
-                        # Check buy signal with current price (intra-hour trigger)
-                        # This allows buying during the hour, not just at close
-                        should_buy, buy_pct = momentum_strategy.check_buy_signal(
-                            instId, current_close_price
-                        )
-                        if should_buy and buy_pct:
-                            with lock:
-                                # Check if already processing or has active orders
-                                if instId in momentum_pending_buys:
-                                    logger.debug(
-                                        f"⏭️ {instId} Momentum buy already pending (intra-hour), skipping"
-                                    )
-                                elif instId in momentum_active_orders:
-                                    logger.debug(
-                                        f"⏭️ {instId} Momentum order already active (intra-hour), skipping"
-                                    )
-                                else:
-                                    # Check if already at max position
-                                    position = momentum_strategy.get_position_info(instId)
-                                    if (
-                                        position
-                                        and position.get("total_buy_pct", 0.0) >= 0.70
-                                    ):
-                                        logger.debug(
-                                            f"⏸️ {instId} Already at max position (intra-hour): "
-                                            f"{position.get('total_buy_pct', 0.0):.1%}"
-                                        )
-                                    else:
-                                        momentum_pending_buys[instId] = True
-
-                                        logger.warning(
-                                            f"🎯 MOMENTUM BUY SIGNAL (intra-hour): {instId}, "
-                                            f"current_price={current_close_price:.6f}, buy_pct={buy_pct:.1%}"
-                                        )
-                                        # Trigger buy in separate thread
-                                        threading.Thread(
-                                            target=process_momentum_buy_signal,
-                                            args=(
-                                                instId,
-                                                current_close_price,
-                                                buy_pct,
-                                            ),
-                                            daemon=True,
-                                        ).start()
 
                         # Process sell signals for confirmed candles
                         # ✅ FIX: Check with lock to prevent race condition
@@ -2053,6 +1995,65 @@ def on_candle_message(ws, msg_string):
                                         args=(instId,),
                                         daemon=True,
                                     ).start()
+                    
+                    # ✅ ENHANCEMENT: Check buy signal on unconfirmed candles (for intra-hour triggers)
+                    # This allows buying during the hour if conditions are met
+                    # Note: History is only updated on confirmed candles to maintain 1H time scale
+                    # But we can check signals on any candle update using current price
+                    # This logic is OUTSIDE the confirm block to enable intra-hour triggers
+                    if momentum_strategy is not None and instId in crypto_limits:
+                        # Use current close price from unconfirmed candle for signal check
+                        # (but don't update history - that only happens on confirm)
+                        current_close_price = (
+                            float(candle_data[4])
+                            if len(candle_data) > 4
+                            else open_price
+                        )
+                        
+                        # Check buy signal with current price (intra-hour trigger)
+                        # This allows buying during the hour, not just at close
+                        should_buy, buy_pct = momentum_strategy.check_buy_signal(
+                            instId, current_close_price
+                        )
+                        if should_buy and buy_pct:
+                            with lock:
+                                # Check if already processing or has active orders
+                                if instId in momentum_pending_buys:
+                                    logger.debug(
+                                        f"⏭️ {instId} Momentum buy already pending (intra-hour), skipping"
+                                    )
+                                elif instId in momentum_active_orders:
+                                    logger.debug(
+                                        f"⏭️ {instId} Momentum order already active (intra-hour), skipping"
+                                    )
+                                else:
+                                    # Check if already at max position
+                                    position = momentum_strategy.get_position_info(instId)
+                                    if (
+                                        position
+                                        and position.get("total_buy_pct", 0.0) >= 0.70
+                                    ):
+                                        logger.debug(
+                                            f"⏸️ {instId} Already at max position (intra-hour): "
+                                            f"{position.get('total_buy_pct', 0.0):.1%}"
+                                        )
+                                    else:
+                                        momentum_pending_buys[instId] = True
+
+                                        logger.warning(
+                                            f"🎯 MOMENTUM BUY SIGNAL (intra-hour): {instId}, "
+                                            f"current_price={current_close_price:.6f}, buy_pct={buy_pct:.1%}"
+                                        )
+                                        # Trigger buy in separate thread
+                                        threading.Thread(
+                                            target=process_momentum_buy_signal,
+                                            args=(
+                                                instId,
+                                                current_close_price,
+                                                buy_pct,
+                                            ),
+                                            daemon=True,
+                                        ).start()
     except Exception as e:
         logger.error(f"Candle message error: {msg_string}, {e}")
 
