@@ -205,6 +205,11 @@ ticker_ws: Optional[websocket.WebSocketApp] = None
 candle_ws: Optional[websocket.WebSocketApp] = None
 ws_lock = threading.Lock()
 
+# ✅ NEW: Track last 1H candle receive time for monitoring
+# Format: instId -> last_candle_timestamp
+last_1h_candle_time: Dict[str, datetime] = {}
+CANDLE_TIMEOUT_MINUTES = 90  # Alert if no candle received for 90 minutes
+
 # Initialize TradeAPI instance (singleton pattern)
 trade_api: Optional[TradeAPI] = None
 market_api: Optional[MarketAPI] = None
@@ -1819,6 +1824,12 @@ def on_candle_message(ws, msg_string):
                     # OKX sends multiple unconfirmed updates during the hour, which would
                     # break the 1H unified time scale (M=10 would not represent 10 hours)
                     if confirm == "1":
+                        # ✅ NEW: Track last confirmed candle time for monitoring
+                        now = datetime.now()
+                        with lock:
+                            last_1h_candle_time[instId] = now
+                        with lock:
+                            last_1h_candle_time[instId] = now
                         # Update momentum strategy with confirmed candle data
                         # (only confirmed candles ensure true 1H time scale)
                         if momentum_strategy is not None and instId in crypto_limits:
@@ -1968,42 +1979,77 @@ def on_candle_message(ws, msg_string):
 
 
 def process_sell_signal(instId: str):
-    """Process sell signal at next hour close"""
+    """Process sell signal at next hour close (idempotent)
+    
+    Features:
+    - Idempotent: checks DB state first, returns early if already sold
+    - Strict dedup: sets sell_triggered before attempt, resets on failure
+    - Self-healing: works even if order not in active_orders (recovered from DB)
+    """
     try:
+        # ✅ ENHANCED: Get ordId from memory or DB
+        ordId = None
         with lock:
-            if instId not in active_orders:
-                logger.info(f"{STRATEGY_NAME} No active order for {instId}")
-                return
-            order_info = active_orders[instId].copy()
-            ordId = order_info["ordId"]
+            if instId in active_orders:
+                order_info = active_orders[instId].copy()
+                ordId = order_info.get("ordId")
+            else:
+                logger.debug(
+                    f"{STRATEGY_NAME} Order not in active_orders: {instId}, "
+                    f"will try to recover from DB"
+                )
 
         # Get trade API instance
         api = get_trade_api()
 
-        # ✅ FIX: Check order state and prevent duplicate sells
+        # ✅ ENHANCED: Check order state and prevent duplicate sells (idempotent)
         conn = get_db_connection()
         try:
             cur = conn.cursor()
             try:
-                # Query state and size together to validate order
-                cur.execute(
-                    "SELECT state, size FROM orders WHERE instId = %s "
-                    "AND ordId = %s AND flag = %s",
-                    (instId, ordId, STRATEGY_NAME),
-                )
-                row = cur.fetchone()
+                # If ordId not in memory, try to find it from DB
+                if not ordId:
+                    cur.execute(
+                        """
+                        SELECT ordId, state, size FROM orders
+                        WHERE instId = %s AND flag = %s
+                          AND state IN ('filled', 'partially_filled')
+                          AND (sell_price IS NULL OR sell_price = '')
+                        ORDER BY create_time DESC
+                        LIMIT 1
+                        """,
+                        (instId, STRATEGY_NAME),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        ordId = row[0]
+                        db_state = row[1] if row[1] else ""
+                        db_size = row[2] if row[2] else "0"
+                    else:
+                        logger.debug(
+                            f"{STRATEGY_NAME} No sellable order found in DB: {instId}"
+                        )
+                        return
+                else:
+                    # Query state and size together to validate order
+                    cur.execute(
+                        "SELECT state, size FROM orders WHERE instId = %s "
+                        "AND ordId = %s AND flag = %s",
+                        (instId, ordId, STRATEGY_NAME),
+                    )
+                    row = cur.fetchone()
 
-                if not row:
-                    logger.error(f"{STRATEGY_NAME} Order not found: {instId}, {ordId}")
-                    with lock:
-                        if instId in active_orders:
-                            del active_orders[instId]
-                    return
+                    if not row:
+                        logger.error(f"{STRATEGY_NAME} Order not found: {instId}, {ordId}")
+                        with lock:
+                            if instId in active_orders:
+                                del active_orders[instId]
+                        return
 
-                db_state = row[0] if row[0] else ""
-                db_size = row[1] if row[1] else "0"
+                    db_state = row[0] if row[0] else ""
+                    db_size = row[1] if row[1] else "0"
 
-                # Prevent duplicate sells - check if already sold
+                # ✅ IDEMPOTENT: Prevent duplicate sells - check if already sold
                 if db_state == "sold out":
                     logger.warning(f"{STRATEGY_NAME} Already sold: {instId}, {ordId}")
                     with lock:
@@ -2104,14 +2150,50 @@ def process_sell_signal(instId: str):
 
 
 def process_momentum_sell_signal(instId: str):
-    """Process momentum strategy sell signal at next hour close"""
+    """Process momentum strategy sell signal at next hour close (idempotent)
+    
+    Features:
+    - Idempotent: checks DB state first, returns early if already sold
+    - Self-healing: works even if orders not in momentum_active_orders
+    """
     try:
+        # ✅ ENHANCED: Get ordIds from memory or DB
+        ordIds = []
         with lock:
-            if instId not in momentum_active_orders:
-                logger.info(f"{MOMENTUM_STRATEGY_NAME} No active order for {instId}")
-                return
-            order_info = momentum_active_orders[instId].copy()
-            ordIds = order_info.get("ordIds", [])
+            if instId in momentum_active_orders:
+                order_info = momentum_active_orders[instId].copy()
+                ordIds = order_info.get("ordIds", [])
+
+        # If not in memory, try to recover from DB
+        if not ordIds:
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT ordId FROM orders
+                    WHERE instId = %s AND flag = %s
+                      AND state IN ('filled', 'partially_filled')
+                      AND (sell_price IS NULL OR sell_price = '')
+                    ORDER BY create_time DESC
+                    """,
+                    (instId, MOMENTUM_STRATEGY_NAME),
+                )
+                rows = cur.fetchall()
+                if rows:
+                    ordIds = [row[0] for row in rows]
+                    logger.warning(
+                        f"🔄 RECOVER: Found momentum orders in DB for {instId}, "
+                        f"count={len(ordIds)}"
+                    )
+                else:
+                    logger.debug(
+                        f"{MOMENTUM_STRATEGY_NAME} No sellable orders found: {instId}"
+                    )
+                    return
+                cur.close()
+            finally:
+                conn.close()
 
         if not ordIds:
             logger.warning(f"{MOMENTUM_STRATEGY_NAME} No order IDs for {instId}")
@@ -2706,86 +2788,243 @@ def sync_orders_from_database():
         logger.error(f"Error in sync_orders_from_database: {e}")
 
 
+def recover_orders_from_database(now: datetime):
+    """Reverse validation: find filled orders in DB that should be sold
+    
+    This handles cases where:
+    - Orders are filled but not in active_orders (process restart)
+    - WS confirm message was missed
+    - Memory state was lost
+    
+    Args:
+        now: Current datetime for time comparison
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Find original strategy orders: filled/partially_filled but not sold
+        cur.execute(
+            """
+            SELECT instId, ordId, create_time, state, size
+            FROM orders
+            WHERE flag = %s
+              AND state IN ('filled', 'partially_filled')
+              AND (sell_price IS NULL OR sell_price = '')
+              AND create_time > (EXTRACT(EPOCH FROM NOW()) - 86400) * 1000
+            ORDER BY create_time DESC
+            LIMIT 100
+            """,
+            (STRATEGY_NAME,),
+        )
+        rows = cur.fetchall()
+
+        for row in rows:
+            instId = row[0]
+            ordId = row[1]
+            create_time_ms = row[2]
+            db_state = row[3]
+            db_size = row[4]
+
+            # Check if already in active_orders
+            with lock:
+                if instId in active_orders:
+                    # Already tracked, skip (will be handled by timeout check)
+                    continue
+
+            # Calculate next_hour_close_time from create_time
+            create_time = datetime.fromtimestamp(create_time_ms / 1000)
+            next_hour = create_time.replace(
+                minute=0, second=0, microsecond=0
+            ) + timedelta(hours=1)
+
+            # Only recover if past sell time
+            if now >= next_hour:
+                logger.warning(
+                    f"🔄 RECOVER: Found filled order not in memory: {instId}, "
+                    f"ordId={ordId}, state={db_state}, recovering to active_orders"
+                )
+
+                # Restore to active_orders
+                with lock:
+                    active_orders[instId] = {
+                        "ordId": ordId,
+                        "next_hour_close_time": next_hour,
+                        "sell_triggered": False,
+                        "fill_time": create_time,
+                        "last_sell_attempt_time": None,
+                    }
+
+                # Trigger sell immediately
+                logger.warning(
+                    f"⏰ RECOVER SELL: {instId} (original), "
+                    f"triggering sell for recovered order"
+                )
+                threading.Thread(
+                    target=process_sell_signal, args=(instId,), daemon=True
+                ).start()
+
+        # Find momentum strategy orders
+        cur.execute(
+            """
+            SELECT instId, ordId, create_time, state, size
+            FROM orders
+            WHERE flag = %s
+              AND state IN ('filled', 'partially_filled')
+              AND (sell_price IS NULL OR sell_price = '')
+              AND create_time > (EXTRACT(EPOCH FROM NOW()) - 86400) * 1000
+            ORDER BY create_time DESC
+            LIMIT 100
+            """,
+            (MOMENTUM_STRATEGY_NAME,),
+        )
+        rows = cur.fetchall()
+
+        # Group by instId for momentum (can have multiple orders)
+        momentum_orders_by_inst = {}
+        for row in rows:
+            instId = row[0]
+            ordId = row[1]
+            create_time_ms = row[2]
+            db_state = row[3]
+            db_size = row[4]
+
+            if instId not in momentum_orders_by_inst:
+                momentum_orders_by_inst[instId] = []
+
+            momentum_orders_by_inst[instId].append({
+                "ordId": ordId,
+                "create_time": datetime.fromtimestamp(create_time_ms / 1000),
+                "state": db_state,
+                "size": db_size,
+            })
+
+        for instId, orders in momentum_orders_by_inst.items():
+            with lock:
+                if instId in momentum_active_orders:
+                    # Already tracked, skip
+                    continue
+
+            # Use earliest create_time to calculate next_hour_close_time
+            earliest_time = min(o["create_time"] for o in orders)
+            next_hour = earliest_time.replace(
+                minute=0, second=0, microsecond=0
+            ) + timedelta(hours=1)
+
+            if now >= next_hour:
+                logger.warning(
+                    f"🔄 RECOVER: Found momentum orders not in memory: {instId}, "
+                    f"count={len(orders)}, recovering to momentum_active_orders"
+                )
+
+                # Restore to momentum_active_orders
+                with lock:
+                    momentum_active_orders[instId] = {
+                        "ordIds": [o["ordId"] for o in orders],
+                        "buy_prices": [],  # Will be filled from DB if needed
+                        "buy_sizes": [float(o["size"]) for o in orders],
+                        "buy_times": [o["create_time"] for o in orders],
+                        "next_hour_close_time": next_hour,
+                        "sell_triggered": False,
+                        "last_sell_attempt_time": None,
+                    }
+
+                # Trigger sell immediately
+                logger.warning(
+                    f"⏰ RECOVER SELL: {instId} (momentum), "
+                    f"triggering sell for recovered orders"
+                )
+                threading.Thread(
+                    target=process_momentum_sell_signal, args=(instId,), daemon=True
+                ).start()
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error in recover_orders_from_database: {e}")
+
+
+def monitor_websocket_health(now: datetime):
+    """Monitor WebSocket health: alert if 1H candles not received for too long
+    
+    Args:
+        now: Current datetime for time comparison
+    """
+    try:
+        with lock:
+            stale_cryptos = []
+            for instId, last_candle_time in list(last_1h_candle_time.items()):
+                if instId not in crypto_limits:
+                    continue
+                    
+                time_since_last = (now - last_candle_time).total_seconds() / 60
+                if time_since_last > CANDLE_TIMEOUT_MINUTES:
+                    stale_cryptos.append((instId, time_since_last))
+            
+            # Also check cryptos that should have candles but don't
+            for instId in crypto_limits.keys():
+                if instId not in last_1h_candle_time:
+                    # Never received a candle, but that's OK on startup
+                    # Only alert if it's been running for a while
+                    pass
+        
+        if stale_cryptos:
+            for instId, minutes in stale_cryptos:
+                logger.error(
+                    f"⚠️ WS HEALTH: {instId} no 1H candle for {minutes:.1f} minutes "
+                    f"(>{CANDLE_TIMEOUT_MINUTES}min threshold). "
+                    f"Relying on timeout sell mechanism."
+                )
+    except Exception as e:
+        logger.debug(f"Error in monitor_websocket_health: {e}")
+
+
 def check_sell_timeout():
-    """Background thread to check and trigger sells based on next_hour_close_time
-    This provides a fallback if K-line confirm event is missed
-    Also syncs with database periodically to ensure memory state matches database
+    """Unified sell scheduler: robust fallback mechanism
+    
+    Features:
+    1. Scans every 60 seconds for orders past sell time
+    2. Reverse validation from DB: finds filled orders not yet sold
+    3. Self-healing: recovers from WS packet loss, process restart, etc.
+    4. Idempotent: prevents duplicate sells via DB state check
     """
     sync_counter = 0
     while True:
         try:
-            time.sleep(30)  # Check every 30 seconds
+            time.sleep(60)  # ✅ FIX: Check every 60 seconds (was 30)
             now = datetime.now()
 
-            # ✅ FIX: Sync with database every 10 cycles (5 minutes)
+            # ✅ FIX: Sync with database every cycle (1 minute)
             # This ensures memory state matches database state
             sync_counter += 1
-            if sync_counter >= 10:
-                sync_counter = 0
-                sync_orders_from_database()
+            sync_orders_from_database()
+            
+            # ✅ NEW: Reverse validation from DB - find filled orders not yet sold
+            recover_orders_from_database(now)
 
-            # Check original strategy orders
+            # ✅ ENHANCED: Check all orders (memory + DB) for sell triggers
+            orders_to_sell = []
+            
+            # Check original strategy orders from memory
             with lock:
-                orders_to_sell = []
                 for instId, order_info in list(active_orders.items()):
                     next_hour_close = order_info.get("next_hour_close_time")
                     if next_hour_close and now >= next_hour_close:
-                        # Past sell time, trigger sell
-                        # ✅ OPTIMIZE: Add cooldown window to prevent frequent triggers when order state is ""
-                        last_sell_attempt = order_info.get("last_sell_attempt_time")
-                        fill_time = order_info.get("fill_time")
-
-                        # If order is not filled yet (no fill_time), add cooldown window
-                        # Wait at least 60 seconds between sell attempts for pending orders
-                        if fill_time is None and last_sell_attempt:
-                            time_since_last_attempt = (
-                                now - last_sell_attempt
-                            ).total_seconds()
-                            if time_since_last_attempt < 60:
-                                logger.debug(
-                                    f"⏳ Cooldown: {instId} sell attempt too soon "
-                                    f"({time_since_last_attempt:.0f}s < 60s), skipping"
-                                )
-                                continue
-
-                        # ✅ FIX: Don't set sell_triggered here - set it AFTER successful sell
-                        # This allows retry if sell fails
+                        # Past sell time, check if already triggered
                         if not order_info.get("sell_triggered", False):
                             orders_to_sell.append((instId, "original"))
-                            # Mark as triggered to prevent duplicate threads, but will reset if sell fails
+                            # ✅ STRICT DEDUP: Set sell_triggered BEFORE attempting sell
+                            # Will be reset if sell fails
                             order_info["sell_triggered"] = True
-                            # Record attempt time for cooldown
                             order_info["last_sell_attempt_time"] = now
 
-                # Check momentum strategy orders
+                # Check momentum strategy orders from memory
                 for instId, order_info in list(momentum_active_orders.items()):
                     next_hour_close = order_info.get("next_hour_close_time")
                     if next_hour_close and now >= next_hour_close:
-                        # Past sell time, trigger sell
-                        # ✅ OPTIMIZE: Add cooldown window for momentum orders
-                        last_sell_attempt = order_info.get("last_sell_attempt_time")
-                        # For momentum, check if any order has fill_time
-                        # If all orders are pending, apply cooldown
-                        ordIds = order_info.get("ordIds", [])
-                        if ordIds:
-                            # Check if any order has been filled (would have fill_time in active_orders)
-                            # For simplicity, apply cooldown if last attempt was recent
-                            if last_sell_attempt:
-                                time_since_last_attempt = (
-                                    now - last_sell_attempt
-                                ).total_seconds()
-                                if time_since_last_attempt < 60:
-                                    logger.debug(
-                                        f"⏳ Cooldown: {instId} momentum sell attempt too soon "
-                                        f"({time_since_last_attempt:.0f}s < 60s), skipping"
-                                    )
-                                    continue
-
-                        # ✅ FIX: Don't set sell_triggered here - set it AFTER successful sell
                         if not order_info.get("sell_triggered", False):
                             orders_to_sell.append((instId, "momentum"))
                             order_info["sell_triggered"] = True
-                            # Record attempt time for cooldown
                             order_info["last_sell_attempt_time"] = now
 
             # Trigger sells outside of lock
@@ -2861,10 +3100,13 @@ def main():
 
     logger.warning("WebSocket connections started, waiting for messages...")
 
-    # ✅ FIX: Sync with database on startup to ensure memory state matches database
-    logger.warning("🔄 Syncing with database on startup...")
+    # ✅ ENHANCED: Recover orders from database on startup
+    # This handles process restart - restores active_orders from DB
+    logger.warning("🔄 Recovering orders from database on startup...")
+    now = datetime.now()
+    recover_orders_from_database(now)
     sync_orders_from_database()
-    logger.warning("✅ Database sync completed")
+    logger.warning("✅ Database recovery and sync completed")
 
     # ✅ FIX: Start background thread to check sell timeouts (fallback mechanism)
     timeout_check_thread = threading.Thread(
