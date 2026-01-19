@@ -1468,10 +1468,18 @@ def check_and_cancel_unfilled_order_after_timeout(
                                     )
                             elif strategy_name == MOMENTUM_STRATEGY_NAME:
                                 if instId in momentum_active_orders:
-                                    # Update next_hour_close_time based on fill time
-                                    momentum_active_orders[instId][
-                                        "next_hour_close_time"
-                                    ] = next_hour
+                                    # ✅ FIX: Update next_hour_close_time for this specific order
+                                    if ordId in momentum_active_orders[instId].get("ordIds", []):
+                                        idx = momentum_active_orders[instId]["ordIds"].index(ordId)
+                                        if "next_hour_close_times" not in momentum_active_orders[instId]:
+                                            momentum_active_orders[instId]["next_hour_close_times"] = []
+                                        if idx < len(momentum_active_orders[instId]["next_hour_close_times"]):
+                                            momentum_active_orders[instId]["next_hour_close_times"][idx] = next_hour
+                                        else:
+                                            # Extend list if needed
+                                            while len(momentum_active_orders[instId]["next_hour_close_times"]) <= idx:
+                                                momentum_active_orders[instId]["next_hour_close_times"].append(next_hour)
+                                            momentum_active_orders[instId]["next_hour_close_times"][idx] = next_hour
                                     logger.warning(
                                         f"{strategy_name} Updated momentum_active_order for fill: {instId}, "
                                         f"ordId={ordId}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
@@ -1731,7 +1739,7 @@ def process_momentum_buy_signal(instId: str, buy_price: float, buy_pct: float):
                             "buy_prices": [],
                             "buy_sizes": [],
                             "buy_times": [],
-                            "next_hour_close_time": next_hour,
+                            "next_hour_close_times": [],  # ✅ FIX: Per-order sell times
                             "sell_triggered": False,
                         }
 
@@ -1741,6 +1749,7 @@ def process_momentum_buy_signal(instId: str, buy_price: float, buy_pct: float):
                     size = total_amount / buy_price if buy_price > 0 else 0
                     momentum_active_orders[instId]["buy_sizes"].append(size)
                     momentum_active_orders[instId]["buy_times"].append(now)
+                    momentum_active_orders[instId]["next_hour_close_times"].append(next_hour)  # ✅ FIX: Store per-order
 
                     logger.warning(
                         f"📊 MOMENTUM ACTIVE ORDER: {instId}, ordId={ordId}, "
@@ -2243,12 +2252,29 @@ def process_momentum_sell_signal(instId: str):
     - Self-healing: works even if orders not in momentum_active_orders
     """
     try:
-        # ✅ ENHANCED: Get ordIds from memory or DB
+        # ✅ ENHANCED: Get ordIds from memory or DB, filter by sell time
+        now = datetime.now()
         ordIds = []
         with lock:
             if instId in momentum_active_orders:
                 order_info = momentum_active_orders[instId].copy()
-                ordIds = order_info.get("ordIds", [])
+                all_ordIds = order_info.get("ordIds", [])
+                next_hour_close_times = order_info.get("next_hour_close_times", [])
+                # ✅ FIX: Only sell orders that have reached their sell time
+                # This prevents early selling of later-filled orders
+                for idx, ordId in enumerate(all_ordIds):
+                    if idx < len(next_hour_close_times):
+                        order_sell_time = next_hour_close_times[idx]
+                        if now >= order_sell_time:
+                            ordIds.append(ordId)
+                        else:
+                            logger.debug(
+                                f"⏸️ {MOMENTUM_STRATEGY_NAME} Order {ordId} for {instId} "
+                                f"not ready to sell yet (sell_time={order_sell_time.strftime('%Y-%m-%d %H:%M:%S')})"
+                            )
+                    else:
+                        # Fallback: if no sell time stored, assume ready to sell
+                        ordIds.append(ordId)
 
         # If not in memory, try to recover from DB
         if not ordIds:
@@ -3125,25 +3151,27 @@ def recover_orders_from_database(now: datetime):
                         f"recovering to momentum_active_orders"
                     )
 
-                    # Restore to momentum_active_orders (use instId + hour as key to avoid conflicts)
-                    # But since momentum_active_orders uses instId as key, we need to merge if exists
+                    # ✅ FIX: Restore to momentum_active_orders with per-order sell times
                     with lock:
                         if instId in momentum_active_orders:
-                            # Merge with existing orders
+                            # Merge with existing orders, preserving per-order sell times
                             existing = momentum_active_orders[instId]
+                            if "next_hour_close_times" not in existing:
+                                # Migrate old format to new format
+                                old_time = existing.get("next_hour_close_time", next_hour)
+                                existing["next_hour_close_times"] = [old_time] * len(existing.get("ordIds", []))
+                            
                             existing["ordIds"].extend([o["ordId"] for o in hour_orders])
                             existing["buy_sizes"].extend([float(o["size"]) for o in hour_orders])
                             existing["buy_times"].extend([o["fill_time"] for o in hour_orders])
-                            # Use earliest next_hour_close_time
-                            if next_hour < existing["next_hour_close_time"]:
-                                existing["next_hour_close_time"] = next_hour
+                            existing["next_hour_close_times"].extend([o["next_hour_close_time"] for o in hour_orders])
                         else:
                             momentum_active_orders[instId] = {
                                 "ordIds": [o["ordId"] for o in hour_orders],
                                 "buy_prices": [],  # Will be filled from DB if needed
                                 "buy_sizes": [float(o["size"]) for o in hour_orders],
                                 "buy_times": [o["fill_time"] for o in hour_orders],
-                                "next_hour_close_time": next_hour,
+                                "next_hour_close_times": [o["next_hour_close_time"] for o in hour_orders],  # ✅ FIX: Per-order
                                 "sell_triggered": False,
                                 "last_sell_attempt_time": None,
                             }
@@ -3242,13 +3270,27 @@ def check_sell_timeout():
                             order_info["last_sell_attempt_time"] = now
 
                 # Check momentum strategy orders from memory
+                # ✅ FIX: Check each order's sell time individually
                 for instId, order_info in list(momentum_active_orders.items()):
-                    next_hour_close = order_info.get("next_hour_close_time")
-                    if next_hour_close and now >= next_hour_close:
-                        if not order_info.get("sell_triggered", False):
-                            orders_to_sell.append((instId, "momentum"))
-                            order_info["sell_triggered"] = True
-                            order_info["last_sell_attempt_time"] = now
+                    ordIds = order_info.get("ordIds", [])
+                    next_hour_close_times = order_info.get("next_hour_close_times", [])
+                    # Check if any order is ready to sell
+                    has_ready_orders = False
+                    for idx, ordId in enumerate(ordIds):
+                        if idx < len(next_hour_close_times):
+                            order_sell_time = next_hour_close_times[idx]
+                            if now >= order_sell_time:
+                                has_ready_orders = True
+                                break
+                        else:
+                            # Fallback: if no sell time, assume ready
+                            has_ready_orders = True
+                            break
+                    
+                    if has_ready_orders and not order_info.get("sell_triggered", False):
+                        orders_to_sell.append((instId, "momentum"))
+                        order_info["sell_triggered"] = True
+                        order_info["last_sell_attempt_time"] = now
 
             # Trigger sells outside of lock
             for instId, strategy_type in orders_to_sell:
