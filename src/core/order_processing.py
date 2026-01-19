@@ -271,11 +271,20 @@ def sell_market_order(
         sell_price_str = (
             format_number_func(sell_price, instId) if sell_price > 0 else ""
         )
+        # Update sell_time to actual sell time (current time)
+        actual_sell_time = int(datetime.now().timestamp() * 1000)
 
         cur.execute(
-            "UPDATE orders SET state = %s, sell_price = %s "
+            "UPDATE orders SET state = %s, sell_price = %s, sell_time = %s "
             "WHERE instId = %s AND ordId = %s AND flag = %s",
-            ("sold out", sell_price_str, instId, ordId, strategy_name),
+            (
+                "sold out",
+                sell_price_str,
+                actual_sell_time,
+                instId,
+                ordId,
+                strategy_name,
+            ),
         )
         rows_updated = cur.rowcount
         conn.commit()
@@ -560,11 +569,20 @@ def sell_momentum_order(
         sell_price_str = (
             format_number_func(sell_price, instId) if sell_price > 0 else ""
         )
+        # Update sell_time to actual sell time (current time)
+        actual_sell_time = int(datetime.now().timestamp() * 1000)
 
         cur.execute(
-            "UPDATE orders SET state = %s, sell_price = %s "
+            "UPDATE orders SET state = %s, sell_price = %s, sell_time = %s "
             "WHERE instId = %s AND ordId = %s AND flag = %s",
-            ("sold out", sell_price_str, instId, ordId, strategy_name),
+            (
+                "sold out",
+                sell_price_str,
+                actual_sell_time,
+                instId,
+                ordId,
+                strategy_name,
+            ),
         )
         rows_updated = cur.rowcount
         conn.commit()
