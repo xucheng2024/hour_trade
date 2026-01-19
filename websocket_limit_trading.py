@@ -1099,7 +1099,10 @@ def main():
         is_railway or os.getenv("ENABLE_HEALTH_CHECK_SERVER", "false").lower() == "true"
     )
     if enable_health_check:
-        health_check_port = int(os.getenv("HEALTH_CHECK_PORT", "8080"))
+        # Railway provides PORT environment variable - use it if available
+        # Otherwise fall back to HEALTH_CHECK_PORT or default 8080
+        port = os.getenv("PORT") or os.getenv("HEALTH_CHECK_PORT", "8080")
+        health_check_port = int(port)
         try:
             health_server = HTTPServer(
                 ("0.0.0.0", health_check_port), HealthCheckHandler
@@ -1111,7 +1114,8 @@ def main():
             )
             health_thread.start()
             logger.warning(
-                f"✅ Health check server started on port {health_check_port}"
+                f"✅ Health check server started on port {health_check_port} "
+                f"(PORT={os.getenv('PORT', 'not set')})"
             )
         except Exception as e:
             logger.warning(f"⚠️ Failed to start health check server: {e}")
