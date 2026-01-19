@@ -337,6 +337,7 @@ def check_blacklist_before_buy(instId, auto_remove=True):
 def load_crypto_limits():
     """Load crypto limits from hour_limit table in database"""
     global crypto_limits
+    conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -344,7 +345,6 @@ def load_crypto_limits():
         # Load limits from hour_limit table
         cur.execute("SELECT inst_id, limit_percent FROM hour_limit")
         rows = cur.fetchall()
-
         crypto_limits = {row[0]: float(row[1]) for row in rows}
 
         cur.close()
@@ -354,12 +354,29 @@ def load_crypto_limits():
         return True
     except Exception as e:
         logger.error(f"Failed to load crypto limits from database: {e}")
+        if conn:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
         return False
 
 
-def calculate_limit_price(reference_price: float, limit_percent: float) -> float:
-    """Calculate limit buy price based on reference price and limit_percent"""
-    return reference_price * (limit_percent / 100.0)
+def calculate_limit_price(
+    reference_price: float, base_limit_percent: float, instId: str
+) -> float:
+    """Calculate limit buy price
+
+    Args:
+        reference_price: Current hour's open price
+        base_limit_percent: Base limit percentage from database
+        instId: Instrument ID (not used, kept for compatibility)
+
+    Returns:
+        Limit price
+    """
+    return reference_price * (base_limit_percent / 100.0)
 
 
 def fetch_current_hour_open_price(instId: str) -> Optional[float]:
@@ -804,9 +821,10 @@ def on_ticker_message(ws, msg_string):
                                 )
                                 continue
 
-                        # Calculate limit price based on reference price
-                        # (current hour's open)
-                        limit_price = calculate_limit_price(ref_price, limit_percent)
+                        # Calculate limit price
+                        limit_price = calculate_limit_price(
+                            ref_price, limit_percent, instId
+                        )
 
                         # Check if current price has dropped to or below limit price
                         if last_price <= limit_price:
@@ -952,7 +970,8 @@ def check_and_cancel_unfilled_order_after_timeout(
                             conn.close()
             except Exception as e:
                 logger.error(
-                    f"{STRATEGY_NAME} Error checking order status after timeout {instId}, {ordId}: {e}"
+                    f"{STRATEGY_NAME} Error checking order status after timeout "
+                    f"{instId}, {ordId}: {e}"
                 )
     except Exception as e:
         logger.error(f"{STRATEGY_NAME} Error in timeout check {instId}, {ordId}: {e}")
@@ -1048,8 +1067,8 @@ def on_candle_message(ws, msg_string):
                 instId = arg.get("instId")
                 candle_data = data[
                     0
-                ]  # Latest candle [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
-                # candle_data is a list: [timestamp, open, high, low, close, volume, ...]
+                ]  # Latest candle [ts, o, h, l, c, vol, volCcy, ...]
+                # candle_data: [timestamp, open, high, low, close, volume, ...]
                 if isinstance(candle_data, list) and len(candle_data) >= 9:
                     candle_ts = int(candle_data[0]) / 1000  # Convert ms to seconds
                     candle_hour = datetime.fromtimestamp(candle_ts).replace(
@@ -1058,12 +1077,16 @@ def on_candle_message(ws, msg_string):
                     open_price = float(candle_data[1])  # Open price at index 1
                     confirm = str(candle_data[8])  # confirm is at index 8
 
-                    # ✅ FIX: Update reference price from WebSocket candle data (more accurate and real-time)
-                    # When a new hour starts, WebSocket sends the new hour's candle with open price
-                    # This is better than calling REST API which may have timing issues
+                    # ✅ FIX: Update reference price from WebSocket candle data
+                    # (more accurate and real-time)
+                    # When a new hour starts, WebSocket sends the new hour's
+                    # candle with open price
+                    # This is better than calling REST API which may have
+                    # timing issues
                     if instId in crypto_limits:
                         with lock:
-                            # Update reference price if this is the current hour's candle
+                            # Update reference price if this is the current
+                            # hour's candle
                             current_hour = datetime.now().replace(
                                 minute=0, second=0, microsecond=0
                             )
@@ -1071,25 +1094,30 @@ def on_candle_message(ws, msg_string):
                                 abs((candle_hour - current_hour).total_seconds())
                                 <= 3600
                             ):
-                                # This is current hour or very recent hour's candle
+                                # This is current hour or very recent hour's
+                                # candle
                                 reference_prices[instId] = open_price
                                 logger.info(
-                                    f"📊 {instId} updated reference price from WebSocket: ${open_price:.6f} "
+                                    f"📊 {instId} updated reference price from "
+                                    f"WebSocket: ${open_price:.6f} "
                                     f"(hour={candle_hour.strftime('%H:00')})"
                                 )
 
                     # 'confirm' = '1' means candle is confirmed (closed)
                     if confirm == "1":
-                        # ✅ FIX: Check with lock to prevent race condition and duplicate triggers
+                        # ✅ FIX: Check with lock to prevent race condition
+                        # and duplicate triggers
                         with lock:
                             if instId not in active_orders:
                                 # No active order, skip
                                 return
-                            # Mark as processing to prevent duplicate triggers for same candle
+                            # Mark as processing to prevent duplicate triggers
+                            # for same candle
                             # Add a flag to track if sell is already triggered
                             if active_orders[instId].get("sell_triggered", False):
                                 logger.debug(
-                                    f"⚠️ Sell already triggered for {instId}, skipping duplicate candle confirm"
+                                    f"⚠️ Sell already triggered for {instId}, "
+                                    f"skipping duplicate candle confirm"
                                 )
                                 return
                             # Mark as triggered
@@ -1100,7 +1128,8 @@ def on_candle_message(ws, msg_string):
                             float(candle_data[4]) if len(candle_data) > 4 else 0
                         )
                         logger.warning(
-                            f"🕐 KLINE CONFIRMED: {instId}, close_price={close_price:.6f}, trigger SELL"
+                            f"🕐 KLINE CONFIRMED: {instId}, "
+                            f"close_price={close_price:.6f}, trigger SELL"
                         )
                         threading.Thread(
                             target=process_sell_signal, args=(instId,), daemon=True
@@ -1129,7 +1158,8 @@ def process_sell_signal(instId: str):
             try:
                 # Query state and size together to validate order
                 cur.execute(
-                    "SELECT state, size FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
+                    "SELECT state, size FROM orders WHERE instId = %s "
+                    "AND ordId = %s AND flag = %s",
                     (instId, ordId, STRATEGY_NAME),
                 )
                 row = cur.fetchone()
@@ -1155,7 +1185,8 @@ def process_sell_signal(instId: str):
                 # Verify order was filled before selling
                 if db_state not in ["filled", ""] or not db_size or db_size == "0":
                     logger.warning(
-                        f"{STRATEGY_NAME} Order not filled: {instId}, {ordId}, state={db_state}, size={db_size}"
+                        f"{STRATEGY_NAME} Order not filled: {instId}, {ordId}, "
+                        f"state={db_state}, size={db_size}"
                     )
                     with lock:
                         if instId in active_orders:
@@ -1340,25 +1371,31 @@ def main():
 
     # Keep main thread alive with health check
     last_refresh_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
+
     try:
         while True:
             time.sleep(60)
             # Periodic status log
             with lock:
                 logger.info(
-                    f"Status: {len(current_prices)} prices, {len(reference_prices)} reference prices, {len(active_orders)} active orders"
+                    f"Status: {len(current_prices)} prices, "
+                    f"{len(reference_prices)} reference prices, "
+                    f"{len(active_orders)} active orders"
                 )
+
+            now = datetime.now()
+            current_hour = now.replace(minute=0, second=0, microsecond=0)
 
             # Hourly refresh: update reference prices at start of new hour
             # ✅ FIX: Refresh every hour since we use hourly open price, not daily
-            # ⚠️ IMPORTANT: Delay a few seconds after hour start to ensure new hour's K-line is available
-            # OKX may not have the new hour's K-line immediately at 00:00, so wait until 00:05
-            now = datetime.now()
-            current_hour = now.replace(minute=0, second=0, microsecond=0)
-            # Only refresh if we're past the 5-minute mark of the new hour (ensures K-line is available)
+            # ⚠️ IMPORTANT: Delay a few seconds after hour start to ensure
+            # new hour's K-line is available
+            # OKX may not have the new hour's K-line immediately at 00:00,
+            # so wait until 00:05
             if current_hour > last_refresh_hour and now.minute >= 1:
                 logger.warning(
-                    f"🔄 New hour detected ({current_hour.strftime('%H:00')}), refreshing reference prices (hourly open)..."
+                    f"🔄 New hour detected ({current_hour.strftime('%H:00')}), "
+                    f"refreshing reference prices (hourly open)..."
                 )
                 initialize_reference_prices()
                 last_refresh_hour = current_hour

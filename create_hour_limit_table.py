@@ -47,7 +47,7 @@ def create_hour_limit_table():
         # 创建索引
         cur.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_hour_limit_inst_id 
+            CREATE INDEX IF NOT EXISTS idx_hour_limit_inst_id
             ON hour_limit(inst_id)
         """
         )
@@ -83,12 +83,12 @@ def import_limits_from_json():
             # 使用 INSERT ... ON CONFLICT UPDATE
             cur.execute(
                 """
-                INSERT INTO hour_limit 
-                (inst_id, limit_percent, limit_ratio, consistency, 
-                 mean_return_timeslices, median_return_timeslices, 
+                INSERT INTO hour_limit
+                (inst_id, limit_percent, limit_ratio, consistency,
+                 mean_return_timeslices, median_return_timeslices,
                  recent_12m_return, sharpe_like, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (inst_id) 
+                ON CONFLICT (inst_id)
                 DO UPDATE SET
                     limit_percent = EXCLUDED.limit_percent,
                     limit_ratio = EXCLUDED.limit_ratio,

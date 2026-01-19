@@ -92,3 +92,6 @@ recent_*_results.json
 *.tmp
 *.bak
 *.swp
+
+# Analysis and test scripts (not part of main codebase)
+scripts/analysis/
