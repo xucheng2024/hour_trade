@@ -52,20 +52,22 @@ def process_buy_signal(
                     if instId in pending_buys:
                         del pending_buys[instId]
                     now = datetime.now()
-                    next_hour = now.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
+                    # Sell at 55 minutes of current hour (e.g., 10:55)
+                    sell_time = now.replace(minute=55, second=0, microsecond=0)
+                    # If current time is past 55 minutes, sell at next hour's 55 minutes
+                    if now.minute >= 55:
+                        sell_time = sell_time + timedelta(hours=1)
                     active_orders[instId] = {
                         "ordId": ordId,
                         "buy_price": limit_price,
                         "buy_time": now,
-                        "next_hour_close_time": next_hour,
+                        "next_hour_close_time": sell_time,
                         "sell_triggered": False,
                     }
                     logger.warning(
                         f"📊 ACTIVE ORDER: {instId}, ordId={ordId}, "
                         f"buy_price={limit_price:.6f}, "
-                        f"sell_time={next_hour.strftime('%Y-%m-%d %H:%M:%S')}"
+                        f"sell_time={sell_time.strftime('%Y-%m-%d %H:%M:%S')}"
                     )
 
                     if not simulation_mode:
@@ -290,9 +292,11 @@ def process_momentum_buy_signal(
                         momentum_strategy.record_buy(instId, buy_price, size, ordId)
 
                     now = datetime.now()
-                    next_hour = now.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
+                    # Sell at 55 minutes of current hour (e.g., 10:55)
+                    sell_time = now.replace(minute=55, second=0, microsecond=0)
+                    # If current time is past 55 minutes, sell at next hour's 55 minutes
+                    if now.minute >= 55:
+                        sell_time = sell_time + timedelta(hours=1)
 
                     if instId not in momentum_active_orders:
                         momentum_active_orders[instId] = {
@@ -311,13 +315,13 @@ def process_momentum_buy_signal(
                     momentum_active_orders[instId]["buy_sizes"].append(size)
                     momentum_active_orders[instId]["buy_times"].append(now)
                     momentum_active_orders[instId]["next_hour_close_times"].append(
-                        next_hour
+                        sell_time
                     )
 
                     logger.warning(
                         f"📊 MOMENTUM ACTIVE ORDER: {instId}, ordId={ordId}, "
                         f"buy_price={buy_price:.6f}, pct={buy_pct:.1%}, "
-                        f"sell_time={next_hour.strftime('%Y-%m-%d %H:%M:%S')}"
+                        f"sell_time={sell_time.strftime('%Y-%m-%d %H:%M:%S')}"
                     )
 
                     if not simulation_mode:

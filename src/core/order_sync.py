@@ -384,9 +384,11 @@ class OrderSyncManager:
                     )
 
                 # Calculate next_hour_close_time from fill_time
-                next_hour = fill_time.replace(
-                    minute=0, second=0, microsecond=0
-                ) + timedelta(hours=1)
+                # Sell at 55 minutes of the hour when order was filled
+                next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                # If fill time is past 55 minutes, sell at next hour's 55 minutes
+                if fill_time.minute >= 55:
+                    next_hour = next_hour + timedelta(hours=1)
 
                 # Only recover if past sell time
                 if now >= next_hour:
@@ -711,9 +713,11 @@ class OrderSyncManager:
                     fill_time = datetime.fromtimestamp(create_time_ms / 1000)
 
                 # Calculate next_hour_close_time from fill_time
-                next_hour = fill_time.replace(
-                    minute=0, second=0, microsecond=0
-                ) + timedelta(hours=1)
+                # Sell at 55 minutes of the hour when order was filled
+                next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                # If fill time is past 55 minutes, sell at next hour's 55 minutes
+                if fill_time.minute >= 55:
+                    next_hour = next_hour + timedelta(hours=1)
 
                 # Only recover if past sell time
                 if now >= next_hour:
