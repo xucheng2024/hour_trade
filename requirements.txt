@@ -12,5 +12,6 @@ python-okx==0.4.0
 python-dotenv==1.0.1
 
 # Data processing (required by okx_functions, okx_ws_manage, okx_order_manage)
-numpy==1.24.3
-pandas==2.0.3
+# Use newer versions compatible with Python 3.12 (distutils was removed)
+numpy>=1.26.0
+pandas>=2.1.0
