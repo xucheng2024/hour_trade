@@ -59,7 +59,8 @@ TRADING_FLAG = "0"  # 0=production, 1=demo
 
 if not all([API_KEY, API_SECRET, API_PASSPHRASE]):
     raise ValueError(
-        "OKX API credentials not found in environment variables. Please set OKX_API_KEY, OKX_SECRET, and OKX_PASSPHRASE"
+        "OKX API credentials not found in environment variables. "
+        "Please set OKX_API_KEY, OKX_SECRET, and OKX_PASSPHRASE"
     )
 
 # Trading Configuration
@@ -143,7 +144,8 @@ def get_db_connection(max_retries=3, retry_delay=1):
         except (psycopg2.Error, psycopg2.OperationalError) as e:
             if attempt < max_retries - 1:
                 logger.warning(
-                    f"Database connection failed (attempt {attempt + 1}/{max_retries}): {e}"
+                    f"Database connection failed "
+                    f"(attempt {attempt + 1}/{max_retries}): {e}"
                 )
                 time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
             else:
@@ -373,7 +375,8 @@ def fetch_current_hour_open_price(instId: str) -> Optional[float]:
             data = result["data"]
             if data and len(data) > 0:
                 # Data format: [timestamp, open, high, low, close, volume, ...]
-                # data[0] = [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
+                # data[0] = [ts, open, high, low, close, vol,
+                #            volCcy, volCcyQuote, confirm]
                 candle = data[0]
                 candle_ts = int(candle[0]) / 1000  # Convert ms to seconds
                 hour_open = float(candle[1])
@@ -394,17 +397,25 @@ def fetch_current_hour_open_price(instId: str) -> Optional[float]:
                 # Check if the candle belongs to the current hour
                 # Allow small tolerance (±60 seconds) for timing differences
                 if abs(candle_hour_start - current_hour_start) <= 60:
+                    ts_str = datetime.fromtimestamp(candle_ts).strftime("%H:%M:%S")
                     logger.info(
-                        f"📊 {instId} current hour's open price: ${hour_open:.6f} (ts={datetime.fromtimestamp(candle_ts).strftime('%H:%M:%S')})"
+                        f"📊 {instId} current hour's open price: "
+                        f"${hour_open:.6f} (ts={ts_str})"
                     )
                     return hour_open
                 else:
-                    # Got a different hour's candle (probably previous hour if called too early at hour start)
+                    # Got different hour's candle
+                    # (probably previous hour if called too early at hour start)
+                    expected_hour = datetime.fromtimestamp(current_hour_start).strftime(
+                        "%H:00"
+                    )
+                    got_hour = datetime.fromtimestamp(candle_hour_start).strftime(
+                        "%H:00"
+                    )
                     logger.warning(
                         f"⚠️ {instId} got different hour's candle: "
-                        f"expected hour={datetime.fromtimestamp(current_hour_start).strftime('%H:00')}, "
-                        f"got hour={datetime.fromtimestamp(candle_hour_start).strftime('%H:00')}, "
-                        f"open=${hour_open:.6f}"
+                        f"expected hour={expected_hour}, "
+                        f"got hour={got_hour}, open=${hour_open:.6f}"
                     )
                     # Return None to trigger retry or use fallback
                     return None
@@ -432,7 +443,8 @@ def initialize_reference_prices():
             count += 1
         time.sleep(0.1)  # Rate limiting
     logger.warning(
-        f"✅ Initialized {count}/{len(crypto_limits)} reference prices (current hour's open)"
+        f"✅ Initialized {count}/{len(crypto_limits)} reference prices "
+        f"(current hour's open)"
     )
 
 
@@ -453,7 +465,8 @@ def buy_limit_order(
         ordId = f"HLW-SIM-{uuid.uuid4().hex[:12]}"  # HLW = Hourly Limit WS
         amount_usdt = float(buy_price) * float(size)
         logger.warning(
-            f"🛒 [SIM] BUY: {instId}, price={buy_price}, size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+            f"🛒 [SIM] BUY: {instId}, price={buy_price}, size={size}, "
+            f"amount={amount_usdt:.2f} USDT, ordId={ordId}"
         )
     else:
         # Real trading mode
@@ -479,7 +492,9 @@ def buy_limit_order(
                     if ordId:
                         amount_usdt = float(buy_price) * float(size)
                         logger.warning(
-                            f"🛒 BUY ORDER: {instId}, price={buy_price}, size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+                            f"🛒 BUY ORDER: {instId}, price={buy_price}, "
+                            f"size={size}, amount={amount_usdt:.2f} USDT, "
+                            f"ordId={ordId}"
                         )
                         failed_flag = 0
                         break
@@ -491,7 +506,8 @@ def buy_limit_order(
                 else:
                     error_msg = result.get("msg", "Unknown error")
                     logger.error(
-                        f"{STRATEGY_NAME} buy limit failed: {instId}, code={result.get('code')}, msg={error_msg}"
+                        f"{STRATEGY_NAME} buy limit failed: {instId}, "
+                        f"code={result.get('code')}, msg={error_msg}"
                     )
                     failed_flag = 1
 
@@ -520,7 +536,8 @@ def buy_limit_order(
         order_state = "filled" if SIMULATION_MODE else ""
 
         cur.execute(
-            """INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time, side)
+            """INSERT INTO orders (instId, flag, ordId, create_time,
+                       orderType, state, price, size, sell_time, side)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 instId,
@@ -538,7 +555,8 @@ def buy_limit_order(
         conn.commit()
         amount_usdt = float(buy_price) * float(size)
         logger.warning(
-            f"✅ BUY SAVED: {instId}, price={buy_price}, size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+            f"✅ BUY SAVED: {instId}, price={buy_price}, size={size}, "
+            f"amount={amount_usdt:.2f} USDT, ordId={ordId}"
         )
 
         # Play buy sound
@@ -547,7 +565,8 @@ def buy_limit_order(
         return ordId
     except Exception as e:
         logger.error(
-            f"{STRATEGY_NAME} buy limit DB error: {instId}, ordId may be undefined, {e}"
+            f"{STRATEGY_NAME} buy limit DB error: {instId}, "
+            f"ordId may be undefined, {e}"
         )
         conn.rollback()
         # ✅ FIX: Return None on error instead of potentially undefined ordId
@@ -576,14 +595,16 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                     if ticker_data and len(ticker_data) > 0:
                         sell_price = float(ticker_data[0].get("last", 0))
                         logger.info(
-                            f"📊 {instId} fetched current price for simulation: ${sell_price:.6f}"
+                            f"📊 {instId} fetched current price for simulation: "
+                            f"${sell_price:.6f}"
                         )
             except Exception as e:
                 logger.warning(f"⚠️ Could not get current price for {instId}: {e}")
 
         sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
         logger.warning(
-            f"💰 [SIM] SELL: {instId}, price={sell_price:.6f}, size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
+            f"💰 [SIM] SELL: {instId}, price={sell_price:.6f}, size={size}, "
+            f"amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
         )
     else:
         # Real trading mode
@@ -609,9 +630,12 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                     order_data = result.get("data", [{}])[0]
                     order_id = order_data.get("ordId", "N/A")
 
-                    # ✅ FIX: Get actual fill price from order (OKX official API returns weighted average)
-                    # get_order() returns fillPx which is already the weighted average of all fills
-                    # No need to call get_fills() separately - simpler and more efficient
+                    # ✅ FIX: Get actual fill price from order
+                    # (OKX official API returns weighted average)
+                    # get_order() returns fillPx which is already
+                    # the weighted average of all fills
+                    # No need to call get_fills() separately
+                    # - simpler and more efficient
                     time.sleep(0.5)  # Small delay to ensure order is processed
                     try:
                         order_result = tradeAPI.get_order(instId=instId, ordId=order_id)
@@ -620,7 +644,8 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                             fill_px = order_info.get("fillPx", "")
                             acc_fill_sz = order_info.get("accFillSz", "0")
 
-                            # fillPx from OKX is already the weighted average of all fills
+                            # fillPx from OKX is already
+                            # the weighted average of all fills
                             if (
                                 fill_px
                                 and fill_px != ""
@@ -629,28 +654,41 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                             ):
                                 sell_price = float(fill_px)
                                 logger.warning(
-                                    f"💰 SELL ORDER: {instId}, fill price={sell_price:.6f} (weighted avg from OKX), size={size}, ordId={order_id}"
+                                    f"💰 SELL ORDER: {instId}, "
+                                    f"fill price={sell_price:.6f} "
+                                    f"(weighted avg from OKX), "
+                                    f"size={size}, ordId={order_id}"
                                 )
                             else:
-                                # Fill price not available yet, fallback to current price
+                                # Fill price not available yet,
+                                # fallback to current price
                                 with lock:
                                     sell_price = current_prices.get(instId, 0.0)
                                 logger.warning(
-                                    f"💰 SELL ORDER: {instId}, using current price={sell_price:.6f} (fill price not available yet), size={size}, ordId={order_id}"
+                                    f"💰 SELL ORDER: {instId}, "
+                                    f"using current price={sell_price:.6f} "
+                                    f"(fill price not available yet), "
+                                    f"size={size}, ordId={order_id}"
                                 )
                         else:
                             # Order query failed, fallback to current price
                             with lock:
                                 sell_price = current_prices.get(instId, 0.0)
                             logger.warning(
-                                f"💰 SELL ORDER: {instId}, using current price={sell_price:.6f} (order query failed), size={size}, ordId={order_id}"
+                                f"💰 SELL ORDER: {instId}, "
+                                f"using current price={sell_price:.6f} "
+                                f"(order query failed), "
+                                f"size={size}, ordId={order_id}"
                             )
                     except Exception as e:
                         # Fallback to current price on error
                         with lock:
                             sell_price = current_prices.get(instId, 0.0)
                         logger.warning(
-                            f"💰 SELL ORDER: {instId}, using current price={sell_price:.6f} (error getting fill price: {e}), size={size}, ordId={order_id}"
+                            f"💰 SELL ORDER: {instId}, "
+                            f"using current price={sell_price:.6f} "
+                            f"(error getting fill price: {e}), "
+                            f"size={size}, ordId={order_id}"
                         )
 
                     failed_flag = 0
@@ -658,7 +696,8 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                 else:
                     error_msg = result.get("msg", "Unknown error")
                     logger.error(
-                        f"{STRATEGY_NAME} sell market failed: {instId}, code={result.get('code')}, msg={error_msg}"
+                        f"{STRATEGY_NAME} sell market failed: {instId}, "
+                        f"code={result.get('code')}, msg={error_msg}"
                     )
                     failed_flag = 1
 
@@ -680,13 +719,15 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
         sell_price_str = format_number(sell_price) if sell_price > 0 else ""
 
         cur.execute(
-            "UPDATE orders SET state = %s, sell_price = %s WHERE instId = %s AND ordId = %s AND flag = %s",
+            "UPDATE orders SET state = %s, sell_price = %s "
+            "WHERE instId = %s AND ordId = %s AND flag = %s",
             ("sold out", sell_price_str, instId, ordId, STRATEGY_NAME),
         )
         conn.commit()
         sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
         logger.warning(
-            f"✅ SELL SAVED: {instId}, price={sell_price_str}, size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
+            f"✅ SELL SAVED: {instId}, price={sell_price_str}, size={size}, "
+            f"amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
         )
 
         # Play sell sound
@@ -728,48 +769,62 @@ def on_ticker_message(ws, msg_string):
                             ):
                                 limit_percent = crypto_limits[instId]
 
-                                # Get reference price (current hour's open), fetch if not available
+                                # Get reference price (current hour's open),
+                                # fetch if not available
                                 ref_price = reference_prices.get(instId)
 
-                        # If no reference price, try to fetch it (outside lock to avoid blocking)
+                        # If no reference price, try to fetch it
+                        # (outside lock to avoid blocking)
                         if ref_price is None or ref_price <= 0:
                             logger.warning(
-                                f"⚠️ No reference price for {instId}, fetching current hour's open..."
+                                f"⚠️ No reference price for {instId}, "
+                                f"fetching current hour's open..."
                             )
                             ref_price = fetch_current_hour_open_price(instId)
                             if ref_price and ref_price > 0:
                                 with lock:
-                                    # Double-check conditions after fetching (another thread might have started buying)
+                                    # Double-check conditions after fetching
+                                    # (another thread might have started buying)
                                     if (
                                         instId not in pending_buys
                                         and instId not in active_orders
                                     ):
                                         reference_prices[instId] = ref_price
                             else:
-                                # ✅ FIX: Skip this check instead of using current price as fallback
-                                # Using current price as fallback could cause immediate trigger if price already dropped
-                                # Better to skip and wait for next tick when API might succeed
+                                # ✅ FIX: Skip this check instead of using
+                                # current price as fallback
+                                # Using current price as fallback could cause
+                                # immediate trigger if price already dropped
+                                # Better to skip and wait for next tick
+                                # when API might succeed
                                 logger.warning(
-                                    f"⚠️ Failed to get reference price for {instId}, skipping buy check (will retry next tick)"
+                                    f"⚠️ Failed to get reference price for "
+                                    f"{instId}, skipping buy check "
+                                    f"(will retry next tick)"
                                 )
                                 continue
 
-                        # Calculate limit price based on reference price (current hour's open)
+                        # Calculate limit price based on reference price
+                        # (current hour's open)
                         limit_price = calculate_limit_price(ref_price, limit_percent)
 
                         # Check if current price has dropped to or below limit price
                         if last_price <= limit_price:
-                            # ✅ FIX: Double-check conditions and set pending_buys atomically to prevent race condition
+                            # ✅ FIX: Double-check conditions and set
+                            # pending_buys atomically to prevent race condition
                             with lock:
                                 # Re-check conditions to prevent race condition
                                 if instId in pending_buys or instId in active_orders:
-                                    # Another thread already started processing this signal
+                                    # Another thread already started
+                                    # processing this signal
                                     continue
                                 # Set pending_buys atomically within the lock
                                 pending_buys[instId] = True
 
                             logger.warning(
-                                f"🚀 BUY SIGNAL: {instId}, current={last_price:.6f} <= limit={limit_price:.6f} (ref={ref_price:.6f}, {limit_percent}%)"
+                                f"🚀 BUY SIGNAL: {instId}, "
+                                f"current={last_price:.6f} <= limit={limit_price:.6f} "
+                                f"(ref={ref_price:.6f}, {limit_percent}%)"
                             )
                             # Trigger buy in separate thread to avoid blocking
                             # Blacklist check will happen in process_buy_signal
@@ -779,13 +834,17 @@ def on_ticker_message(ws, msg_string):
                                 daemon=True,
                             ).start()
                         else:
-                            # Log when price is close but not yet at limit (for debugging)
+                            # Log when price is close but not yet at limit
+                            # (for debugging)
                             price_diff_pct = (
                                 (last_price - limit_price) / ref_price
                             ) * 100
                             if price_diff_pct < 2.0:  # Within 2% of limit
                                 logger.debug(
-                                    f"📊 {instId} close to limit: current={last_price:.6f}, limit={limit_price:.6f}, diff={price_diff_pct:.2f}%"
+                                    f"📊 {instId} close to limit: "
+                                    f"current={last_price:.6f}, "
+                                    f"limit={limit_price:.6f}, "
+                                    f"diff={price_diff_pct:.2f}%"
                                 )
     except Exception as e:
         logger.error(f"Ticker message error: {msg_string}, {e}")
@@ -831,7 +890,8 @@ def check_and_cancel_unfilled_order_after_timeout(
                         # Order not filled after 1 minute, cancel it
                         tradeAPI.cancel_order(instId=instId, ordId=ordId)
                         logger.warning(
-                            f"{STRATEGY_NAME} Canceled unfilled order after 1 minute: {instId}, ordId={ordId}"
+                            f"{STRATEGY_NAME} Canceled unfilled order after 1 minute: "
+                            f"{instId}, ordId={ordId}"
                         )
 
                         # Update database
@@ -839,7 +899,8 @@ def check_and_cancel_unfilled_order_after_timeout(
                         try:
                             cur = conn.cursor()
                             cur.execute(
-                                "UPDATE orders SET state = %s WHERE instId = %s AND ordId = %s AND flag = %s",
+                                "UPDATE orders SET state = %s "
+                                "WHERE instId = %s AND ordId = %s AND flag = %s",
                                 ("canceled", instId, ordId, STRATEGY_NAME),
                             )
                             conn.commit()
@@ -854,7 +915,9 @@ def check_and_cancel_unfilled_order_after_timeout(
                     else:
                         # ✅ FIX: Order is filled, update database with actual fill info
                         logger.warning(
-                            f"{STRATEGY_NAME} Order filled within 1 minute: {instId}, ordId={ordId}, fillSize={acc_fill_sz}, fillPrice={fill_px}"
+                            f"{STRATEGY_NAME} Order filled within 1 minute: "
+                            f"{instId}, ordId={ordId}, "
+                            f"fillSize={acc_fill_sz}, fillPrice={fill_px}"
                         )
 
                         # Update database with filled status and actual fill data
@@ -929,10 +992,13 @@ def process_buy_signal(instId: str, limit_price: float):
                         "buy_price": limit_price,
                         "buy_time": now,
                         "next_hour_close_time": next_hour,
-                        "sell_triggered": False,  # ✅ FIX: Initialize flag to prevent duplicate sells
+                        "sell_triggered": False,
+                        # ✅ FIX: Initialize flag to prevent duplicate sells
                     }
                     logger.warning(
-                        f"📊 ACTIVE ORDER: {instId}, ordId={ordId}, buy_price={limit_price:.6f}, sell_time={next_hour.strftime('%Y-%m-%d %H:%M:%S')}"
+                        f"📊 ACTIVE ORDER: {instId}, ordId={ordId}, "
+                        f"buy_price={limit_price:.6f}, "
+                        f"sell_time={next_hour.strftime('%Y-%m-%d %H:%M:%S')}"
                     )
 
                     # Start 1-minute timeout check thread (only in real trading mode)
@@ -946,7 +1012,8 @@ def process_buy_signal(instId: str, limit_price: float):
             else:
                 # ✅ FIX: Order creation failed, clean up pending_buys
                 logger.error(
-                    f"❌ Failed to create buy order for {instId}, cleaning up pending_buys"
+                    f"❌ Failed to create buy order for {instId}, "
+                    f"cleaning up pending_buys"
                 )
                 with lock:
                     if instId in pending_buys:
@@ -1243,7 +1310,7 @@ def main():
     try:
         conn = get_db_connection()
         conn.close()
-        logger.warning(f"✅ Connected to PostgreSQL database successfully")
+        logger.warning("✅ Connected to PostgreSQL database successfully")
     except Exception as e:
         logger.error(f"Database error: {e}")
         logger.error("Failed to connect to database, exiting")
