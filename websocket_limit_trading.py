@@ -121,7 +121,10 @@ active_orders: Dict[str, Dict] = (
 # Momentum strategy active orders (separate tracking)
 momentum_active_orders: Dict[str, Dict] = (
     {}
-)  # instId -> {ordIds: [str], buy_prices: [float], buy_sizes: [float], ...}
+)  # instId -> {ordIds: [str], buy_prices: [float], buy_sizes: [float], next_hour_close_times: [datetime], ...}
+# ✅ FIX: Throttle intra-hour buy signal checks to prevent CPU overload
+last_intra_hour_check: Dict[str, datetime] = {}  # instId -> last check time
+INTRA_HOUR_CHECK_THROTTLE_SECONDS = 30  # Check at most once per 30 seconds per instId
 momentum_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 lock = threading.Lock()
 
@@ -2015,59 +2018,66 @@ def on_candle_message(ws, msg_string):
                     # But we can check signals on any candle update using current price
                     # This logic is OUTSIDE the confirm block to enable intra-hour triggers
                     # Skip if confirm == "1" (already checked in confirm block above)
+                    # ✅ FIX: Throttle checks to prevent CPU overload on frequent updates
                     if confirm != "1" and momentum_strategy is not None and instId in crypto_limits:
-                        # Use current close price from unconfirmed candle for signal check
-                        # (but don't update history - that only happens on confirm)
-                        current_close_price = (
-                            float(candle_data[4])
-                            if len(candle_data) > 4
-                            else open_price
-                        )
-                        
-                        # Check buy signal with current price (intra-hour trigger)
-                        # This allows buying during the hour, not just at close
-                        should_buy, buy_pct = momentum_strategy.check_buy_signal(
-                            instId, current_close_price
-                        )
-                        if should_buy and buy_pct:
-                            with lock:
-                                # Check if already processing or has active orders
-                                if instId in momentum_pending_buys:
-                                    logger.debug(
-                                        f"⏭️ {instId} Momentum buy already pending (intra-hour), skipping"
-                                    )
-                                elif instId in momentum_active_orders:
-                                    logger.debug(
-                                        f"⏭️ {instId} Momentum order already active (intra-hour), skipping"
-                                    )
-                                else:
-                                    # Check if already at max position
-                                    position = momentum_strategy.get_position_info(instId)
-                                    if (
-                                        position
-                                        and position.get("total_buy_pct", 0.0) >= 0.70
-                                    ):
+                        now = datetime.now()
+                        # Check if we should throttle this check
+                        last_check = last_intra_hour_check.get(instId)
+                        if last_check is None or (now - last_check).total_seconds() >= INTRA_HOUR_CHECK_THROTTLE_SECONDS:
+                            last_intra_hour_check[instId] = now
+                            
+                            # Use current close price from unconfirmed candle for signal check
+                            # (but don't update history - that only happens on confirm)
+                            current_close_price = (
+                                float(candle_data[4])
+                                if len(candle_data) > 4
+                                else open_price
+                            )
+                            
+                            # Check buy signal with current price (intra-hour trigger)
+                            # This allows buying during the hour, not just at close
+                            should_buy, buy_pct = momentum_strategy.check_buy_signal(
+                                instId, current_close_price
+                            )
+                            if should_buy and buy_pct:
+                                with lock:
+                                    # Check if already processing or has active orders
+                                    if instId in momentum_pending_buys:
                                         logger.debug(
-                                            f"⏸️ {instId} Already at max position (intra-hour): "
-                                            f"{position.get('total_buy_pct', 0.0):.1%}"
+                                            f"⏭️ {instId} Momentum buy already pending (intra-hour), skipping"
+                                        )
+                                    elif instId in momentum_active_orders:
+                                        logger.debug(
+                                            f"⏭️ {instId} Momentum order already active (intra-hour), skipping"
                                         )
                                     else:
-                                        momentum_pending_buys[instId] = True
+                                        # Check if already at max position
+                                        position = momentum_strategy.get_position_info(instId)
+                                        if (
+                                            position
+                                            and position.get("total_buy_pct", 0.0) >= 0.70
+                                        ):
+                                            logger.debug(
+                                                f"⏸️ {instId} Already at max position (intra-hour): "
+                                                f"{position.get('total_buy_pct', 0.0):.1%}"
+                                            )
+                                        else:
+                                            momentum_pending_buys[instId] = True
 
-                                        logger.warning(
-                                            f"🎯 MOMENTUM BUY SIGNAL (intra-hour): {instId}, "
-                                            f"current_price={current_close_price:.6f}, buy_pct={buy_pct:.1%}"
-                                        )
-                                        # Trigger buy in separate thread
-                                        threading.Thread(
-                                            target=process_momentum_buy_signal,
-                                            args=(
-                                                instId,
-                                                current_close_price,
-                                                buy_pct,
-                                            ),
-                                            daemon=True,
-                                        ).start()
+                                            logger.warning(
+                                                f"🎯 MOMENTUM BUY SIGNAL (intra-hour): {instId}, "
+                                                f"current_price={current_close_price:.6f}, buy_pct={buy_pct:.1%}"
+                                            )
+                                            # Trigger buy in separate thread
+                                            threading.Thread(
+                                                target=process_momentum_buy_signal,
+                                                args=(
+                                                    instId,
+                                                    current_close_price,
+                                                    buy_pct,
+                                                ),
+                                                daemon=True,
+                                            ).start()
     except Exception as e:
         logger.error(f"Candle message error: {msg_string}, {e}")
 
@@ -2835,6 +2845,7 @@ def sync_orders_from_database():
                 logger.debug(f"Error checking order {instId}/{ordId}: {e}")
 
         # Check momentum strategy orders
+        # ✅ FIX: Use batch query instead of per-order queries for better performance
         with lock:
             momentum_orders_to_check = list(momentum_active_orders.items())
 
@@ -2844,19 +2855,25 @@ def sync_orders_from_database():
                 continue
 
             try:
-                # Check each order in the list
-                ordIds_to_remove = []
-                for ordId in ordIds:
-                    cur.execute(
-                        "SELECT state FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
-                        (instId, ordId, MOMENTUM_STRATEGY_NAME),
-                    )
-                    row = cur.fetchone()
-
-                    if row:
-                        db_state = row[0] if row[0] else ""
-                        if db_state == "sold out":
-                            ordIds_to_remove.append(ordId)
+                # ✅ FIX: Batch query all orders for this instId at once
+                # This reduces DB queries from N to 1 per instId
+                cur.execute(
+                    """
+                    SELECT ordId, state FROM orders 
+                    WHERE instId = %s AND ordId = ANY(%s) AND flag = %s
+                    """,
+                    (instId, ordIds, MOMENTUM_STRATEGY_NAME),
+                )
+                rows = cur.fetchall()
+                
+                # Build a map of ordId -> state
+                db_states = {row[0]: row[1] if row[1] else "" for row in rows}
+                
+                # Find orders that are sold out
+                ordIds_to_remove = [
+                    ordId for ordId in ordIds 
+                    if db_states.get(ordId) == "sold out"
+                ]
 
                 # Remove sold orders from memory
                 if ordIds_to_remove:
@@ -3096,62 +3113,68 @@ def recover_orders_from_database(now: datetime):
 
             # ✅ FIX: Get fillTime from OKX API for each order, calculate next_hour per order
             # Group orders by their next_hour_close_time to handle different fill times
+            # ✅ CRITICAL FIX: Always build orders_with_fill_time, even when API is unavailable
             api = get_trade_api()
             orders_with_fill_time = []
             api_call_count = 0
             max_api_calls_per_cycle = 20  # Limit API calls per recovery cycle
             api_call_delay = 0.1  # 100ms delay between calls
             
-            if api is not None:
-                for order in orders:
-                    ordId = order["ordId"]
-                    fill_time = None
-                    
-                    if api_call_count < max_api_calls_per_cycle:
-                        try:
-                            result = api.get_order(instId=instId, ordId=ordId)
-                            api_call_count += 1
-                            if api_call_count < max_api_calls_per_cycle:
-                                time.sleep(api_call_delay)  # Rate limiting
-                            
-                            if result and result.get("data") and len(result["data"]) > 0:
-                                order_data = result["data"][0]
-                                fill_time_ms = order_data.get("fillTime", "")
-                                if fill_time_ms and fill_time_ms != "":
-                                    try:
-                                        fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
-                                        logger.debug(
-                                            f"✅ RECOVER: Using OKX fillTime for momentum {instId}, "
-                                            f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                                        )
-                                    except (ValueError, TypeError):
-                                        pass
-                        except Exception as e:
-                            logger.debug(
-                                f"⚠️ RECOVER: Failed to get order from OKX for momentum {instId}, "
-                                f"ordId={ordId}: {e}"
-                            )
-                    elif api_call_count >= max_api_calls_per_cycle:
+            for order in orders:
+                ordId = order["ordId"]
+                fill_time = None
+                
+                # Try to get fillTime from API if available
+                if api is not None and api_call_count < max_api_calls_per_cycle:
+                    try:
+                        result = api.get_order(instId=instId, ordId=ordId)
+                        api_call_count += 1
+                        if api_call_count < max_api_calls_per_cycle:
+                            time.sleep(api_call_delay)  # Rate limiting
+                        
+                        if result and result.get("data") and len(result["data"]) > 0:
+                            order_data = result["data"][0]
+                            fill_time_ms = order_data.get("fillTime", "")
+                            if fill_time_ms and fill_time_ms != "":
+                                try:
+                                    fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
+                                    logger.debug(
+                                        f"✅ RECOVER: Using OKX fillTime for momentum {instId}, "
+                                        f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                    )
+                                except (ValueError, TypeError):
+                                    pass
+                    except Exception as e:
                         logger.debug(
-                            f"⏸️ RECOVER: API rate limit reached for momentum {instId}, "
-                            f"using create_time for remaining orders"
+                            f"⚠️ RECOVER: Failed to get order from OKX for momentum {instId}, "
+                            f"ordId={ordId}: {e}, falling back to create_time"
                         )
-                    
-                    # Fallback to create_time if fillTime not available
-                    if fill_time is None:
-                        fill_time = order["create_time"]
-                    
-                    # Calculate next_hour_close_time for this order
-                    next_hour = fill_time.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
-                    
-                    orders_with_fill_time.append({
-                        "ordId": ordId,
-                        "fill_time": fill_time,
-                        "next_hour_close_time": next_hour,
-                        "size": order["size"],
-                    })
+                elif api_call_count >= max_api_calls_per_cycle:
+                    logger.debug(
+                        f"⏸️ RECOVER: API rate limit reached for momentum {instId}, "
+                        f"using create_time for remaining orders"
+                    )
+                
+                # ✅ CRITICAL FIX: Always fallback to create_time if fillTime not available
+                # This ensures orders are recovered even when API is unavailable (SIM mode or errors)
+                if fill_time is None:
+                    fill_time = order["create_time"]
+                    logger.debug(
+                        f"📝 RECOVER: Using create_time as fallback for momentum {instId}, "
+                        f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
+                
+                # Calculate next_hour_close_time for this order
+                next_hour = fill_time.replace(
+                    minute=0, second=0, microsecond=0
+                ) + timedelta(hours=1)
+                
+                orders_with_fill_time.append({
+                    "ordId": ordId,
+                    "fill_time": fill_time,
+                    "next_hour_close_time": next_hour,
+                    "size": order["size"],
+                })
             
             # Group orders by next_hour_close_time
             orders_by_hour = {}
