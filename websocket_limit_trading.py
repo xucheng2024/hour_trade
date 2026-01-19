@@ -1804,7 +1804,7 @@ def on_candle_message(ws, msg_string):
                                         f"📊 Reset reference_price_fetch_attempts for {instId} "
                                         f"on candle update (coin is active)"
                                     )
-                                logger.info(
+                                logger.debug(
                                     f"📊 {instId} updated reference price from "
                                     f"WebSocket: ${open_price:.6f} "
                                     f"(hour={candle_hour.strftime('%H:00')})"
