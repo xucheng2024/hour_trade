@@ -2001,7 +2001,8 @@ def on_candle_message(ws, msg_string):
                     # Note: History is only updated on confirmed candles to maintain 1H time scale
                     # But we can check signals on any candle update using current price
                     # This logic is OUTSIDE the confirm block to enable intra-hour triggers
-                    if momentum_strategy is not None and instId in crypto_limits:
+                    # Skip if confirm == "1" (already checked in confirm block above)
+                    if confirm != "1" and momentum_strategy is not None and instId in crypto_limits:
                         # Use current close price from unconfirmed candle for signal check
                         # (but don't update history - that only happens on confirm)
                         current_close_price = (
