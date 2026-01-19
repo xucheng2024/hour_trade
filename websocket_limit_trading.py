@@ -64,12 +64,6 @@ API_SECRET = os.getenv("OKX_SECRET")
 API_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
 TRADING_FLAG = "0"  # 0=production, 1=demo
 
-if not all([API_KEY, API_SECRET, API_PASSPHRASE]):
-    raise ValueError(
-        "OKX API credentials not found in environment variables. "
-        "Please set OKX_API_KEY, OKX_SECRET, and OKX_PASSPHRASE"
-    )
-
 # Trading Configuration
 TRADING_AMOUNT_USDT = int(
     os.getenv("TRADING_AMOUNT_USDT", "100")
@@ -78,7 +72,17 @@ STRATEGY_NAME = "hourly_limit_ws"
 MOMENTUM_STRATEGY_NAME = "momentum_volume_exhaustion"
 SIMULATION_MODE = (
     os.getenv("SIMULATION_MODE", "true").lower() == "true"
-)  # True=simulation (record only, no real trading), False=real trading
+)
+
+# ✅ FIX: Only require API credentials in real trading mode
+# Simulation mode can run without real API keys
+if not SIMULATION_MODE:
+    if not all([API_KEY, API_SECRET, API_PASSPHRASE]):
+        raise ValueError(
+            "OKX API credentials not found in environment variables. "
+            "Please set OKX_API_KEY, OKX_SECRET, and OKX_PASSPHRASE. "
+            "Or set SIMULATION_MODE=true to run without API keys."
+        )  # True=simulation (record only, no real trading), False=real trading
 
 # Setup logging
 # TimedRotatingFileHandler: rotate daily, keep 3 days
@@ -1810,8 +1814,13 @@ def on_candle_message(ws, msg_string):
                                     f"(hour={candle_hour.strftime('%H:00')})"
                                 )
 
-                        # Update momentum strategy with candle volume data
-                        # (more accurate than ticker volume estimates)
+                    # ✅ CRITICAL FIX: Only update history and check signals on confirmed candles
+                    # 'confirm' = '1' means candle is confirmed (closed)
+                    # OKX sends multiple unconfirmed updates during the hour, which would
+                    # break the 1H unified time scale (M=10 would not represent 10 hours)
+                    if confirm == "1":
+                        # Update momentum strategy with confirmed candle data
+                        # (only confirmed candles ensure true 1H time scale)
                         if momentum_strategy is not None and instId in crypto_limits:
                             candle_volume = (
                                 float(candle_data[5]) if len(candle_data) > 5 else 0.0
@@ -1837,10 +1846,9 @@ def on_candle_message(ws, msg_string):
                                     instId, close_price, volume_to_use
                                 )
 
-                                # ✅ OPTIMIZATION: Check buy signal on candle update
-                                # Use candle close_price instead of ticker price
-                                # Note: Check after each candle update;
-                                # momentum_pending_buys prevents duplicates
+                                # ✅ CRITICAL FIX: Check buy signal only on confirmed candles
+                                # Using unconfirmed candles would trigger on temporary data
+                                # (e.g., 30min/1min close prices), causing false signals
                                 if (
                                     momentum_strategy is not None
                                     and instId in crypto_limits
@@ -1883,7 +1891,7 @@ def on_candle_message(ws, msg_string):
                                                     momentum_pending_buys[instId] = True
 
                                                     logger.warning(
-                                                        f"🎯 MOMENTUM BUY SIGNAL (1H candle): {instId}, "
+                                                        f"🎯 MOMENTUM BUY SIGNAL (confirmed 1H candle): {instId}, "
                                                         f"close_price={close_price:.6f}, buy_pct={buy_pct:.1%}"
                                                     )
                                                     # Trigger buy in separate thread
@@ -1897,8 +1905,7 @@ def on_candle_message(ws, msg_string):
                                                         daemon=True,
                                                     ).start()
 
-                    # 'confirm' = '1' means candle is confirmed (closed)
-                    if confirm == "1":
+                        # Process sell signals for confirmed candles
                         # ✅ FIX: Check with lock to prevent race condition
                         # and duplicate triggers
                         with lock:
