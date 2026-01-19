@@ -34,8 +34,7 @@ ex_okx/
 ├── init_database.py               → Neon PostgreSQL
 └── src/crypto_remote/             → Neon PostgreSQL
     ├── monitor_delist.py
-    ├── fetch_filled_orders.py
-    └── auto_sell_orders.py
+    └── fetch_filled_orders.py
 ```
 
 **优点**：
@@ -67,7 +66,6 @@ python3 trading_web_viewer.py
 cd src/crypto_remote
 python3 monitor_delist.py
 python3 fetch_filled_orders.py
-python3 auto_sell_orders.py
 ```
 
 ## Vercel 部署

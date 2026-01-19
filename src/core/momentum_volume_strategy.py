@@ -332,8 +332,13 @@ class MomentumVolumeStrategy:
 
         return stats["short_mean"] / stats["long_mean"]
 
-    def is_in_downtrend(self, instId: str) -> bool:
+    def is_in_downtrend(self, instId: str, current_price: Optional[float] = None) -> bool:
         """Check if price is in downtrend (P_t < P_{t-M})
+
+        Args:
+            instId: Instrument ID
+            current_price: Optional current price to use instead of last confirmed price
+                          (useful for intra-hour checks)
 
         Returns:
             True if current price is below price M periods ago
@@ -347,15 +352,21 @@ class MomentumVolumeStrategy:
             if len(price_data) < M + 1:
                 return False
 
-            # Compare most recent price with oldest price in history
-            current_price = price_data[-1][1]  # Latest price
+            # Use provided current_price if available (for intra-hour checks),
+            # otherwise use last confirmed price from history
+            if current_price is not None:
+                price_to_compare = current_price
+            else:
+                price_to_compare = price_data[-1][1]  # Latest confirmed price
+            
             old_price = price_data[0][1]  # Price M periods ago
 
-            is_downtrend = current_price < old_price
+            is_downtrend = price_to_compare < old_price
             if is_downtrend:
-                drop_pct = ((old_price - current_price) / old_price) * 100
+                drop_pct = ((old_price - price_to_compare) / old_price) * 100
+                price_source = "current" if current_price is not None else "confirmed"
                 logger.debug(
-                    f"📉 {instId} Downtrend: {current_price:.6f} < {old_price:.6f} "
+                    f"📉 {instId} Downtrend ({price_source}): {price_to_compare:.6f} < {old_price:.6f} "
                     f"({drop_pct:.2f}% drop)"
                 )
 
@@ -423,8 +434,8 @@ class MomentumVolumeStrategy:
                 )
                 return False, None
 
-        # Check if in downtrend
-        if not self.is_in_downtrend(instId):
+        # Check if in downtrend (use current_price for intra-hour checks)
+        if not self.is_in_downtrend(instId, current_price=current_price):
             return False, None
 
         # Check if buy should be blocked

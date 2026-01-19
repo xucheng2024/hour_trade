@@ -2909,6 +2909,12 @@ def recover_orders_from_database(now: datetime):
         )
         rows = cur.fetchall()
 
+        # ✅ FIX: Rate limiting for OKX API calls
+        api = get_trade_api()
+        api_call_count = 0
+        max_api_calls_per_cycle = 20  # Limit API calls per recovery cycle
+        api_call_delay = 0.1  # 100ms delay between calls
+
         for row in rows:
             instId = row[0]
             ordId = row[1]
@@ -2928,10 +2934,13 @@ def recover_orders_from_database(now: datetime):
             fill_time = None
             next_hour = None
             
-            api = get_trade_api()
-            if api is not None:
+            if api is not None and api_call_count < max_api_calls_per_cycle:
                 try:
                     result = api.get_order(instId=instId, ordId=ordId)
+                    api_call_count += 1
+                    if api_call_count < max_api_calls_per_cycle:
+                        time.sleep(api_call_delay)  # Rate limiting
+                    
                     if result and result.get("data") and len(result["data"]) > 0:
                         order_data = result["data"][0]
                         fill_time_ms = order_data.get("fillTime", "")
@@ -2952,6 +2961,11 @@ def recover_orders_from_database(now: datetime):
                         f"⚠️ RECOVER: Failed to get order from OKX for {instId}, "
                         f"ordId={ordId}: {e}, falling back to create_time"
                     )
+            elif api_call_count >= max_api_calls_per_cycle:
+                logger.debug(
+                    f"⏸️ RECOVER: API rate limit reached ({max_api_calls_per_cycle} calls), "
+                    f"using create_time for remaining orders"
+                )
             
             # Fallback to create_time if fillTime not available
             if fill_time is None:
@@ -3027,81 +3041,122 @@ def recover_orders_from_database(now: datetime):
                 "size": db_size,
             })
 
+        # ✅ FIX: Group orders by instId and next_hour_close_time to handle different fill times
+        # This prevents early selling of orders that filled in later hours
         for instId, orders in momentum_orders_by_inst.items():
             with lock:
                 if instId in momentum_active_orders:
                     # Already tracked, skip
                     continue
 
-            # ✅ FIX: Get fillTime from OKX API for each order, use earliest fillTime
-            # This ensures accurate sell time calculation for late/partial fills
-            earliest_fill_time = None
+            # ✅ FIX: Get fillTime from OKX API for each order, calculate next_hour per order
+            # Group orders by their next_hour_close_time to handle different fill times
             api = get_trade_api()
+            orders_with_fill_time = []
+            api_call_count = 0
+            max_api_calls_per_cycle = 20  # Limit API calls per recovery cycle
+            api_call_delay = 0.1  # 100ms delay between calls
             
             if api is not None:
                 for order in orders:
                     ordId = order["ordId"]
-                    try:
-                        result = api.get_order(instId=instId, ordId=ordId)
-                        if result and result.get("data") and len(result["data"]) > 0:
-                            order_data = result["data"][0]
-                            fill_time_ms = order_data.get("fillTime", "")
-                            if fill_time_ms and fill_time_ms != "":
-                                try:
-                                    fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
-                                    if earliest_fill_time is None or fill_time < earliest_fill_time:
-                                        earliest_fill_time = fill_time
-                                    logger.debug(
-                                        f"✅ RECOVER: Using OKX fillTime for momentum {instId}, "
-                                        f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                                    )
-                                except (ValueError, TypeError):
-                                    pass
-                    except Exception as e:
+                    fill_time = None
+                    
+                    if api_call_count < max_api_calls_per_cycle:
+                        try:
+                            result = api.get_order(instId=instId, ordId=ordId)
+                            api_call_count += 1
+                            if api_call_count < max_api_calls_per_cycle:
+                                time.sleep(api_call_delay)  # Rate limiting
+                            
+                            if result and result.get("data") and len(result["data"]) > 0:
+                                order_data = result["data"][0]
+                                fill_time_ms = order_data.get("fillTime", "")
+                                if fill_time_ms and fill_time_ms != "":
+                                    try:
+                                        fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
+                                        logger.debug(
+                                            f"✅ RECOVER: Using OKX fillTime for momentum {instId}, "
+                                            f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                        )
+                                    except (ValueError, TypeError):
+                                        pass
+                        except Exception as e:
+                            logger.debug(
+                                f"⚠️ RECOVER: Failed to get order from OKX for momentum {instId}, "
+                                f"ordId={ordId}: {e}"
+                            )
+                    elif api_call_count >= max_api_calls_per_cycle:
                         logger.debug(
-                            f"⚠️ RECOVER: Failed to get order from OKX for momentum {instId}, "
-                            f"ordId={ordId}: {e}"
+                            f"⏸️ RECOVER: API rate limit reached for momentum {instId}, "
+                            f"using create_time for remaining orders"
                         )
-            
-            # Fallback to earliest create_time if fillTime not available
-            if earliest_fill_time is None:
-                earliest_fill_time = min(o["create_time"] for o in orders)
-                logger.debug(
-                    f"📝 RECOVER: Using earliest create_time as fallback for momentum {instId}"
-                )
-            
-            # Calculate next_hour_close_time from earliest fill_time
-            next_hour = earliest_fill_time.replace(
-                minute=0, second=0, microsecond=0
-            ) + timedelta(hours=1)
-
-            if now >= next_hour:
-                logger.warning(
-                    f"🔄 RECOVER: Found momentum orders not in memory: {instId}, "
-                    f"count={len(orders)}, earliest_fill_time={earliest_fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
-                    f"recovering to momentum_active_orders"
-                )
-
-                # Restore to momentum_active_orders
-                with lock:
-                    momentum_active_orders[instId] = {
-                        "ordIds": [o["ordId"] for o in orders],
-                        "buy_prices": [],  # Will be filled from DB if needed
-                        "buy_sizes": [float(o["size"]) for o in orders],
-                        "buy_times": [earliest_fill_time] * len(orders),  # Use fill_time
+                    
+                    # Fallback to create_time if fillTime not available
+                    if fill_time is None:
+                        fill_time = order["create_time"]
+                    
+                    # Calculate next_hour_close_time for this order
+                    next_hour = fill_time.replace(
+                        minute=0, second=0, microsecond=0
+                    ) + timedelta(hours=1)
+                    
+                    orders_with_fill_time.append({
+                        "ordId": ordId,
+                        "fill_time": fill_time,
                         "next_hour_close_time": next_hour,
-                        "sell_triggered": False,
-                        "last_sell_attempt_time": None,
-                    }
+                        "size": order["size"],
+                    })
+            
+            # Group orders by next_hour_close_time
+            orders_by_hour = {}
+            for order_info in orders_with_fill_time:
+                next_hour_key = order_info["next_hour_close_time"]
+                if next_hour_key not in orders_by_hour:
+                    orders_by_hour[next_hour_key] = []
+                orders_by_hour[next_hour_key].append(order_info)
+            
+            # Recover each group separately (only if past sell time)
+            for next_hour, hour_orders in orders_by_hour.items():
+                if now >= next_hour:
+                    logger.warning(
+                        f"🔄 RECOVER: Found momentum orders not in memory: {instId}, "
+                        f"count={len(hour_orders)}, next_hour={next_hour.strftime('%Y-%m-%d %H:%M:%S')}, "
+                        f"recovering to momentum_active_orders"
+                    )
 
-                # Trigger sell immediately
-                logger.warning(
-                    f"⏰ RECOVER SELL: {instId} (momentum), "
-                    f"triggering sell for recovered orders"
-                )
-                threading.Thread(
-                    target=process_momentum_sell_signal, args=(instId,), daemon=True
-                ).start()
+                    # Restore to momentum_active_orders (use instId + hour as key to avoid conflicts)
+                    # But since momentum_active_orders uses instId as key, we need to merge if exists
+                    with lock:
+                        if instId in momentum_active_orders:
+                            # Merge with existing orders
+                            existing = momentum_active_orders[instId]
+                            existing["ordIds"].extend([o["ordId"] for o in hour_orders])
+                            existing["buy_sizes"].extend([float(o["size"]) for o in hour_orders])
+                            existing["buy_times"].extend([o["fill_time"] for o in hour_orders])
+                            # Use earliest next_hour_close_time
+                            if next_hour < existing["next_hour_close_time"]:
+                                existing["next_hour_close_time"] = next_hour
+                        else:
+                            momentum_active_orders[instId] = {
+                                "ordIds": [o["ordId"] for o in hour_orders],
+                                "buy_prices": [],  # Will be filled from DB if needed
+                                "buy_sizes": [float(o["size"]) for o in hour_orders],
+                                "buy_times": [o["fill_time"] for o in hour_orders],
+                                "next_hour_close_time": next_hour,
+                                "sell_triggered": False,
+                                "last_sell_attempt_time": None,
+                            }
+
+                    # Trigger sell immediately
+                    logger.warning(
+                        f"⏰ RECOVER SELL: {instId} (momentum), "
+                        f"triggering sell for {len(hour_orders)} recovered orders "
+                        f"(next_hour={next_hour.strftime('%Y-%m-%d %H:%M:%S')})"
+                    )
+                    threading.Thread(
+                        target=process_momentum_sell_signal, args=(instId,), daemon=True
+                    ).start()
 
         cur.close()
         conn.close()

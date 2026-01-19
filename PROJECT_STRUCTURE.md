@@ -33,6 +33,7 @@ sudo systemctl start hour-trade
 ```
 
 ### 部署位置
+- ✅ **Railway** (推荐) - 持续运行，自动重启
 - ✅ VPS/云服务器（阿里云、腾讯云、AWS EC2）
 - ✅ 本地电脑（24/7运行）
 - ❌ **不适合** Vercel（需要持续 WebSocket 连接）
@@ -78,26 +79,29 @@ vercel --prod
 ### 文件
 - `src/crypto_remote/monitor_delist.py` - 监控退市
 - `src/crypto_remote/fetch_filled_orders.py` - 获取已成交订单
-- `src/crypto_remote/auto_sell_orders.py` - 自动卖出
 
 ### 功能
 - 定时任务（5分钟、15分钟、每日）
 - 退市保护
 - 订单跟踪
-- 自动化卖出
+
+**注意**：所有卖出操作由 `websocket_limit_trading.py` 处理，具有双重保障机制（K线事件 + 超时检查）
 
 ### 运行方式
-**Cloudflare Workers Cron**
+**Railway Cron Jobs**
 
-```bash
-# 部署 Cloudflare Worker
-cd src/crypto_remote
-wrangler deploy
-```
+在 Railway 项目中添加 Cron Jobs 服务，配置定时任务：
+- 每 5 分钟：`monitor_delist.py` + `cancel_pending_limits.py`
+- 每 15 分钟：`fetch_filled_orders.py`
+- 每天 23:55：`cancel_pending_triggers.py`
+- 每天 00:05：`create_algo_triggers.py`
+
+详细配置见 `RAILWAY_CRON_SETUP.md`
 
 ### 部署位置
-- ✅ **Cloudflare Workers** (已配置) - 精确的 cron 调度
-- ❌ **不使用** GitHub Actions（Workers 更精确）
+- ✅ **Railway Cron Jobs** - 与主程序在同一平台，共享环境变量
+- ❌ **不需要** Cloudflare Workers
+- ❌ **不需要** GitHub Actions
 
 ---
 
@@ -105,9 +109,9 @@ wrangler deploy
 
 | 组件 | 部署位置 | 原因 | GitHub Actions? |
 |------|---------|------|----------------|
-| WebSocket交易机器人 | VPS/本地服务器 | 需要持续运行 | ❌ 不需要 |
+| WebSocket交易机器人 | Railway | 需要持续运行 | ❌ 不需要 |
 | Web仪表板 | Vercel | 按需触发，自动部署 | ❌ 不需要 |
-| 自动化任务 | Cloudflare Workers | 精确cron调度 | ❌ 不需要 |
+| 自动化任务 | Railway Cron Jobs | 与主程序同平台 | ❌ 不需要 |
 
 ---
 
@@ -141,36 +145,31 @@ vercel --prod
 - `OKX_SECRET`
 - `OKX_PASSPHRASE`
 
-### Step 3: 运行交易机器人（服务器）
+### Step 3: 部署交易机器人到 Railway
 
-```bash
-# SSH 到你的服务器
-ssh user@your-server
+1. **在 Railway 中创建项目**
+   - 连接 GitHub 仓库
+   - Railway 会自动检测并部署
 
-# 克隆代码
-git clone https://github.com/xucheng2024/hour_trade.git
-cd hour_trade
+2. **配置环境变量**
+   - 在 Railway Dashboard 的 Variables 标签中设置：
+     - `DATABASE_URL`
+     - `OKX_API_KEY`
+     - `OKX_SECRET_KEY`
+     - `OKX_PASSPHRASE`
+     - `SIMULATION_MODE=true` (测试模式)
 
-# 配置环境
-cp .env.example .env
-nano .env  # 编辑API密钥
+3. **Railway 会自动运行**
+   - 根据 `railway.json` 或 `Procfile` 自动启动
+   - 主程序：`python websocket_limit_trading.py`
 
-# 安装依赖
-pip install -r requirements.txt
+详细步骤见 `RAILWAY_DEPLOY.md`
 
-# 运行（后台）
-nohup python websocket_limit_trading.py > output.log 2>&1 &
-```
+### Step 4: 配置定时任务（Railway）
 
-### Step 4: 部署自动化任务（可选）
+在 Railway Dashboard 中添加 Cron Jobs 服务，配置定时任务。
 
-如果需要使用 crypto_remote 模块:
-
-```bash
-cd src/crypto_remote
-wrangler login
-wrangler deploy
-```
+详细步骤见 `RAILWAY_CRON_SETUP.md`
 
 ---
 
@@ -187,9 +186,9 @@ wrangler deploy
    - ❌ 不需要额外的 Actions
 
 3. **自动化任务**
-   - Cloudflare Workers 提供精确的 cron
-   - 比 GitHub Actions 更稳定（分钟级）
-   - ❌ 已有更好的方案
+   - Railway Cron Jobs 与主程序在同一平台
+   - 共享环境变量，配置简单
+   - ✅ 推荐使用 Railway Cron Jobs
 
 ---
 
@@ -206,9 +205,9 @@ wrangler deploy
 - ❌ Secrets 配置（Vercel 有自己的环境变量）
 
 **部署工具**:
-- WebSocket 机器人 → 服务器
+- WebSocket 机器人 → Railway
 - Web 仪表板 → Vercel
-- 自动化任务 → Cloudflare Workers
+- 自动化任务 → Railway Cron Jobs
 
 ---
 

@@ -94,7 +94,6 @@ src/
 ├── crypto_remote/  # 自动化模块
 │   ├── monitor_delist.py
 │   ├── fetch_filled_orders.py
-│   ├── auto_sell_orders.py
 │   └── ... (更多自动化脚本)
 └── system/         # 系统功能
     └── okx_sqlite_create_table.py

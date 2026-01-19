@@ -247,8 +247,7 @@ hour_trade/
 │   │   └── db_connection.py       # PostgreSQL connection
 │   └── crypto_remote/             # Automation modules
 │       ├── monitor_delist.py      # Delisting protection
-│       ├── fetch_filled_orders.py # Order tracking
-│       └── auto_sell_orders.py    # Automated selling
+│       └── fetch_filled_orders.py # Order tracking
 ├── requirements.txt
 ├── vercel.json
 └── .env.example
