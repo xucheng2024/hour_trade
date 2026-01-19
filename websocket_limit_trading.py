@@ -2004,17 +2004,17 @@ def process_sell_signal(instId: str):
                             del active_orders[instId]
                     return
 
-                    # ✅ FIX: Allow both "filled" and "partially_filled" states for selling
-                    # Use actual filled size for selling
-                    if (
-                        db_state not in ["filled", "partially_filled"]
-                        or not db_size
-                        or db_size == "0"
-                    ):
-                        logger.warning(
-                            f"{STRATEGY_NAME} Order not ready to sell: {instId}, {ordId}, "
-                            f"state={db_state}, size={db_size}"
-                        )
+                # ✅ FIX: Allow both "filled" and "partially_filled" states for selling
+                # Use actual filled size for selling
+                if (
+                    db_state not in ["filled", "partially_filled"]
+                    or not db_size
+                    or db_size == "0"
+                ):
+                    logger.warning(
+                        f"{STRATEGY_NAME} Order not ready to sell: {instId}, {ordId}, "
+                        f"state={db_state}, size={db_size}"
+                    )
                     # ✅ FIX: Don't remove from active_orders if state is empty or not filled yet
                     # Wait for order to be filled (might be delayed)
                     if db_state == "":
