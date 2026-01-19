@@ -943,14 +943,10 @@ def on_ticker_message(ws, msg_string):
                                     f"on ticker update (coin is active)"
                                 )
 
-                            # ✅ FIX: Don't update volume from ticker (unit mismatch)
-                            # Only update price - volume should come from candle WebSocket
-                            if momentum_strategy is not None:
-                                # Get last volume from history if available, otherwise skip volume update
-                                # This avoids mixing ticker volume (normalized 24h) with candle volume (actual)
-                                momentum_strategy.update_price_volume(
-                                    instId, last_price, 0.0
-                                )
+                            # ✅ OPTIMIZATION: Don't update from ticker - only use 1H candle data
+                            # Strategy now requires unified time scale (1H candles only)
+                            # Price and volume will be updated together from candle WebSocket
+                            # This ensures M=10 represents a true 10-hour window
 
                             # Check if we should buy (original strategy)
                             if (
@@ -1061,35 +1057,9 @@ def on_ticker_message(ws, msg_string):
                                     f"diff={price_diff_pct:.2f}%"
                                 )
 
-                    # Check momentum strategy buy signal (independent of original strategy)
-                    if momentum_strategy is not None and instId in crypto_limits:
-                        should_buy, buy_pct = momentum_strategy.check_buy_signal(
-                            instId, last_price
-                        )
-                        if should_buy and buy_pct:
-                            with lock:
-                                # Check if already processing or has active orders
-                                if instId in momentum_pending_buys:
-                                    continue
-                                # Check if already at max position
-                                position = momentum_strategy.get_position_info(instId)
-                                if (
-                                    position
-                                    and position.get("total_buy_pct", 0.0) >= 0.70
-                                ):
-                                    continue
-                                momentum_pending_buys[instId] = True
-
-                            logger.warning(
-                                f"🎯 MOMENTUM BUY SIGNAL: {instId}, "
-                                f"price={last_price:.6f}, buy_pct={buy_pct:.1%}"
-                            )
-                            # Trigger buy in separate thread
-                            threading.Thread(
-                                target=process_momentum_buy_signal,
-                                args=(instId, last_price, buy_pct),
-                                daemon=True,
-                            ).start()
+                    # ✅ OPTIMIZATION: Momentum strategy buy signal moved to candle event
+                    # Now uses unified time scale (1H candle) for both history and trigger
+                    # Signal check removed from ticker to maintain consistency
     except Exception as e:
         logger.error(f"Ticker message error: {msg_string}, {e}")
 
@@ -1799,6 +1769,66 @@ def on_candle_message(ws, msg_string):
                                 momentum_strategy.update_price_volume(
                                     instId, close_price, volume_to_use
                                 )
+
+                                # ✅ OPTIMIZATION: Check buy signal on candle update
+                                # Use candle close_price instead of ticker price
+                                # Note: Check after each candle update;
+                                # momentum_pending_buys prevents duplicates
+                                if (
+                                    momentum_strategy is not None
+                                    and instId in crypto_limits
+                                ):
+                                    should_buy, buy_pct = (
+                                        momentum_strategy.check_buy_signal(
+                                            instId, close_price
+                                        )
+                                    )
+                                    if should_buy and buy_pct:
+                                        with lock:
+                                            # Check if already processing or has active orders
+                                            if instId in momentum_pending_buys:
+                                                logger.debug(
+                                                    f"⏭️ {instId} Momentum buy already pending, skipping"
+                                                )
+                                            elif instId in momentum_active_orders:
+                                                logger.debug(
+                                                    f"⏭️ {instId} Momentum order already active, skipping"
+                                                )
+                                            else:
+                                                # Check if already at max position
+                                                position = (
+                                                    momentum_strategy.get_position_info(
+                                                        instId
+                                                    )
+                                                )
+                                                if (
+                                                    position
+                                                    and position.get(
+                                                        "total_buy_pct", 0.0
+                                                    )
+                                                    >= 0.70
+                                                ):
+                                                    logger.debug(
+                                                        f"⏸️ {instId} Already at max position: "
+                                                        f"{position.get('total_buy_pct', 0.0):.1%}"
+                                                    )
+                                                else:
+                                                    momentum_pending_buys[instId] = True
+
+                                                    logger.warning(
+                                                        f"🎯 MOMENTUM BUY SIGNAL (1H candle): {instId}, "
+                                                        f"close_price={close_price:.6f}, buy_pct={buy_pct:.1%}"
+                                                    )
+                                                    # Trigger buy in separate thread
+                                                    threading.Thread(
+                                                        target=process_momentum_buy_signal,
+                                                        args=(
+                                                            instId,
+                                                            close_price,
+                                                            buy_pct,
+                                                        ),
+                                                        daemon=True,
+                                                    ).start()
 
                     # 'confirm' = '1' means candle is confirmed (closed)
                     if confirm == "1":
