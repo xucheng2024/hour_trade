@@ -472,33 +472,8 @@ def process_momentum_sell_signal(
                                 f"{strategy_name} Order still pending fill: {instId}, {ordId}, "
                                 f"will retry later, continuing to next order"
                             )
-                            with lock:
-                                if instId in momentum_active_orders:
-                                    # ✅ OPTIMIZED: Use orders dict structure
-                                    if (
-                                        "pending_ordIds"
-                                        not in momentum_active_orders[instId]
-                                    ):
-                                        momentum_active_orders[instId][
-                                            "pending_ordIds"
-                                        ] = {}
-                                    momentum_active_orders[instId]["pending_ordIds"][
-                                        ordId
-                                    ] = {
-                                        "first_pending_time": momentum_active_orders[
-                                            instId
-                                        ]["pending_ordIds"]
-                                        .get(ordId, {})
-                                        .get("first_pending_time")
-                                        or datetime.now(),
-                                        "retry_count": momentum_active_orders[instId][
-                                            "pending_ordIds"
-                                        ]
-                                        .get(ordId, {})
-                                        .get("retry_count", 0)
-                                        + 1,
-                                        "last_check_time": datetime.now(),
-                                    }
+                            # Note: Orders dict already tracks all orders, no need for separate pending_ordIds
+                            # The order will be retried on next sell check if it becomes filled
                         continue
 
                     try:

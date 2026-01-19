@@ -187,50 +187,13 @@ def check_and_cancel_unfilled_order_after_timeout(
                                 del active_orders[instId]
                         elif strategy_name == "momentum_volume_exhaustion":
                             if instId in momentum_active_orders:
-                                if ordId in momentum_active_orders[instId].get(
-                                    "ordIds", []
-                                ):
-                                    idx = momentum_active_orders[instId][
-                                        "ordIds"
-                                    ].index(ordId)
-                                    momentum_active_orders[instId]["ordIds"].pop(idx)
-                                    if idx < len(
-                                        momentum_active_orders[instId].get(
-                                            "buy_prices", []
-                                        )
-                                    ):
-                                        momentum_active_orders[instId][
-                                            "buy_prices"
-                                        ].pop(idx)
-                                    if idx < len(
-                                        momentum_active_orders[instId].get(
-                                            "buy_sizes", []
-                                        )
-                                    ):
-                                        momentum_active_orders[instId]["buy_sizes"].pop(
-                                            idx
-                                        )
-                                    if idx < len(
-                                        momentum_active_orders[instId].get(
-                                            "buy_times", []
-                                        )
-                                    ):
-                                        momentum_active_orders[instId]["buy_times"].pop(
-                                            idx
-                                        )
-                                    if (
-                                        "next_hour_close_times"
-                                        in momentum_active_orders[instId]
-                                    ):
-                                        if idx < len(
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ]
-                                        ):
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ].pop(idx)
-                                # ✅ OPTIMIZED: Check orders dict instead of ordIds list
+                                # ✅ FIXED: Use orders dict instead of legacy lists
+                                if ordId in momentum_active_orders[instId].get("orders", {}):
+                                    del momentum_active_orders[instId]["orders"][ordId]
+                                    logger.warning(
+                                        f"{strategy_name} Removed canceled momentum order: {instId}, ordId={ordId}"
+                                    )
+                                # Check if no more orders left
                                 if not momentum_active_orders[instId].get("orders", {}):
                                     del momentum_active_orders[instId]
                 else:
