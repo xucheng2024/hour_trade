@@ -88,9 +88,11 @@ def check_and_cancel_unfilled_order_after_timeout(
                         )
                         fill_time = datetime.now()
 
-                    next_hour = fill_time.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
+                    # Sell at 55 minutes of the hour when order was filled
+                    next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
+                    if fill_time.minute >= 55:
+                        next_hour = next_hour + timedelta(hours=1)
                     sell_time_ms = int(next_hour.timestamp() * 1000)
 
                     if not acc_fill_sz or acc_fill_sz == "" or acc_fill_sz == "0":
@@ -296,9 +298,11 @@ def check_and_cancel_unfilled_order_after_timeout(
                         )
                         fill_time = datetime.now()
 
-                    next_hour = fill_time.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
+                    # Sell at 55 minutes of the hour when order was filled
+                    next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
+                    if fill_time.minute >= 55:
+                        next_hour = next_hour + timedelta(hours=1)
                     sell_time_ms = int(next_hour.timestamp() * 1000)
 
                     if not acc_fill_sz or acc_fill_sz == "" or acc_fill_sz == "0":
