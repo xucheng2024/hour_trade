@@ -99,9 +99,13 @@ def buy_limit_order(
     cur = conn.cursor()
     try:
         now = datetime.now()
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        # Sell at 55 minutes of current hour (e.g., 10:55)
+        sell_time_dt = now.replace(minute=55, second=0, microsecond=0)
+        # If current time is past 55 minutes, sell at next hour's 55 minutes
+        if now.minute >= 55:
+            sell_time_dt = sell_time_dt + timedelta(hours=1)
         create_time = int(now.timestamp() * 1000)
-        sell_time = int(next_hour.timestamp() * 1000)
+        sell_time = int(sell_time_dt.timestamp() * 1000)
         order_state = "filled" if simulation_mode else ""
 
         cur.execute(
@@ -395,9 +399,13 @@ def buy_momentum_order(
     cur = conn.cursor()
     try:
         now = datetime.now()
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        # Sell at 55 minutes of current hour (e.g., 10:55)
+        sell_time_dt = now.replace(minute=55, second=0, microsecond=0)
+        # If current time is past 55 minutes, sell at next hour's 55 minutes
+        if now.minute >= 55:
+            sell_time_dt = sell_time_dt + timedelta(hours=1)
         create_time = int(now.timestamp() * 1000)
-        sell_time = int(next_hour.timestamp() * 1000)
+        sell_time = int(sell_time_dt.timestamp() * 1000)
         order_state = "filled" if simulation_mode else ""
 
         cur.execute(
