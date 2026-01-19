@@ -81,6 +81,13 @@ def get_trading_records():
         size = float(row["size"] or 0)
         state = row["state"] or "active"
 
+        # Calculate profit/loss for this trade
+        trade_profit = 0.0
+        trade_profit_pct = 0.0
+        if buy_price > 0 and sell_price > 0 and size > 0:
+            trade_profit = (sell_price - buy_price) * size
+            trade_profit_pct = ((sell_price - buy_price) / buy_price) * 100
+
         trade = {
             "ordId": row["ordid"],
             "buy_time": fmt_time(row["create_time"]),
@@ -91,6 +98,8 @@ def get_trading_records():
             "size": size,
             "amount": buy_price * size if buy_price > 0 and size > 0 else 0.0,
             "state": state,
+            "profit": trade_profit,
+            "profit_pct": trade_profit_pct,
         }
 
         cryptos[inst_id]["trades"].append(trade)

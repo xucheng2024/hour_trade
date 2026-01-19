@@ -29,6 +29,10 @@
              text-transform: uppercase; padding: 6px 12px; text-align: left; }
         td { padding: 8px 12px; border-bottom: 1px solid #f1f3f5; }
         tr:hover { background: #f8f9fa; }
+        tr.profit-row { background: #d1e7dd; }
+        tr.profit-row:hover { background: #a3d9b1; }
+        tr.loss-row { background: #f8d7da; }
+        tr.loss-row:hover { background: #f5c2c7; }
         .side-buy { color: #198754; font-weight: 600; }
         .side-sell { color: #dc3545; font-weight: 600; }
         .status-badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
@@ -123,7 +127,7 @@
                             <thead>
                                 <tr>
                                     <th>Time</th><th>Type</th><th>Buy Price</th><th>Sell Price</th>
-                                    <th>Size</th><th>Amount</th><th>Status</th>
+                                    <th>Size</th><th>Amount</th><th>Profit %</th><th>Status</th>
                                 </tr>
                             </thead>
                             <tbody>`;
@@ -146,14 +150,28 @@
                     const sellPrice = trade.sell_price > 0 ? formatPrice(trade.sell_price) : '-';
                     const statusClass = trade.state === 'sold out' ? 'status-sold' : 'status-active';
                     
+                    // Calculate profit percentage
+                    let profitPct = '-';
+                    let rowClass = '';
+                    if (trade.profit_pct !== undefined && trade.sell_price > 0 && trade.price > 0) {
+                        profitPct = trade.profit_pct.toFixed(2) + '%';
+                        // Add row class based on profit/loss
+                        if (trade.profit_pct > 0) {
+                            rowClass = 'profit-row';
+                        } else if (trade.profit_pct < 0) {
+                            rowClass = 'loss-row';
+                        }
+                    }
+                    
                     html += `
-                        <tr>
+                        <tr class="${rowClass}">
                             <td>${timeStr}</td>
                             <td><span class="side-${trade.side}">${trade.side.toUpperCase()}</span></td>
                             <td>${buyPrice}</td>
                             <td>${sellPrice}</td>
                             <td>${trade.size.toFixed(6)}</td>
                             <td>${trade.amount.toFixed(2)}</td>
+                            <td class="${trade.profit_pct > 0 ? 'profit-positive' : trade.profit_pct < 0 ? 'profit-negative' : ''}">${profitPct}</td>
                             <td><span class="status-badge ${statusClass}">${trade.state}</span></td>
                         </tr>`;
                 }
