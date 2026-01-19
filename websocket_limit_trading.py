@@ -1383,6 +1383,10 @@ def check_and_cancel_unfilled_order_after_timeout(
                                         momentum_active_orders[instId]["buy_times"].pop(
                                             idx
                                         )
+                                    # ✅ FIX: Also remove from next_hour_close_times list
+                                    if "next_hour_close_times" in momentum_active_orders[instId]:
+                                        if idx < len(momentum_active_orders[instId]["next_hour_close_times"]):
+                                            momentum_active_orders[instId]["next_hour_close_times"].pop(idx)
                                 # If no more orders, remove the entry
                                 if not momentum_active_orders[instId].get("ordIds", []):
                                     del momentum_active_orders[instId]
@@ -2373,6 +2377,10 @@ def process_momentum_sell_signal(instId: str):
                                         momentum_active_orders[instId]["buy_times"].pop(
                                             idx
                                         )
+                                    # ✅ FIX: Also remove from next_hour_close_times list
+                                    if "next_hour_close_times" in momentum_active_orders[instId]:
+                                        if idx < len(momentum_active_orders[instId]["next_hour_close_times"]):
+                                            momentum_active_orders[instId]["next_hour_close_times"].pop(idx)
                         continue
 
                     db_state = row[0] if row[0] else ""
@@ -2490,6 +2498,10 @@ def process_momentum_sell_signal(instId: str):
                                 momentum_active_orders[instId].get("buy_times", [])
                             ):
                                 momentum_active_orders[instId]["buy_times"].pop(idx)
+                            # ✅ FIX: Also remove from next_hour_close_times list
+                            if "next_hour_close_times" in momentum_active_orders[instId]:
+                                if idx < len(momentum_active_orders[instId]["next_hour_close_times"]):
+                                    momentum_active_orders[instId]["next_hour_close_times"].pop(idx)
 
             # ✅ FIX: Only remove when all ordIds are cleared
             with lock:
