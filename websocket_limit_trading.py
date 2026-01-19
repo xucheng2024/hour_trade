@@ -447,8 +447,12 @@ def load_crypto_limits():
     """Load crypto limits from hour_limit table in database"""
     global crypto_limits
     if _load_crypto_limits:
-        crypto_limits = _load_crypto_limits(get_db_connection)
-        return len(crypto_limits) > 0
+        try:
+            crypto_limits = _load_crypto_limits(get_db_connection)
+            return len(crypto_limits) > 0
+        except Exception as e:
+            logger.error(f"Failed to load crypto limits from database: {e}")
+            return False
     logger.error("load_crypto_limits not available - module import failed")
     return False
 
@@ -1012,9 +1016,20 @@ def main():
     logger.warning(f"Starting {STRATEGY_NAME} trading system")
 
     # Load crypto limits
-    if not load_crypto_limits():
-        logger.error("Failed to load crypto limits, exiting")
-        return
+    max_retries = 3
+    retry_delay = 2
+    for attempt in range(max_retries):
+        if load_crypto_limits():
+            break
+        if attempt < max_retries - 1:
+            logger.warning(
+                f"Failed to load crypto limits (attempt {attempt + 1}/{max_retries}), "
+                f"retrying in {retry_delay} seconds..."
+            )
+            time.sleep(retry_delay)
+        else:
+            logger.error("Failed to load crypto limits after all retries, exiting")
+            return
 
     if not crypto_limits:
         logger.error("No crypto limits loaded, exiting")
