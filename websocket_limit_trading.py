@@ -903,43 +903,60 @@ def check_sell_timeout():
             monitor_thread_count()
 
             # ✅ ENHANCED: Check all orders (memory + DB) for sell triggers
+            # Check at 55 minutes and 59 minutes of each hour
+            current_minute = now.minute
+            should_check_sell = current_minute == 55 or current_minute == 59
+
             orders_to_sell = []
 
-            # Check original strategy orders from memory
-            with lock:
-                for instId, order_info in list(active_orders.items()):
-                    next_hour_close = order_info.get("next_hour_close_time")
-                    if next_hour_close and now >= next_hour_close:
-                        # Past sell time, check if already triggered
-                        if not order_info.get("sell_triggered", False):
-                            orders_to_sell.append((instId, "original"))
-                            # ✅ STRICT DEDUP: Set sell_triggered BEFORE attempting sell
-                            # Will be reset if sell fails
-                            order_info["sell_triggered"] = True
-                            order_info["last_sell_attempt_time"] = now
+            if should_check_sell:
+                # Check original strategy orders from memory
+                with lock:
+                    for instId, order_info in list(active_orders.items()):
+                        next_hour_close = order_info.get("next_hour_close_time")
+                        # Check if sell time has passed (from previous hours)
+                        if next_hour_close and now >= next_hour_close:
+                            # Past sell time, check if already triggered
+                            if not order_info.get("sell_triggered", False):
+                                orders_to_sell.append((instId, "original"))
+                                # ✅ STRICT DEDUP: Set sell_triggered BEFORE attempting sell
+                                # Will be reset if sell fails
+                                order_info["sell_triggered"] = True
+                                order_info["last_sell_attempt_time"] = now
+                                logger.warning(
+                                    f"⏰ SELL CHECK ({current_minute}min): {instId} (original) "
+                                    f"past sell_time={next_hour_close.strftime('%H:%M:%S')}, triggering sell"
+                                )
 
-                # Check momentum strategy orders from memory
-                # ✅ FIX: Check each order's sell time individually
-                for instId, order_info in list(momentum_active_orders.items()):
-                    ordIds = order_info.get("ordIds", [])
-                    next_hour_close_times = order_info.get("next_hour_close_times", [])
-                    # Check if any order is ready to sell
-                    has_ready_orders = False
-                    for idx, ordId in enumerate(ordIds):
-                        if idx < len(next_hour_close_times):
-                            order_sell_time = next_hour_close_times[idx]
-                            if now >= order_sell_time:
+                    # Check momentum strategy orders from memory
+                    # ✅ FIX: Check each order's sell time individually
+                    for instId, order_info in list(momentum_active_orders.items()):
+                        ordIds = order_info.get("ordIds", [])
+                        next_hour_close_times = order_info.get("next_hour_close_times", [])
+                        # Check if any order is ready to sell (past sell time)
+                        has_ready_orders = False
+                        for idx, ordId in enumerate(ordIds):
+                            if idx < len(next_hour_close_times):
+                                order_sell_time = next_hour_close_times[idx]
+                                if now >= order_sell_time:
+                                    has_ready_orders = True
+                                    logger.warning(
+                                        f"⏰ SELL CHECK ({current_minute}min): {instId} (momentum) "
+                                        f"ordId={ordId} past sell_time={order_sell_time.strftime('%H:%M:%S')}"
+                                    )
+                                    break
+                            else:
+                                # Fallback: if no sell time, assume ready
                                 has_ready_orders = True
                                 break
-                        else:
-                            # Fallback: if no sell time, assume ready
-                            has_ready_orders = True
-                            break
 
-                    if has_ready_orders and not order_info.get("sell_triggered", False):
-                        orders_to_sell.append((instId, "momentum"))
-                        order_info["sell_triggered"] = True
-                        order_info["last_sell_attempt_time"] = now
+                        if has_ready_orders and not order_info.get("sell_triggered", False):
+                            orders_to_sell.append((instId, "momentum"))
+                            order_info["sell_triggered"] = True
+                            order_info["last_sell_attempt_time"] = now
+                            logger.warning(
+                                f"⏰ SELL CHECK ({current_minute}min): {instId} (momentum) triggering sell"
+                            )
 
             # Trigger sells outside of lock
             for instId, strategy_type in orders_to_sell:
