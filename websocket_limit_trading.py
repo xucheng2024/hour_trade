@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -244,6 +245,11 @@ momentum_active_orders: Dict[str, Dict] = (
 last_intra_hour_check: Dict[str, datetime] = {}  # instId -> last check time
 momentum_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 lock = threading.Lock()
+
+# Thread pool for buy/sell operations (limit concurrent threads)
+# Default max_workers=10, configurable via THREAD_POOL_MAX_WORKERS env var
+thread_pool_max_workers = int(os.getenv("THREAD_POOL_MAX_WORKERS", "10"))
+thread_pool = ThreadPoolExecutor(max_workers=thread_pool_max_workers, thread_name_prefix="trade")
 
 # Initialize momentum-volume strategy
 momentum_strategy: Optional[MomentumVolumeStrategy] = None
@@ -561,6 +567,7 @@ def on_ticker_message(ws, msg_string):
             fetch_current_hour_open_price,
             calculate_limit_price,
             process_buy_signal,
+            thread_pool,  # Pass thread pool for async processing
         )
     else:
         logger.error("on_ticker_message not available - module import failed")
@@ -676,6 +683,7 @@ def on_candle_message(ws, msg_string):
             process_momentum_buy_signal,
             process_momentum_sell_signal,
             INTRA_HOUR_CHECK_THROTTLE_SECONDS,
+            thread_pool,  # Pass thread pool for async processing
         )
     else:
         logger.error("on_candle_message not available - module import failed")
@@ -888,13 +896,14 @@ def check_sell_timeout():
             time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)
             now = datetime.now()
 
-            # ✅ FIX: Sync with database every cycle (1 minute)
-            # This ensures memory state matches database state
-            sync_counter += 1
-            sync_orders_from_database()
-
-            # ✅ NEW: Reverse validation from DB - find filled orders not yet sold
-            recover_orders_from_database(now)
+            # ✅ OPTIMIZED: Sync with database only at 55 and 59 minutes
+            # This reduces DB load while still ensuring consistency
+            current_minute = now.minute
+            if current_minute == 55 or current_minute == 59:
+                sync_counter += 1
+                sync_orders_from_database()
+                # Reverse validation from DB - find filled orders not yet sold
+                recover_orders_from_database(now)
 
             # ✅ NEW: Monitor WebSocket health - alert if candles not received
             monitor_websocket_health(now)
@@ -929,23 +938,21 @@ def check_sell_timeout():
                                 )
 
                     # Check momentum strategy orders from memory
-                    # ✅ FIX: Check each order's sell time individually
+                    # ✅ OPTIMIZED: Use orders dict instead of parallel lists
                     for instId, order_info in list(momentum_active_orders.items()):
-                        ordIds = order_info.get("ordIds", [])
-                        next_hour_close_times = order_info.get("next_hour_close_times", [])
+                        orders_dict = order_info.get("orders", {})
                         # Check if any order is ready to sell (past sell time)
                         has_ready_orders = False
-                        for idx, ordId in enumerate(ordIds):
-                            if idx < len(next_hour_close_times):
-                                order_sell_time = next_hour_close_times[idx]
-                                if now >= order_sell_time:
-                                    has_ready_orders = True
-                                    logger.warning(
-                                        f"⏰ SELL CHECK ({current_minute}min): {instId} (momentum) "
-                                        f"ordId={ordId} past sell_time={order_sell_time.strftime('%H:%M:%S')}"
-                                    )
-                                    break
-                            else:
+                        for ordId, order_data in orders_dict.items():
+                            order_sell_time = order_data.get("next_hour_close_time")
+                            if order_sell_time and now >= order_sell_time:
+                                has_ready_orders = True
+                                logger.warning(
+                                    f"⏰ SELL CHECK ({current_minute}min): {instId} (momentum) "
+                                    f"ordId={ordId} past sell_time={order_sell_time.strftime('%H:%M:%S')}"
+                                )
+                                break
+                            elif not order_sell_time:
                                 # Fallback: if no sell time, assume ready
                                 has_ready_orders = True
                                 break
@@ -958,20 +965,16 @@ def check_sell_timeout():
                                 f"⏰ SELL CHECK ({current_minute}min): {instId} (momentum) triggering sell"
                             )
 
-            # Trigger sells outside of lock
+            # Trigger sells outside of lock using thread pool
             for instId, strategy_type in orders_to_sell:
                 logger.warning(
                     f"⏰ TIMEOUT SELL: {instId} ({strategy_type}), "
                     f"next_hour_close_time reached, triggering sell"
                 )
                 if strategy_type == "original":
-                    threading.Thread(
-                        target=process_sell_signal, args=(instId,), daemon=True
-                    ).start()
+                    thread_pool.submit(process_sell_signal, instId)
                 elif strategy_type == "momentum":
-                    threading.Thread(
-                        target=process_momentum_sell_signal, args=(instId,), daemon=True
-                    ).start()
+                    thread_pool.submit(process_momentum_sell_signal, instId)
         except Exception as e:
             logger.error(f"Error in check_sell_timeout: {e}")
             time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)  # Wait on error

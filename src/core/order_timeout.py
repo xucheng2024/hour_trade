@@ -44,7 +44,8 @@ def check_and_cancel_unfilled_order_after_timeout(
                     order_exists = True
             elif strategy_name == "momentum_volume_exhaustion":
                 if instId in momentum_active_orders:
-                    if ordId in momentum_active_orders[instId].get("ordIds", []):
+                    # ✅ OPTIMIZED: Check orders dict instead of ordIds list
+                    if ordId in momentum_active_orders[instId].get("orders", {}):
                         order_exists = True
 
             if not order_exists:
@@ -151,52 +152,10 @@ def check_and_cancel_unfilled_order_after_timeout(
                                 )
                         elif strategy_name == "momentum_volume_exhaustion":
                             if instId in momentum_active_orders:
-                                if ordId in momentum_active_orders[instId].get(
-                                    "ordIds", []
-                                ):
-                                    idx = momentum_active_orders[instId][
-                                        "ordIds"
-                                    ].index(ordId)
-                                    if idx < len(
-                                        momentum_active_orders[instId].get(
-                                            "buy_sizes", []
-                                        )
-                                    ):
-                                        momentum_active_orders[instId]["buy_sizes"][
-                                            idx
-                                        ] = filled_size
-                                    # Update next_hour_close_times list, not singular next_hour_close_time
-                                    if (
-                                        "next_hour_close_times"
-                                        not in momentum_active_orders[instId]
-                                    ):
-                                        momentum_active_orders[instId][
-                                            "next_hour_close_times"
-                                        ] = []
-                                    if idx < len(
-                                        momentum_active_orders[instId][
-                                            "next_hour_close_times"
-                                        ]
-                                    ):
-                                        momentum_active_orders[instId][
-                                            "next_hour_close_times"
-                                        ][idx] = next_hour
-                                    else:
-                                        # Extend list if needed
-                                        while (
-                                            len(
-                                                momentum_active_orders[instId][
-                                                    "next_hour_close_times"
-                                                ]
-                                            )
-                                            <= idx
-                                        ):
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ].append(next_hour)
-                                        momentum_active_orders[instId][
-                                            "next_hour_close_times"
-                                        ][idx] = next_hour
+                                # ✅ OPTIMIZED: Use orders dict instead of parallel lists
+                                if ordId in momentum_active_orders[instId].get("orders", {}):
+                                    momentum_active_orders[instId]["orders"][ordId]["buy_size"] = filled_size
+                                    momentum_active_orders[instId]["orders"][ordId]["next_hour_close_time"] = next_hour
                                     logger.warning(
                                         f"{strategy_name} Updated momentum_active_order for partial fill: {instId}, "
                                         f"ordId={ordId}, filled_size={filled_size}, "
@@ -347,46 +306,13 @@ def check_and_cancel_unfilled_order_after_timeout(
                                     )
                             elif strategy_name == "momentum_volume_exhaustion":
                                 if instId in momentum_active_orders:
-                                    if ordId in momentum_active_orders[instId].get(
-                                        "ordIds", []
-                                    ):
-                                        idx = momentum_active_orders[instId][
-                                            "ordIds"
-                                        ].index(ordId)
-                                        if (
-                                            "next_hour_close_times"
-                                            not in momentum_active_orders[instId]
-                                        ):
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ] = []
-                                        if idx < len(
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ]
-                                        ):
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ][idx] = next_hour
-                                        else:
-                                            while (
-                                                len(
-                                                    momentum_active_orders[instId][
-                                                        "next_hour_close_times"
-                                                    ]
-                                                )
-                                                <= idx
-                                            ):
-                                                momentum_active_orders[instId][
-                                                    "next_hour_close_times"
-                                                ].append(next_hour)
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ][idx] = next_hour
-                                    logger.warning(
-                                        f"{strategy_name} Updated momentum_active_order for fill: {instId}, "
-                                        f"ordId={ordId}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
-                                    )
+                                    # ✅ OPTIMIZED: Simple dict update instead of complex index management
+                                    if ordId in momentum_active_orders[instId].get("orders", {}):
+                                        momentum_active_orders[instId]["orders"][ordId]["next_hour_close_time"] = next_hour
+                                        logger.warning(
+                                            f"{strategy_name} Updated momentum_active_order for fill: {instId}, "
+                                            f"ordId={ordId}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                        )
 
                         cur.close()
                     finally:

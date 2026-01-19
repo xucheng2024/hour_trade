@@ -29,6 +29,7 @@ def on_ticker_message(
     fetch_current_hour_open_price_func,
     calculate_limit_price_func,
     process_buy_signal_func,
+    thread_pool=None,  # Optional thread pool for async processing
 ):
     """Handle ticker WebSocket messages"""
     if msg_string == "pong":
@@ -50,7 +51,11 @@ def on_ticker_message(
                     last_price = float(ticker.get("last", 0))
 
                     if last_price > 0:
+                        # ✅ OPTIMIZED: Skip if price hasn't changed (deduplication)
                         with lock:
+                            old_price = current_prices.get(instId)
+                            if old_price == last_price:
+                                continue  # Price unchanged, skip processing
                             current_prices[instId] = last_price
 
                             if (
@@ -126,11 +131,15 @@ def on_ticker_message(
                                 f"current={last_price:.6f} <= limit={limit_price:.6f} "
                                 f"(ref={ref_price:.6f}, {limit_percent}%)"
                             )
-                            threading.Thread(
-                                target=process_buy_signal_func,
-                                args=(instId, limit_price),
-                                daemon=True,
-                            ).start()
+                            # ✅ OPTIMIZED: Use thread pool if available, otherwise create thread
+                            if thread_pool:
+                                thread_pool.submit(process_buy_signal_func, instId, limit_price)
+                            else:
+                                threading.Thread(
+                                    target=process_buy_signal_func,
+                                    args=(instId, limit_price),
+                                    daemon=True,
+                                ).start()
                         else:
                             # Reduce high-frequency market data logging
                             import os
@@ -171,6 +180,7 @@ def on_candle_message(
     process_momentum_buy_signal_func,
     process_momentum_sell_signal_func,
     INTRA_HOUR_CHECK_THROTTLE_SECONDS: int,
+    thread_pool=None,  # Optional thread pool for async processing
 ):
     """Handle candle WebSocket messages"""
     if msg_string == "pong":
@@ -292,15 +302,24 @@ def on_candle_message(
                                                         f"🎯 MOMENTUM BUY SIGNAL (confirmed 1H candle): {instId}, "
                                                         f"close_price={close_price:.6f}, buy_pct={buy_pct:.1%}"
                                                     )
-                                                    threading.Thread(
-                                                        target=process_momentum_buy_signal_func,
-                                                        args=(
+                                                    # ✅ OPTIMIZED: Use thread pool if available
+                                                    if thread_pool:
+                                                        thread_pool.submit(
+                                                            process_momentum_buy_signal_func,
                                                             instId,
                                                             close_price,
                                                             buy_pct,
-                                                        ),
-                                                        daemon=True,
-                                                    ).start()
+                                                        )
+                                                    else:
+                                                        threading.Thread(
+                                                            target=process_momentum_buy_signal_func,
+                                                            args=(
+                                                                instId,
+                                                                close_price,
+                                                                buy_pct,
+                                                            ),
+                                                            daemon=True,
+                                                        ).start()
 
                         with lock:
                             if instId in active_orders:
@@ -319,11 +338,15 @@ def on_candle_message(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
                                         f"close_price={close_price:.6f}, trigger SELL (original)"
                                     )
-                                    threading.Thread(
-                                        target=process_sell_signal_func,
-                                        args=(instId,),
-                                        daemon=True,
-                                    ).start()
+                                    # ✅ OPTIMIZED: Use thread pool if available
+                                    if thread_pool:
+                                        thread_pool.submit(process_sell_signal_func, instId)
+                                    else:
+                                        threading.Thread(
+                                            target=process_sell_signal_func,
+                                            args=(instId,),
+                                            daemon=True,
+                                        ).start()
 
                             if instId in momentum_active_orders:
                                 if momentum_active_orders[instId].get(
@@ -346,11 +369,15 @@ def on_candle_message(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
                                         f"close_price={close_price:.6f}, trigger SELL (momentum)"
                                     )
-                                    threading.Thread(
-                                        target=process_momentum_sell_signal_func,
-                                        args=(instId,),
-                                        daemon=True,
-                                    ).start()
+                                    # ✅ OPTIMIZED: Use thread pool if available
+                                    if thread_pool:
+                                        thread_pool.submit(process_momentum_sell_signal_func, instId)
+                                    else:
+                                        threading.Thread(
+                                            target=process_momentum_sell_signal_func,
+                                            args=(instId,),
+                                            daemon=True,
+                                        ).start()
 
                     if (
                         confirm != "1"

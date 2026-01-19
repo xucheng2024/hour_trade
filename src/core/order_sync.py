@@ -138,7 +138,9 @@ class OrderSyncManager:
                 momentum_orders_to_check = list(self.momentum_active_orders.items())
 
             for instId, order_info in momentum_orders_to_check:
-                ordIds = order_info.get("ordIds", [])
+                # ✅ OPTIMIZED: Use orders dict instead of ordIds list
+                orders_dict = order_info.get("orders", {})
+                ordIds = list(orders_dict.keys())
                 if not ordIds:
                     continue
 
@@ -164,61 +166,17 @@ class OrderSyncManager:
                     if ordIds_to_remove:
                         with self.lock:
                             if instId in self.momentum_active_orders:
+                                # ✅ OPTIMIZED: Simple dict deletion instead of complex index management
                                 for ordId in ordIds_to_remove:
-                                    if ordId in self.momentum_active_orders[instId].get(
-                                        "ordIds", []
-                                    ):
-                                        idx = self.momentum_active_orders[instId][
-                                            "ordIds"
-                                        ].index(ordId)
-                                        self.momentum_active_orders[instId][
-                                            "ordIds"
-                                        ].pop(idx)
-                                        if idx < len(
-                                            self.momentum_active_orders[instId].get(
-                                                "buy_prices", []
-                                            )
-                                        ):
-                                            self.momentum_active_orders[instId][
-                                                "buy_prices"
-                                            ].pop(idx)
-                                        if idx < len(
-                                            self.momentum_active_orders[instId].get(
-                                                "buy_sizes", []
-                                            )
-                                        ):
-                                            self.momentum_active_orders[instId][
-                                                "buy_sizes"
-                                            ].pop(idx)
-                                        if idx < len(
-                                            self.momentum_active_orders[instId].get(
-                                                "buy_times", []
-                                            )
-                                        ):
-                                            self.momentum_active_orders[instId][
-                                                "buy_times"
-                                            ].pop(idx)
-                                        if (
-                                            "next_hour_close_times"
-                                            in self.momentum_active_orders[instId]
-                                        ):
-                                            if idx < len(
-                                                self.momentum_active_orders[instId][
-                                                    "next_hour_close_times"
-                                                ]
-                                            ):
-                                                self.momentum_active_orders[instId][
-                                                    "next_hour_close_times"
-                                                ].pop(idx)
+                                    if ordId in self.momentum_active_orders[instId].get("orders", {}):
+                                        del self.momentum_active_orders[instId]["orders"][ordId]
                                         logger.warning(
                                             f"🔄 SYNC: {instId} (momentum) ordId={ordId} already sold in DB, "
                                             f"removing from momentum_active_orders"
                                         )
 
                                 # If no more orders, remove the entry
-                                if not self.momentum_active_orders[instId].get(
-                                    "ordIds", []
-                                ):
+                                if not self.momentum_active_orders[instId].get("orders", {}):
                                     del self.momentum_active_orders[instId]
                                     if self.momentum_strategy is not None:
                                         self.momentum_strategy.reset_position(instId)
@@ -528,9 +486,11 @@ class OrderSyncManager:
                             f"(API unavailable or rate limited)"
                         )
 
-                    next_hour = fill_time.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
+                    # Sell at 55 minutes of the hour when order was filled
+                    next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
+                    if fill_time.minute >= 55:
+                        next_hour = next_hour + timedelta(hours=1)
 
                     orders_with_fill_time.append(
                         {
@@ -561,37 +521,28 @@ class OrderSyncManager:
                         with self.lock:
                             if instId in self.momentum_active_orders:
                                 existing = self.momentum_active_orders[instId]
-                                if "next_hour_close_times" not in existing:
-                                    old_time = existing.get(
-                                        "next_hour_close_time", next_hour
-                                    )
-                                    existing["next_hour_close_times"] = [
-                                        old_time
-                                    ] * len(existing.get("ordIds", []))
-
-                                existing["ordIds"].extend(
-                                    [o["ordId"] for o in hour_orders]
-                                )
-                                existing["buy_sizes"].extend(
-                                    [float(o["size"]) for o in hour_orders]
-                                )
-                                existing["buy_times"].extend(
-                                    [o["fill_time"] for o in hour_orders]
-                                )
-                                existing["next_hour_close_times"].extend(
-                                    [o["next_hour_close_time"] for o in hour_orders]
-                                )
+                                # ✅ OPTIMIZED: Use orders dict instead of parallel lists
+                                if "orders" not in existing:
+                                    existing["orders"] = {}
+                                for o in hour_orders:
+                                    existing["orders"][o["ordId"]] = {
+                                        "buy_price": 0.0,  # Not available from recovery
+                                        "buy_size": float(o["size"]),
+                                        "buy_time": o["fill_time"],
+                                        "next_hour_close_time": o["next_hour_close_time"],
+                                    }
                             else:
+                                # ✅ OPTIMIZED: Use orders dict structure
                                 self.momentum_active_orders[instId] = {
-                                    "ordIds": [o["ordId"] for o in hour_orders],
-                                    "buy_prices": [],
-                                    "buy_sizes": [
-                                        float(o["size"]) for o in hour_orders
-                                    ],
-                                    "buy_times": [o["fill_time"] for o in hour_orders],
-                                    "next_hour_close_times": [
-                                        o["next_hour_close_time"] for o in hour_orders
-                                    ],
+                                    "orders": {
+                                        o["ordId"]: {
+                                            "buy_price": 0.0,  # Not available from recovery
+                                            "buy_size": float(o["size"]),
+                                            "buy_time": o["fill_time"],
+                                            "next_hour_close_time": o["next_hour_close_time"],
+                                        }
+                                        for o in hour_orders
+                                    },
                                     "sell_triggered": False,
                                     "last_sell_attempt_time": None,
                                 }
@@ -601,9 +552,10 @@ class OrderSyncManager:
                             f"⏰ RECOVER SELL: {instId} (momentum), "
                             f"triggering sell for recovered orders"
                         )
-                        import threading
-
-                        threading.Thread(
+                        # Note: Thread pool should be passed from main, but for now use threading
+                        # This is in recovery code which runs infrequently, so threading.Thread is acceptable
+                        import threading as threading_module
+                        threading_module.Thread(
                             target=self.process_momentum_sell_signal,
                             args=(instId,),
                             daemon=True,
@@ -847,9 +799,11 @@ class OrderSyncManager:
                     if fill_time is None:
                         fill_time = order["create_time"]
 
-                    next_hour = fill_time.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
+                    # Sell at 55 minutes of the hour when order was filled
+                    next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
+                    if fill_time.minute >= 55:
+                        next_hour = next_hour + timedelta(hours=1)
 
                     orders_with_fill_time.append(
                         {
@@ -880,37 +834,28 @@ class OrderSyncManager:
                         with self.lock:
                             if instId in self.momentum_active_orders:
                                 existing = self.momentum_active_orders[instId]
-                                if "next_hour_close_times" not in existing:
-                                    old_time = existing.get(
-                                        "next_hour_close_time", next_hour
-                                    )
-                                    existing["next_hour_close_times"] = [
-                                        old_time
-                                    ] * len(existing.get("ordIds", []))
-
-                                existing["ordIds"].extend(
-                                    [o["ordId"] for o in hour_orders]
-                                )
-                                existing["buy_sizes"].extend(
-                                    [float(o["size"]) for o in hour_orders]
-                                )
-                                existing["buy_times"].extend(
-                                    [o["fill_time"] for o in hour_orders]
-                                )
-                                existing["next_hour_close_times"].extend(
-                                    [o["next_hour_close_time"] for o in hour_orders]
-                                )
+                                # ✅ OPTIMIZED: Use orders dict instead of parallel lists
+                                if "orders" not in existing:
+                                    existing["orders"] = {}
+                                for o in hour_orders:
+                                    existing["orders"][o["ordId"]] = {
+                                        "buy_price": 0.0,  # Not available from recovery
+                                        "buy_size": float(o["size"]),
+                                        "buy_time": o["fill_time"],
+                                        "next_hour_close_time": o["next_hour_close_time"],
+                                    }
                             else:
+                                # ✅ OPTIMIZED: Use orders dict structure
                                 self.momentum_active_orders[instId] = {
-                                    "ordIds": [o["ordId"] for o in hour_orders],
-                                    "buy_prices": [],
-                                    "buy_sizes": [
-                                        float(o["size"]) for o in hour_orders
-                                    ],
-                                    "buy_times": [o["fill_time"] for o in hour_orders],
-                                    "next_hour_close_times": [
-                                        o["next_hour_close_time"] for o in hour_orders
-                                    ],
+                                    "orders": {
+                                        o["ordId"]: {
+                                            "buy_price": 0.0,  # Not available from recovery
+                                            "buy_size": float(o["size"]),
+                                            "buy_time": o["fill_time"],
+                                            "next_hour_close_time": o["next_hour_close_time"],
+                                        }
+                                        for o in hour_orders
+                                    },
                                     "sell_triggered": False,
                                     "last_sell_attempt_time": None,
                                 }
@@ -920,9 +865,10 @@ class OrderSyncManager:
                             f"⏰ DEEP RECOVER SELL: {instId} (momentum), "
                             f"triggering sell for recovered orders"
                         )
-                        import threading
-
-                        threading.Thread(
+                        # Note: Thread pool should be passed from main, but for now use threading
+                        # This is in recovery code which runs infrequently, so threading.Thread is acceptable
+                        import threading as threading_module
+                        threading_module.Thread(
                             target=self.process_momentum_sell_signal,
                             args=(instId,),
                             daemon=True,
