@@ -261,6 +261,9 @@ class OrderSyncManager:
             self.deep_recovery_running = True
             self.last_deep_recovery_time = now
 
+            # Capture threading module in closure to avoid UnboundLocalError
+            import threading as threading_module
+
             def run_deep_recovery():
                 start_time = time.time()
                 try:
@@ -287,7 +290,7 @@ class OrderSyncManager:
                     # Always clear running flag when done
                     self.deep_recovery_running = False
 
-            threading.Thread(target=run_deep_recovery, daemon=True).start()
+            threading_module.Thread(target=run_deep_recovery, daemon=True).start()
 
         try:
             conn = self.get_db_connection()
