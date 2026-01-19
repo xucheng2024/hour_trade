@@ -29,6 +29,7 @@ def on_ticker_message(
     fetch_current_hour_open_price_func,
     calculate_limit_price_func,
     process_buy_signal_func,
+    check_2h_gain_filter_func,  # Function to check 2h gain filter
     thread_pool=None,  # Optional thread pool for async processing
 ):
     """Handle ticker WebSocket messages"""
@@ -121,19 +122,38 @@ def on_ticker_message(
                         )
 
                         if last_price <= limit_price:
+                            # ✅ NEW: Check 2-hour gain filter before buying
+                            should_skip_buy, gain_pct = check_2h_gain_filter_func(
+                                instId, ref_price
+                            )
+                            if should_skip_buy:
+                                logger.warning(
+                                    f"🚫 {instId} BUY BLOCKED by 2h gain filter: "
+                                    f"gain={gain_pct:.2f}% > 5% "
+                                    f"(current_open=${ref_price:.6f})"
+                                )
+                                continue
+
                             with lock:
                                 if instId in pending_buys or instId in active_orders:
                                     continue
                                 pending_buys[instId] = True
 
+                            gain_info = (
+                                f", 2h_gain={gain_pct:.2f}%"
+                                if gain_pct is not None
+                                else ""
+                            )
                             logger.warning(
                                 f"🚀 BUY SIGNAL: {instId}, "
                                 f"current={last_price:.6f} <= limit={limit_price:.6f} "
-                                f"(ref={ref_price:.6f}, {limit_percent}%)"
+                                f"(ref={ref_price:.6f}, {limit_percent}%{gain_info})"
                             )
                             # ✅ OPTIMIZED: Use thread pool if available, otherwise create thread
                             if thread_pool:
-                                thread_pool.submit(process_buy_signal_func, instId, limit_price)
+                                thread_pool.submit(
+                                    process_buy_signal_func, instId, limit_price
+                                )
                             else:
                                 threading.Thread(
                                     target=process_buy_signal_func,
@@ -340,7 +360,9 @@ def on_candle_message(
                                     )
                                     # ✅ OPTIMIZED: Use thread pool if available
                                     if thread_pool:
-                                        thread_pool.submit(process_sell_signal_func, instId)
+                                        thread_pool.submit(
+                                            process_sell_signal_func, instId
+                                        )
                                     else:
                                         threading.Thread(
                                             target=process_sell_signal_func,
@@ -371,7 +393,9 @@ def on_candle_message(
                                     )
                                     # ✅ OPTIMIZED: Use thread pool if available
                                     if thread_pool:
-                                        thread_pool.submit(process_momentum_sell_signal_func, instId)
+                                        thread_pool.submit(
+                                            process_momentum_sell_signal_func, instId
+                                        )
                                     else:
                                         threading.Thread(
                                             target=process_momentum_sell_signal_func,

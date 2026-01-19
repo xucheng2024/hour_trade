@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
@@ -118,18 +118,18 @@ logger = logging.getLogger(__name__)
 # Import extracted modules (after logger is initialized)
 # Import core utilities first (they don't depend on numpy/pandas)
 try:
-    from core.trading_utils import load_crypto_limits as _load_crypto_limits
     from core.trading_utils import calculate_limit_price as _calculate_limit_price
-    from core.trading_utils import extract_base_currency as _extract_base_currency
-    from core.trading_utils import play_sound as _play_sound
     from core.trading_utils import (
         check_blacklist_before_buy as _check_blacklist_before_buy,
     )
-    from core.trading_utils import (
-        remove_crypto_from_system as _remove_crypto_from_system,
-    )
+    from core.trading_utils import extract_base_currency as _extract_base_currency
     from core.trading_utils import (
         initialize_momentum_strategy_history as _initialize_momentum_strategy_history,
+    )
+    from core.trading_utils import load_crypto_limits as _load_crypto_limits
+    from core.trading_utils import play_sound as _play_sound
+    from core.trading_utils import (
+        remove_crypto_from_system as _remove_crypto_from_system,
     )
 except ImportError as e:
     logger.error(f"Failed to import core trading_utils: {e}")
@@ -190,13 +190,13 @@ except ImportError as e:
 
 try:
     from core.signal_processing import process_buy_signal as _process_buy_signal
-    from core.signal_processing import process_sell_signal as _process_sell_signal
     from core.signal_processing import (
         process_momentum_buy_signal as _process_momentum_buy_signal,
     )
     from core.signal_processing import (
         process_momentum_sell_signal as _process_momentum_sell_signal,
     )
+    from core.signal_processing import process_sell_signal as _process_sell_signal
 except ImportError as e:
     logger.warning(f"Failed to import signal_processing: {e}")
     _process_buy_signal = None
@@ -249,7 +249,9 @@ lock = threading.Lock()
 # Thread pool for buy/sell operations (limit concurrent threads)
 # Default max_workers=10, configurable via THREAD_POOL_MAX_WORKERS env var
 thread_pool_max_workers = int(os.getenv("THREAD_POOL_MAX_WORKERS", "10"))
-thread_pool = ThreadPoolExecutor(max_workers=thread_pool_max_workers, thread_name_prefix="trade")
+thread_pool = ThreadPoolExecutor(
+    max_workers=thread_pool_max_workers, thread_name_prefix="trade"
+)
 
 # Initialize momentum-volume strategy
 momentum_strategy: Optional[MomentumVolumeStrategy] = None
@@ -495,6 +497,30 @@ def fetch_current_hour_open_price(instId: str) -> Optional[float]:
     return price_manager.fetch_current_hour_open_price(instId)
 
 
+def check_2h_gain_filter(
+    instId: str, current_open_price: float
+) -> Tuple[bool, Optional[float]]:
+    """Check if 2-hour gain exceeds 5% threshold (skip buy if gain > 5%)
+
+    Args:
+        instId: Instrument ID
+        current_open_price: Current hour's open price
+
+    Returns:
+        Tuple of (should_skip_buy, gain_percentage)
+        should_skip_buy: True if gain > 5% (should skip buy)
+        gain_percentage: Calculated gain percentage or None if failed
+    """
+    if price_manager is None:
+        logger.debug(
+            f"PriceManager not available, allowing buy (fail open) for {instId}"
+        )
+        return False, None
+    return price_manager.check_2h_gain_filter(
+        instId, current_open_price, gain_threshold=5.0
+    )
+
+
 def initialize_reference_prices():
     """Initialize reference prices (current hour's open) for all cryptos"""
     if price_manager is None:
@@ -567,6 +593,7 @@ def on_ticker_message(ws, msg_string):
             fetch_current_hour_open_price,
             calculate_limit_price,
             process_buy_signal,
+            check_2h_gain_filter,  # Pass 2h gain filter function
             thread_pool,  # Pass thread pool for async processing
         )
     else:
@@ -879,8 +906,6 @@ def monitor_thread_count():
         logger.debug(f"Thread count: {thread_count}")
 
 
-
-
 def check_sell_timeout():
     """Unified sell scheduler: robust fallback mechanism
 
@@ -957,7 +982,9 @@ def check_sell_timeout():
                                 has_ready_orders = True
                                 break
 
-                        if has_ready_orders and not order_info.get("sell_triggered", False):
+                        if has_ready_orders and not order_info.get(
+                            "sell_triggered", False
+                        ):
                             orders_to_sell.append((instId, "momentum"))
                             order_info["sell_triggered"] = True
                             order_info["last_sell_attempt_time"] = now

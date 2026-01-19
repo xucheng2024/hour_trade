@@ -8,8 +8,8 @@ Handles fetching and caching of hourly open prices for limit calculations
 import logging
 import threading
 import time
-from datetime import datetime
-from typing import Dict, Optional
+from datetime import datetime, timezone
+from typing import Dict, Optional, Tuple
 
 from okx.MarketData import MarketAPI
 
@@ -56,21 +56,21 @@ class PriceManager:
                     hour_open = float(candle[1])
 
                     # Verify the timestamp to ensure we got the current hour's candle
-                    current_hour_start = (
-                        datetime.now()
-                        .replace(minute=0, second=0, microsecond=0)
-                        .timestamp()
+                    # ✅ FIX: Use UTC timezone for all comparisons (OKX timestamps are UTC)
+                    current_hour_start_utc = datetime.now(timezone.utc).replace(
+                        minute=0, second=0, microsecond=0
                     )
-                    candle_hour_start = (
-                        datetime.fromtimestamp(candle_ts)
-                        .replace(minute=0, second=0, microsecond=0)
-                        .timestamp()
-                    )
+                    candle_hour_start_utc = datetime.fromtimestamp(
+                        candle_ts, tz=timezone.utc
+                    ).replace(minute=0, second=0, microsecond=0)
 
                     # Check if the candle belongs to the current hour
                     # Allow small tolerance (±60 seconds) for timing differences
-                    if abs(candle_hour_start - current_hour_start) <= 60:
-                        ts_str = datetime.fromtimestamp(candle_ts).strftime("%H:%M:%S")
+                    time_diff_seconds = abs(
+                        (candle_hour_start_utc - current_hour_start_utc).total_seconds()
+                    )
+                    if time_diff_seconds <= 60:
+                        ts_str = candle_hour_start_utc.strftime("%H:%M:%S UTC")
                         logger.info(
                             f"📊 {instId} current hour's open price: "
                             f"${hour_open:.6f} (ts={ts_str})"
@@ -78,16 +78,13 @@ class PriceManager:
                         return hour_open
                     else:
                         # Got different hour's candle
-                        expected_hour = datetime.fromtimestamp(
-                            current_hour_start
-                        ).strftime("%H:00")
-                        got_hour = datetime.fromtimestamp(candle_hour_start).strftime(
-                            "%H:00"
-                        )
+                        expected_hour = current_hour_start_utc.strftime("%H:00 UTC")
+                        got_hour = candle_hour_start_utc.strftime("%H:00 UTC")
                         logger.warning(
                             f"⚠️ {instId} got different hour's candle: "
                             f"expected hour={expected_hour}, "
-                            f"got hour={got_hour}, open=${hour_open:.6f}"
+                            f"got hour={got_hour}, open=${hour_open:.6f}, "
+                            f"diff={time_diff_seconds:.0f}s"
                         )
                         return None
             else:
@@ -158,3 +155,102 @@ class PriceManager:
                 del self.reference_price_fetch_time[instId]
             if instId in self.reference_price_fetch_attempts:
                 del self.reference_price_fetch_attempts[instId]
+
+    def fetch_2h_ago_close_price(self, instId: str) -> Optional[float]:
+        """Fetch closing price from 2 hours ago
+
+        Args:
+            instId: Instrument ID
+
+        Returns:
+            Closing price from 2 hours ago or None if failed
+        """
+        try:
+            # Fetch 3 candles to ensure we get the one from 2 hours ago
+            result = self.market_api.get_candlesticks(
+                instId=instId, bar="1H", limit="3"
+            )
+
+            if result.get("code") == "0" and result.get("data"):
+                data = result["data"]
+                if data and len(data) >= 2:
+                    # Data is ordered from newest to oldest
+                    # data[0] = current hour, data[1] = 1 hour ago, data[2] = 2 hours ago
+                    candle_2h_ago = data[2] if len(data) >= 3 else data[1]
+                    candle_ts = int(candle_2h_ago[0]) / 1000  # Convert ms to seconds
+                    close_price = float(candle_2h_ago[4])  # Close price
+
+                    # Verify the timestamp is approximately 2 hours ago
+                    # ✅ FIX: Use UTC timezone for all comparisons (OKX timestamps are UTC)
+                    current_hour_start_utc = datetime.now(timezone.utc).replace(
+                        minute=0, second=0, microsecond=0
+                    )
+                    candle_hour_start_utc = datetime.fromtimestamp(
+                        candle_ts, tz=timezone.utc
+                    ).replace(minute=0, second=0, microsecond=0)
+                    hours_diff = (
+                        current_hour_start_utc - candle_hour_start_utc
+                    ).total_seconds() / 3600
+
+                    # Allow tolerance: should be between 1.5 and 2.5 hours ago
+                    if 1.5 <= hours_diff <= 2.5:
+                        ts_str = candle_hour_start_utc.strftime("%H:00 UTC")
+                        logger.debug(
+                            f"📊 {instId} 2h ago close price: "
+                            f"${close_price:.6f} (hour={ts_str}, diff={hours_diff:.1f}h)"
+                        )
+                        return close_price
+                    else:
+                        logger.warning(
+                            f"⚠️ {instId} got unexpected hour candle: "
+                            f"expected ~2h ago, got {hours_diff:.1f}h ago "
+                            f"(current_utc={current_hour_start_utc.strftime('%H:00 UTC')}, "
+                            f"candle_utc={candle_hour_start_utc.strftime('%H:00 UTC')})"
+                        )
+                        return None
+            else:
+                error_msg = result.get("msg", "Unknown error")
+                logger.warning(
+                    f"⚠️ Failed to get 2h ago close for {instId}: {error_msg}"
+                )
+        except Exception as e:
+            logger.error(f"Error fetching 2h ago close for {instId}: {e}")
+        return None
+
+    def check_2h_gain_filter(
+        self, instId: str, current_open_price: float, gain_threshold: float = 5.0
+    ) -> Tuple[bool, Optional[float]]:
+        """Check if 2-hour gain exceeds threshold (skip buy if gain > threshold)
+
+        Args:
+            instId: Instrument ID
+            current_open_price: Current hour's open price
+            gain_threshold: Gain threshold in percentage (default: 5.0%)
+
+        Returns:
+            Tuple of (should_skip_buy, gain_percentage)
+            should_skip_buy: True if gain > threshold (should skip buy)
+            gain_percentage: Calculated gain percentage or None if failed
+        """
+        close_2h_ago = self.fetch_2h_ago_close_price(instId)
+        if close_2h_ago is None or close_2h_ago <= 0:
+            # If we can't get the 2h ago price, allow buy (fail open)
+            logger.debug(
+                f"⚠️ {instId} Cannot get 2h ago close price, allowing buy (fail open)"
+            )
+            return False, None
+
+        gain_pct = ((current_open_price - close_2h_ago) / close_2h_ago) * 100
+        should_skip = gain_pct > gain_threshold
+
+        if should_skip:
+            logger.warning(
+                f"🚫 {instId} SKIP BUY: 2h gain {gain_pct:.2f}% > {gain_threshold}% "
+                f"(current_open=${current_open_price:.6f} vs 2h_close=${close_2h_ago:.6f})"
+            )
+        else:
+            logger.debug(
+                f"✅ {instId} 2h gain check passed: {gain_pct:.2f}% <= {gain_threshold}%"
+            )
+
+        return should_skip, gain_pct
