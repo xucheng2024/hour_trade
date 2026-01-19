@@ -124,29 +124,26 @@ def get_trading_records():
         cryptos[inst_id]["trades"].append(trade)
 
         # Update strategy-specific data
-        # ✅ FIX: Only process buy orders for profit calculation
-        # Sell orders should not be counted separately
-        # (they're already in buy order's sell_price)
+        # ✅ FIX: Only count completed trades (sold out) for profit calculation
+        # Pending/active orders should not affect profit display
         if strategy_flag in cryptos[inst_id]["strategies"]:
             strategy_data = cryptos[inst_id]["strategies"][strategy_flag]
             strategy_data["trades"].append(trade)
-            # Only count buy orders for profit calculation
-            if trade["side"] == "buy":
+            # Only count completed trades (sold out) for profit
+            if trade["side"] == "buy" and state == "sold out":
+                # Only count buy_amount for sold orders
                 strategy_data["buy_amount"] += trade["amount"]
-                # Only count sell_amount if order was actually sold
-                # (state == "sold out")
-                # This ensures we don't count sell_price from orders
-                # that weren't actually sold
-                if state == "sold out" and sell_price > 0 and size > 0:
+                # Count sell_amount for sold orders
+                if sell_price > 0 and size > 0:
                     strategy_data["sell_amount"] += sell_price * size
 
         # Update overall data
-        # ✅ FIX: Only process buy orders for profit calculation
-        if trade["side"] == "buy":
+        # ✅ FIX: Only count completed trades (sold out) for profit calculation
+        if trade["side"] == "buy" and state == "sold out":
+            # Only count buy_amount for sold orders
             cryptos[inst_id]["buy_amount"] += trade["amount"]
-            # Only count sell_amount if order was actually sold
-            # (state == "sold out")
-            if state == "sold out" and sell_price > 0 and size > 0:
+            # Count sell_amount for sold orders
+            if sell_price > 0 and size > 0:
                 cryptos[inst_id]["sell_amount"] += sell_price * size
 
     # Calculate profit
