@@ -838,32 +838,45 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     """Simple HTTP health check handler for long-lived services (Railway, etc.)
 
     Note: Not suitable for serverless platforms like Vercel.
-    Use ENABLE_HEALTH_CHECK_SERVER env var to enable.
+    Automatically enabled on Railway (detected via RAILWAY_ENVIRONMENT).
     """
 
     def do_GET(self):
         if self.path == "/health" or self.path == "/":
             try:
-                # Check database connection
-                conn = get_db_connection()
-                conn.close()
-                db_status = "ok"
+                # Check database connection (gracefully handle errors)
+                try:
+                    conn = get_db_connection()
+                    conn.close()
+                    db_status = "ok"
+                except Exception as e:
+                    db_status = f"error: {str(e)}"
+
+                thread_count = get_thread_count()
+
+                response = {
+                    "status": "healthy",
+                    "database": db_status,
+                    "threads": thread_count,
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
             except Exception as e:
-                db_status = f"error: {str(e)}"
-
-            thread_count = get_thread_count()
-
-            response = {
-                "status": "healthy",
-                "database": db_status,
-                "threads": thread_count,
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(response).encode())
+                # Even if health check fails, return 200 with error status
+                # This prevents Railway from killing the service during startup
+                response = {
+                    "status": "starting",
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat(),
+                }
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -1029,9 +1042,12 @@ def main():
     timeout_check_thread.start()
     logger.warning("✅ Sell timeout checker thread started")
 
-    # Start health check HTTP server only if enabled (for Railway, not Vercel)
+    # Start health check HTTP server
+    # Default to enabled if RAILWAY_ENVIRONMENT is set (Railway deployment)
+    # Or if ENABLE_HEALTH_CHECK_SERVER is explicitly set to true
+    is_railway = os.getenv("RAILWAY_ENVIRONMENT") is not None
     enable_health_check = (
-        os.getenv("ENABLE_HEALTH_CHECK_SERVER", "false").lower() == "true"
+        is_railway or os.getenv("ENABLE_HEALTH_CHECK_SERVER", "false").lower() == "true"
     )
     if enable_health_check:
         health_check_port = int(os.getenv("HEALTH_CHECK_PORT", "8080"))
