@@ -2920,8 +2920,10 @@ def recover_orders_from_database(now: datetime):
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # ✅ FIX: Remove 24h and LIMIT restrictions to prevent missing orders
-        # Find original strategy orders: filled/partially_filled but not sold
+        # ✅ FIX: Use bounded window to prevent slow queries on large tables
+        # Query only orders from last 7 days to keep query fast
+        # Add index on (flag, state, sell_price, create_time) for better performance
+        cutoff_time = int((now - timedelta(days=7)).timestamp() * 1000)
         cur.execute(
             """
             SELECT instId, ordId, create_time, state, size
@@ -2929,9 +2931,11 @@ def recover_orders_from_database(now: datetime):
             WHERE flag = %s
               AND state IN ('filled', 'partially_filled')
               AND (sell_price IS NULL OR sell_price = '')
+              AND create_time > %s
             ORDER BY create_time DESC
+            LIMIT 500
             """,
-            (STRATEGY_NAME,),
+            (STRATEGY_NAME, cutoff_time),
         )
         rows = cur.fetchall()
 
@@ -3032,8 +3036,9 @@ def recover_orders_from_database(now: datetime):
                     target=process_sell_signal, args=(instId,), daemon=True
                 ).start()
 
-        # ✅ FIX: Remove 24h and LIMIT restrictions to prevent missing orders
-        # Find momentum strategy orders
+        # ✅ FIX: Use bounded window to prevent slow queries on large tables
+        # Query only orders from last 7 days to keep query fast
+        cutoff_time = int((now - timedelta(days=7)).timestamp() * 1000)
         cur.execute(
             """
             SELECT instId, ordId, create_time, state, size
@@ -3041,9 +3046,11 @@ def recover_orders_from_database(now: datetime):
             WHERE flag = %s
               AND state IN ('filled', 'partially_filled')
               AND (sell_price IS NULL OR sell_price = '')
+              AND create_time > %s
             ORDER BY create_time DESC
+            LIMIT 500
             """,
-            (MOMENTUM_STRATEGY_NAME,),
+            (MOMENTUM_STRATEGY_NAME, cutoff_time),
         )
         rows = cur.fetchall()
 
