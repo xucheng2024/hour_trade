@@ -37,13 +37,17 @@ formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 # In Railway/Vercel, prefer stdout logging
 log_dir = Path("logs")
 try:
-    log_dir.mkdir(exist_ok=True)
-    file_handler = logging.FileHandler(log_dir / "order_management.log")
+    # Create directory if it doesn't exist
+    log_dir.mkdir(parents=True, exist_ok=True)
+    # Try to create the file handler
+    log_file = log_dir / "order_management.log"
+    file_handler = logging.FileHandler(str(log_file))
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-except (OSError, PermissionError):
+except (OSError, PermissionError, FileNotFoundError):
     # If we can't create/write to logs directory, just use stdout
     # This is expected in Railway/Vercel environments
+    # Silently fail - stdout logging will be used instead
     pass
 
 
