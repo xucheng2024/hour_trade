@@ -446,49 +446,9 @@ def process_momentum_sell_signal(
                         )
                         with lock:
                             if instId in momentum_active_orders:
-                                if ordId in momentum_active_orders[instId].get(
-                                    "ordIds", []
-                                ):
-                                    idx = momentum_active_orders[instId][
-                                        "ordIds"
-                                    ].index(ordId)
-                                    momentum_active_orders[instId]["ordIds"].pop(idx)
-                                    if idx < len(
-                                        momentum_active_orders[instId].get(
-                                            "buy_prices", []
-                                        )
-                                    ):
-                                        momentum_active_orders[instId][
-                                            "buy_prices"
-                                        ].pop(idx)
-                                    if idx < len(
-                                        momentum_active_orders[instId].get(
-                                            "buy_sizes", []
-                                        )
-                                    ):
-                                        momentum_active_orders[instId]["buy_sizes"].pop(
-                                            idx
-                                        )
-                                    if idx < len(
-                                        momentum_active_orders[instId].get(
-                                            "buy_times", []
-                                        )
-                                    ):
-                                        momentum_active_orders[instId]["buy_times"].pop(
-                                            idx
-                                        )
-                                    if (
-                                        "next_hour_close_times"
-                                        in momentum_active_orders[instId]
-                                    ):
-                                        if idx < len(
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ]
-                                        ):
-                                            momentum_active_orders[instId][
-                                                "next_hour_close_times"
-                                            ].pop(idx)
+                                # ✅ FIXED: Use orders dict instead of legacy lists
+                                if ordId in momentum_active_orders[instId].get("orders", {}):
+                                    del momentum_active_orders[instId]["orders"][ordId]
                         continue
 
                     db_state = row[0] if row[0] else ""
