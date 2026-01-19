@@ -13,7 +13,6 @@ import threading
 import time
 import warnings
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Dict, Optional
@@ -872,56 +871,6 @@ def monitor_thread_count():
         logger.debug(f"Thread count: {thread_count}")
 
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    """Simple HTTP health check handler for long-lived services (Railway, etc.)
-
-    Note: Not suitable for serverless platforms like Vercel.
-    Automatically enabled on Railway (detected via RAILWAY_ENVIRONMENT).
-    """
-
-    def do_GET(self):
-        if self.path == "/health" or self.path == "/":
-            try:
-                # Check database connection (gracefully handle errors)
-                try:
-                    conn = get_db_connection()
-                    conn.close()
-                    db_status = "ok"
-                except Exception as e:
-                    db_status = f"error: {str(e)}"
-
-                thread_count = get_thread_count()
-
-                response = {
-                    "status": "healthy",
-                    "database": db_status,
-                    "threads": thread_count,
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-                self.send_response(200)
-                self.send_header("Content-type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(response).encode())
-            except Exception as e:
-                # Even if health check fails, return 200 with error status
-                # This prevents Railway from killing the service during startup
-                response = {
-                    "status": "starting",
-                    "error": str(e),
-                    "timestamp": datetime.now().isoformat(),
-                }
-                self.send_response(200)
-                self.send_header("Content-type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(response).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def log_message(self, format, *args):
-        # Suppress default HTTP server logging
-        pass
 
 
 def check_sell_timeout():
@@ -1091,40 +1040,7 @@ def main():
     timeout_check_thread.start()
     logger.warning("✅ Sell timeout checker thread started")
 
-    # Start health check HTTP server
-    # Default to enabled if RAILWAY_ENVIRONMENT is set (Railway deployment)
-    # Or if ENABLE_HEALTH_CHECK_SERVER is explicitly set to true
-    is_railway = os.getenv("RAILWAY_ENVIRONMENT") is not None
-    enable_health_check = (
-        is_railway or os.getenv("ENABLE_HEALTH_CHECK_SERVER", "false").lower() == "true"
-    )
-    if enable_health_check:
-        # Railway provides PORT environment variable - use it if available
-        # Otherwise fall back to HEALTH_CHECK_PORT or default 8080
-        port = os.getenv("PORT") or os.getenv("HEALTH_CHECK_PORT", "8080")
-        health_check_port = int(port)
-        try:
-            health_server = HTTPServer(
-                ("0.0.0.0", health_check_port), HealthCheckHandler
-            )
-            health_thread = threading.Thread(
-                target=health_server.serve_forever,
-                daemon=True,
-                name="HealthCheckServer",
-            )
-            health_thread.start()
-            logger.warning(
-                f"✅ Health check server started on port {health_check_port} "
-                f"(PORT={os.getenv('PORT', 'not set')})"
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to start health check server: {e}")
-    else:
-        logger.info(
-            "Health check server disabled (set ENABLE_HEALTH_CHECK_SERVER=true to enable)"
-        )
-
-    # Keep main thread alive with health check
+    # Keep main thread alive
     last_refresh_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
 
     try:
