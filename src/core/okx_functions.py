@@ -9,8 +9,16 @@ import warnings
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
-import numpy as np
-import pandas as pd
+# Make numpy and pandas optional - they're only used in some functions
+try:
+    import numpy as np
+    import pandas as pd
+    HAS_NUMPY = True
+except ImportError:
+    np = None
+    pd = None
+    HAS_NUMPY = False
+
 import requests
 from okx.Account import AccountAPI
 from okx.MarketData import MarketAPI

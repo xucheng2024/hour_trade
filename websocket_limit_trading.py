@@ -116,77 +116,111 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import extracted modules (after logger is initialized)
+# Import core utilities first (they don't depend on numpy/pandas)
+try:
+    from core.trading_utils import load_crypto_limits as _load_crypto_limits
+    from core.trading_utils import calculate_limit_price as _calculate_limit_price
+    from core.trading_utils import extract_base_currency as _extract_base_currency
+    from core.trading_utils import play_sound as _play_sound
+    from core.trading_utils import (
+        check_blacklist_before_buy as _check_blacklist_before_buy,
+    )
+    from core.trading_utils import (
+        remove_crypto_from_system as _remove_crypto_from_system,
+    )
+    from core.trading_utils import (
+        initialize_momentum_strategy_history as _initialize_momentum_strategy_history,
+    )
+except ImportError as e:
+    logger.error(f"Failed to import core trading_utils: {e}")
+    _load_crypto_limits = None
+    _calculate_limit_price = None
+    _extract_base_currency = None
+    _play_sound = None
+    _check_blacklist_before_buy = None
+    _remove_crypto_from_system = None
+    _initialize_momentum_strategy_history = None
+
+# Import other modules (may depend on numpy/pandas)
 try:
     from core.okx_functions import format_number as _format_number
     from core.okx_functions import get_instrument_precision as _get_instrument_precision
     from core.okx_functions import get_market_api as _get_market_api
     from core.okx_functions import get_public_api as _get_public_api
     from core.okx_functions import get_trade_api as _get_trade_api
+except ImportError as e:
+    logger.warning(f"Failed to import okx_functions (numpy/pandas may be missing): {e}")
+    _format_number = None
+    _get_instrument_precision = None
+    _get_market_api = None
+    _get_public_api = None
+    _get_trade_api = None
+
+try:
     from core.order_processing import buy_limit_order as _buy_limit_order
     from core.order_processing import buy_momentum_order as _buy_momentum_order
     from core.order_processing import sell_market_order as _sell_market_order
     from core.order_processing import sell_momentum_order as _sell_momentum_order
+except ImportError as e:
+    logger.warning(f"Failed to import order_processing: {e}")
+    _buy_limit_order = None
+    _buy_momentum_order = None
+    _sell_market_order = None
+    _sell_momentum_order = None
+
+try:
     from core.order_sync import OrderSyncManager
+except ImportError as e:
+    logger.warning(f"Failed to import order_sync: {e}")
+    OrderSyncManager = None
+
+try:
     from core.order_timeout import (
         check_and_cancel_unfilled_order_after_timeout as _check_and_cancel_unfilled_order_after_timeout,
     )
+except ImportError as e:
+    logger.warning(f"Failed to import order_timeout: {e}")
+    _check_and_cancel_unfilled_order_after_timeout = None
+
+try:
     from core.price_manager import PriceManager
+except ImportError as e:
+    logger.warning(f"Failed to import price_manager: {e}")
+    PriceManager = None
+
+try:
     from core.signal_processing import process_buy_signal as _process_buy_signal
+    from core.signal_processing import process_sell_signal as _process_sell_signal
     from core.signal_processing import (
         process_momentum_buy_signal as _process_momentum_buy_signal,
     )
     from core.signal_processing import (
         process_momentum_sell_signal as _process_momentum_sell_signal,
     )
-    from core.signal_processing import process_sell_signal as _process_sell_signal
-    from core.trading_utils import calculate_limit_price as _calculate_limit_price
-    from core.trading_utils import (
-        check_blacklist_before_buy as _check_blacklist_before_buy,
-    )
-    from core.trading_utils import extract_base_currency as _extract_base_currency
-    from core.trading_utils import (
-        initialize_momentum_strategy_history as _initialize_momentum_strategy_history,
-    )
-    from core.trading_utils import load_crypto_limits as _load_crypto_limits
-    from core.trading_utils import play_sound as _play_sound
-    from core.trading_utils import (
-        remove_crypto_from_system as _remove_crypto_from_system,
-    )
-    from core.websocket_connection import candle_open as _candle_open
-    from core.websocket_connection import connect_websocket as _connect_websocket
-    from core.websocket_connection import ticker_open as _ticker_open
-    from core.websocket_handlers import on_candle_message as _on_candle_message
-    from core.websocket_handlers import on_ticker_message as _on_ticker_message
 except ImportError as e:
-    logger.warning(f"Failed to import extracted modules: {e}")
-    _get_trade_api = None
-    _get_market_api = None
-    _get_public_api = None
-    _get_instrument_precision = None
-    _format_number = None
-    PriceManager = None
-    OrderSyncManager = None
-    _buy_limit_order = None
-    _sell_market_order = None
-    _buy_momentum_order = None
-    _sell_momentum_order = None
+    logger.warning(f"Failed to import signal_processing: {e}")
     _process_buy_signal = None
     _process_sell_signal = None
     _process_momentum_buy_signal = None
     _process_momentum_sell_signal = None
-    _check_and_cancel_unfilled_order_after_timeout = None
-    _on_ticker_message = None
-    _on_candle_message = None
-    _ticker_open = None
+
+try:
+    from core.websocket_connection import candle_open as _candle_open
+    from core.websocket_connection import connect_websocket as _connect_websocket
+    from core.websocket_connection import ticker_open as _ticker_open
+except ImportError as e:
+    logger.warning(f"Failed to import websocket_connection: {e}")
     _candle_open = None
     _connect_websocket = None
-    _play_sound = None
-    _extract_base_currency = None
-    _remove_crypto_from_system = None
-    _check_blacklist_before_buy = None
-    _load_crypto_limits = None
-    _calculate_limit_price = None
-    _initialize_momentum_strategy_history = None
+    _ticker_open = None
+
+try:
+    from core.websocket_handlers import on_candle_message as _on_candle_message
+    from core.websocket_handlers import on_ticker_message as _on_ticker_message
+except ImportError as e:
+    logger.warning(f"Failed to import websocket_handlers: {e}")
+    _on_candle_message = None
+    _on_ticker_message = None
 
 # Global variables
 crypto_limits: Dict[str, float] = {}  # instId -> limit_percent

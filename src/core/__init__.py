@@ -3,14 +3,32 @@ Core trading functionality module.
 Contains order management, WebSocket handling, and core trading functions.
 """
 
-from .okx_functions import *
-from .okx_order_manage import *
-from .okx_ws_manage import *
-from .okx_ws_buy import *
+# Avoid circular imports by using lazy imports
+# Only import what's actually needed, and make imports optional
+try:
+    from .okx_functions import (
+        get_trade_api,
+        get_market_api,
+        get_public_api,
+        get_instrument_precision,
+        format_number,
+    )
+except ImportError:
+    # If okx_functions fails to import (e.g., numpy missing), set to None
+    get_trade_api = None
+    get_market_api = None
+    get_public_api = None
+    get_instrument_precision = None
+    format_number = None
+
+# Don't import okx_order_manage, okx_ws_manage, okx_ws_buy here
+# They are not used by websocket_limit_trading.py directly
+# and they cause circular import issues
 
 __all__ = [
-    'okx_functions',
-    'okx_order_manage', 
-    'okx_ws_manage',
-    'okx_ws_buy'
+    'get_trade_api',
+    'get_market_api',
+    'get_public_api',
+    'get_instrument_precision',
+    'format_number',
 ]
