@@ -65,6 +65,91 @@ class MomentumVolumeStrategy:
         # Need M+1 candles to calculate M returns
         self.min_history_required = M + 1
 
+    def initialize_history(
+        self, instId: str, candles: list, logger_instance=None
+    ) -> bool:
+        """Initialize history from historical candle data
+
+        Args:
+            instId: Instrument ID
+            candles: List of candle data from OKX API
+                    Format: [[ts, open, high, low, close, vol, volCcy, ...], ...]
+                    Data is ordered from newest to oldest
+            logger_instance: Optional logger instance
+
+        Returns:
+            True if initialization successful, False otherwise
+
+        Note:
+            - Expects candles in reverse chronological order (newest first)
+            - Only uses the most recent M+1 candles
+            - Each candle should have at least: [ts, open, high, low, close, vol, ...]
+        """
+        if logger_instance is None:
+            logger_instance = logger
+
+            if not candles or len(candles) == 0:
+                logger_instance.warning(
+                    f"⚠️ {instId} No historical candles provided "
+                    f"for initialization"
+                )
+                return False
+
+        try:
+            with self.lock:
+                # Initialize deques if not exists
+                if instId not in self.price_history:
+                    self.price_history[instId] = deque(maxlen=M + 1)
+                    self.volume_history[instId] = deque(maxlen=M + 1)
+
+                # Process candles (newest first, reverse for chronological)
+                # Take only the most recent M+1 candles
+                candles_to_use = candles[: M + 1]
+                # Reverse to get chronological order (oldest first)
+                candles_to_use.reverse()
+
+                count = 0
+                for candle in candles_to_use:
+                    if len(candle) < 6:
+                        continue
+
+                    # Extract data: [ts, open, high, low, close, vol, volCcy, ...]
+                    ts_ms = int(candle[0])  # timestamp in milliseconds
+                    close_price = float(candle[4])  # close price
+                    volume = float(candle[5])  # base volume
+                    vol_ccy = (
+                        float(candle[6]) if len(candle) > 6 else volume
+                    )  # quote volume
+
+                    # Use volCcy (quote currency volume) if available, otherwise base volume
+                    volume_to_use = vol_ccy if vol_ccy > 0 else volume
+
+                    if volume_to_use > 0 and close_price > 0:
+                        # Convert timestamp from milliseconds to seconds
+                        timestamp = ts_ms / 1000.0
+                        self.price_history[instId].append((timestamp, close_price))
+                        self.volume_history[instId].append((timestamp, volume_to_use))
+                        count += 1
+
+                if count > 0:
+                    history_len = len(self.price_history[instId])
+                    logger_instance.info(
+                        f"✅ {instId} Initialized with {count} "
+                        f"historical 1H candles "
+                        f"(ready: {history_len}/{M + 1})"
+                    )
+                    return True
+                else:
+                    logger_instance.warning(
+                        f"⚠️ {instId} Failed to initialize: "
+                        f"no valid candles"
+                    )
+                    return False
+
+        except Exception as e:
+            logger_instance.error(f"❌ {instId} Error initializing history: {e}")
+            return False
+
     def update_price_volume(self, instId: str, price: float, volume: float):
         """Update price and volume history for a crypto (1H candle only)
 

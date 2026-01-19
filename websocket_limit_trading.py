@@ -129,6 +129,73 @@ if MomentumVolumeStrategy is not None:
 else:
     logger.warning("⚠️ Momentum-Volume strategy not available")
 
+
+def initialize_momentum_strategy_history():
+    """Initialize momentum strategy with historical 1H candle data
+
+    Fetches last M+1 (11) 1H candles from OKX API for each crypto
+    to avoid waiting 11 hours after program startup.
+    """
+    if momentum_strategy is None:
+        return
+
+    if not crypto_limits:
+        logger.warning("⚠️ No crypto limits loaded, skipping history initialization")
+        return
+
+    logger.warning(
+        f"📊 Initializing momentum strategy history for {len(crypto_limits)} cryptos..."
+    )
+
+    market_api = get_market_api()
+    if not market_api:
+        logger.error("❌ Market API not available, cannot initialize history")
+        return
+
+    # Import M from strategy module
+    from core.momentum_volume_strategy import M
+
+    initialized_count = 0
+    failed_count = 0
+
+    for instId in crypto_limits.keys():
+        try:
+            # Fetch last M+1 (11) 1H candles
+            result = market_api.get_candlesticks(
+                instId=instId, bar="1H", limit=str(M + 1)
+            )
+
+            if result.get("code") == "0" and result.get("data"):
+                candles = result["data"]
+                if candles and len(candles) > 0:
+                    success = momentum_strategy.initialize_history(
+                        instId, candles, logger
+                    )
+                    if success:
+                        initialized_count += 1
+                    else:
+                        failed_count += 1
+                else:
+                    logger.debug(f"⚠️ {instId} No candle data returned")
+                    failed_count += 1
+            else:
+                error_msg = result.get("msg", "Unknown error")
+                logger.debug(f"⚠️ {instId} Failed to fetch history: {error_msg}")
+                failed_count += 1
+
+            # Small delay to avoid rate limiting
+            time.sleep(0.1)
+
+        except Exception as e:
+            logger.error(f"❌ {instId} Error initializing history: {e}")
+            failed_count += 1
+
+    logger.warning(
+        f"📊 History initialization complete: "
+        f"{initialized_count} succeeded, {failed_count} failed"
+    )
+
+
 # WebSocket connections for unsubscribe
 ticker_ws: Optional[websocket.WebSocketApp] = None
 candle_ws: Optional[websocket.WebSocketApp] = None
@@ -2747,6 +2814,10 @@ def main():
         return
 
     logger.warning(f"Loaded {len(crypto_limits)} cryptos with limits")
+
+    # Initialize momentum strategy with historical data
+    # This avoids waiting 11 hours after program startup
+    initialize_momentum_strategy_history()
 
     # Initialize reference prices (current hour's open prices)
     initialize_reference_prices()
