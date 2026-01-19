@@ -117,7 +117,7 @@ reference_price_fetch_attempts: Dict[str, int] = (
 pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 active_orders: Dict[str, Dict] = (
     {}
-)  # instId -> {ordId, buy_price, buy_time, next_hour_close_time}
+)  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
 # Momentum strategy active orders (separate tracking)
 momentum_active_orders: Dict[str, Dict] = (
     {}
