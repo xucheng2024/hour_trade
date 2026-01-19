@@ -132,16 +132,24 @@ def on_ticker_message(
                                 daemon=True,
                             ).start()
                         else:
-                            price_diff_pct = (
-                                (last_price - limit_price) / ref_price
-                            ) * 100
-                            if price_diff_pct < 2.0:
-                                logger.debug(
-                                    f"📊 {instId} close to limit: "
-                                    f"current={last_price:.6f}, "
-                                    f"limit={limit_price:.6f}, "
-                                    f"diff={price_diff_pct:.2f}%"
-                                )
+                            # Reduce high-frequency market data logging
+                            import os
+
+                            reduce_market_logs = (
+                                os.getenv("REDUCE_MARKET_DATA_LOGS", "true").lower()
+                                == "true"
+                            )
+                            if not reduce_market_logs:
+                                price_diff_pct = (
+                                    (last_price - limit_price) / ref_price
+                                ) * 100
+                                if price_diff_pct < 2.0:
+                                    logger.debug(
+                                        f"📊 {instId} close to limit: "
+                                        f"current={last_price:.6f}, "
+                                        f"limit={limit_price:.6f}, "
+                                        f"diff={price_diff_pct:.2f}%"
+                                    )
     except Exception as e:
         logger.error(f"Ticker message error: {msg_string}, {e}")
 

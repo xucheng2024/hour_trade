@@ -190,7 +190,8 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th class="text">Time</th>
+                                    <th class="text">Buy Time</th>
+                                    <th class="text">Sell Time</th>
                                     <th class="text">Strategy</th>
                                     <th class="num">Buy Price</th>
                                     <th class="num">Sell Price</th>
@@ -214,8 +215,8 @@
                 }
                 
                 for (const trade of cryptoData.trades) {
-                    const timeStr = trade.state === 'sold out' && trade.sell_time ? 
-                                   trade.sell_time : trade.buy_time;
+                    const buyTimeStr = trade.buy_time || '-';
+                    const sellTimeStr = trade.sell_time || '-';
                     const buyPrice = formatPrice(trade.price);
                     const sellPrice = trade.sell_price > 0 ? formatPrice(trade.sell_price) : '-';
                     const statusClass = trade.state === 'sold out' ? 'status-sold' : 'status-active';
@@ -239,7 +240,8 @@
                     
                     html += `
                         <tr class="${rowClass}">
-                            <td class="text">${timeStr}</td>
+                            <td class="text">${buyTimeStr}</td>
+                            <td class="text">${sellTimeStr}</td>
                             <td class="text"><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${trade.strategy === 'momentum_volume_exhaustion' ? '#dbeafe' : '#fef3c7'}; color: ${trade.strategy === 'momentum_volume_exhaustion' ? '#1e40af' : '#92400e'};">${strategyName}</span></td>
                             <td class="num">${buyPrice}</td>
                             <td class="num">${sellPrice}</td>

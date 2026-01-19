@@ -12,6 +12,7 @@ Recommended DB indexes for performance:
 """
 
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta
@@ -50,6 +51,8 @@ class OrderSyncManager:
             process_sell_signal: Function to process sell signal (original)
             process_momentum_sell_signal: Function to process sell signal (momentum)
         """
+        import os
+
         self.strategy_name = strategy_name
         self.momentum_strategy_name = momentum_strategy_name
         self.get_db_connection = get_db_connection
@@ -62,6 +65,10 @@ class OrderSyncManager:
         self.process_momentum_sell_signal = process_momentum_sell_signal
         self.last_deep_recovery_time: Optional[datetime] = None
         self.deep_recovery_running: bool = False
+        self.deep_recovery_interval_seconds = int(
+            os.getenv("DEEP_RECOVERY_INTERVAL_SECONDS", "86400")
+        )  # Default 24 hours
+        self.deep_recovery_execution_times: list = []  # Track execution times
 
     def sync_orders_from_database(self):
         """Sync active_orders with database state
@@ -91,7 +98,7 @@ class OrderSyncManager:
                 try:
                     cur.execute(
                         """
-                        SELECT instId, ordId, state FROM orders 
+                        SELECT instId, ordId, state FROM orders
                         WHERE ordId = ANY(%s) AND flag = %s
                         """,
                         (all_ordIds, self.strategy_name),
@@ -240,21 +247,36 @@ class OrderSyncManager:
         Args:
             now: Current datetime for time comparison
         """
-        # Check if deep recovery is needed (once per day)
+        # Check if deep recovery is needed (configurable interval)
         # Run in background thread to avoid blocking the timeout loop
         if not self.deep_recovery_running and (
             self.last_deep_recovery_time is None
-            or (now - self.last_deep_recovery_time).total_seconds() >= 86400  # 24 hours
+            or (now - self.last_deep_recovery_time).total_seconds()
+            >= self.deep_recovery_interval_seconds
         ):
-            logger.info("🔄 Starting daily deep recovery scan in background thread...")
+            logger.info(
+                f"🔄 Starting deep recovery scan in background thread (interval={self.deep_recovery_interval_seconds}s)..."
+            )
             # Mark as running to prevent multiple concurrent deep recoveries
             self.deep_recovery_running = True
             self.last_deep_recovery_time = now
 
             def run_deep_recovery():
+                start_time = time.time()
                 try:
                     self.deep_recover_orders_from_database(now)
-                    logger.info("✅ Deep recovery completed successfully")
+                    execution_time = time.time() - start_time
+                    self.deep_recovery_execution_times.append(execution_time)
+                    # Keep only last 10 execution times
+                    if len(self.deep_recovery_execution_times) > 10:
+                        self.deep_recovery_execution_times.pop(0)
+                    avg_time = sum(self.deep_recovery_execution_times) / len(
+                        self.deep_recovery_execution_times
+                    )
+                    logger.info(
+                        f"✅ Deep recovery completed successfully in {execution_time:.2f}s "
+                        f"(avg: {avg_time:.2f}s)"
+                    )
                 except Exception as e:
                     logger.error(
                         f"❌ Deep recovery failed, will retry on next cycle: {e}"
@@ -272,9 +294,12 @@ class OrderSyncManager:
             cur = conn.cursor()
 
             # Recover original strategy orders
-            # Only check orders from last 24 hours to reduce DB load
-            # Orders older than 24 hours should have been sold already
-            cutoff_time = int((now - timedelta(hours=24)).timestamp() * 1000)
+            # Only check orders from last N hours to reduce DB load (configurable)
+            recovery_hours = int(os.getenv("RECOVERY_HOURS", "24"))
+            recovery_limit = int(os.getenv("RECOVERY_LIMIT", "100"))
+            cutoff_time = int(
+                (now - timedelta(hours=recovery_hours)).timestamp() * 1000
+            )
             cur.execute(
                 """
                 SELECT instId, ordId, create_time, state, size
@@ -284,17 +309,17 @@ class OrderSyncManager:
                   AND (sell_price IS NULL OR sell_price = '')
                   AND create_time > %s
                 ORDER BY create_time DESC
-                LIMIT 100
+                LIMIT %s
                 """,
-                (self.strategy_name, cutoff_time),
+                (self.strategy_name, cutoff_time, recovery_limit),
             )
             rows = cur.fetchall()
 
-            # Rate limiting for OKX API calls
+            # Rate limiting for OKX API calls (environment-configurable)
             api = self.get_trade_api()
             api_call_count = 0
-            max_api_calls_per_cycle = 20
-            api_call_delay = 0.1
+            max_api_calls_per_cycle = int(os.getenv("RECOVERY_MAX_API_CALLS", "20"))
+            api_call_delay = float(os.getenv("RECOVERY_API_CALL_DELAY", "0.1"))
 
             for row in rows:
                 instId = row[0]
@@ -390,7 +415,7 @@ class OrderSyncManager:
                     ).start()
 
             # Recover momentum strategy orders
-            # Use same optimized cutoff (24 hours, limit 100)
+            # Use same optimized cutoff (configurable hours, limit)
             cur.execute(
                 """
                 SELECT instId, ordId, create_time, state, size
@@ -400,9 +425,9 @@ class OrderSyncManager:
                   AND (sell_price IS NULL OR sell_price = '')
                   AND create_time > %s
                 ORDER BY create_time DESC
-                LIMIT 100
+                LIMIT %s
                 """,
-                (self.momentum_strategy_name, cutoff_time),
+                (self.momentum_strategy_name, cutoff_time, recovery_limit),
             )
             rows = cur.fetchall()
 
@@ -447,8 +472,8 @@ class OrderSyncManager:
                 # Get fillTime from OKX API for each order
                 orders_with_fill_time = []
                 api_call_count = 0
-                max_api_calls_per_cycle = 20
-                api_call_delay = 0.1
+                max_api_calls_per_cycle = int(os.getenv("RECOVERY_MAX_API_CALLS", "20"))
+                api_call_delay = float(os.getenv("RECOVERY_API_CALL_DELAY", "0.1"))
 
                 for order in missing_orders:
                     ordId = order["ordId"]
@@ -597,11 +622,15 @@ class OrderSyncManager:
             conn = self.get_db_connection()
             cur = conn.cursor()
 
-            # Deep recovery: 7-day window, 500 limit
-            cutoff_time = int((now - timedelta(days=7)).timestamp() * 1000)
+            # Deep recovery: configurable window and limit
+            deep_recovery_days = int(os.getenv("DEEP_RECOVERY_DAYS", "7"))
+            deep_recovery_limit = int(os.getenv("DEEP_RECOVERY_LIMIT", "500"))
+            cutoff_time = int(
+                (now - timedelta(days=deep_recovery_days)).timestamp() * 1000
+            )
 
             logger.info(
-                f"🔍 DEEP RECOVER: Scanning last 7 days (limit 500) for stuck orders"
+                f"🔍 DEEP RECOVER: Scanning last {deep_recovery_days} days (limit {deep_recovery_limit}) for stuck orders"
             )
 
             # Recover original strategy orders
@@ -614,23 +643,25 @@ class OrderSyncManager:
                   AND (sell_price IS NULL OR sell_price = '')
                   AND create_time > %s
                 ORDER BY create_time DESC
-                LIMIT 500
+                LIMIT %s
                 """,
-                (self.strategy_name, cutoff_time),
+                (self.strategy_name, cutoff_time, deep_recovery_limit),
             )
             rows = cur.fetchall()
 
-            if len(rows) >= 500:
+            if len(rows) >= deep_recovery_limit:
                 logger.warning(
-                    f"⚠️ DEEP RECOVER: Hit 500 limit for original strategy, "
+                    f"⚠️ DEEP RECOVER: Hit {deep_recovery_limit} limit for original strategy, "
                     f"there may be more stuck orders"
                 )
 
-            # Rate limiting for OKX API calls
+            # Rate limiting for OKX API calls (environment-configurable)
             api = self.get_trade_api()
             api_call_count = 0
-            max_api_calls_per_cycle = 50  # Higher limit for deep recovery
-            api_call_delay = 0.1
+            max_api_calls_per_cycle = int(
+                os.getenv("DEEP_RECOVERY_MAX_API_CALLS", "50")
+            )  # Higher limit for deep recovery
+            api_call_delay = float(os.getenv("DEEP_RECOVERY_API_CALL_DELAY", "0.1"))
 
             recovered_count = 0
             for row in rows:
@@ -721,15 +752,15 @@ class OrderSyncManager:
                   AND (sell_price IS NULL OR sell_price = '')
                   AND create_time > %s
                 ORDER BY create_time DESC
-                LIMIT 500
+                LIMIT %s
                 """,
-                (self.momentum_strategy_name, cutoff_time),
+                (self.momentum_strategy_name, cutoff_time, deep_recovery_limit),
             )
             rows = cur.fetchall()
 
-            if len(rows) >= 500:
+            if len(rows) >= deep_recovery_limit:
                 logger.warning(
-                    f"⚠️ DEEP RECOVER: Hit 500 limit for momentum strategy, "
+                    f"⚠️ DEEP RECOVER: Hit {deep_recovery_limit} limit for momentum strategy, "
                     f"there may be more stuck orders"
                 )
 
@@ -899,7 +930,7 @@ class OrderSyncManager:
                     f"✅ DEEP RECOVER: Recovered {recovered_count} stuck order(s)"
                 )
             else:
-                logger.info(f"✅ DEEP RECOVER: No stuck orders found")
+                logger.info("✅ DEEP RECOVER: No stuck orders found")
 
         except Exception as e:
             logger.error(f"Error in deep_recover_orders_from_database: {e}")

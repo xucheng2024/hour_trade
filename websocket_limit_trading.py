@@ -7,15 +7,13 @@ Subscribes to OKX tickers and candles, buys at limit prices, sells at next hour 
 
 import json
 import logging
-import math
 import os
-import subprocess
 import sys
 import threading
 import time
-import uuid
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Dict, Optional
@@ -62,7 +60,7 @@ if not DATABASE_URL:
 API_KEY = os.getenv("OKX_API_KEY")
 API_SECRET = os.getenv("OKX_SECRET")
 API_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
-TRADING_FLAG = "0"  # 0=production, 1=demo
+TRADING_FLAG = os.getenv("TRADING_FLAG", "0")  # 0=production, 1=demo
 
 # Trading Configuration
 TRADING_AMOUNT_USDT = int(
@@ -71,6 +69,13 @@ TRADING_AMOUNT_USDT = int(
 STRATEGY_NAME = "hourly_limit_ws"
 MOMENTUM_STRATEGY_NAME = "momentum_volume_exhaustion"
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
+
+# Strategy Parameters - Environment configurable
+INTRA_HOUR_CHECK_THROTTLE_SECONDS = int(
+    os.getenv("INTRA_HOUR_CHECK_THROTTLE_SECONDS", "30")
+)
+CANDLE_TIMEOUT_MINUTES = int(os.getenv("CANDLE_TIMEOUT_MINUTES", "90"))
+TIMEOUT_CHECK_INTERVAL_SECONDS = int(os.getenv("TIMEOUT_CHECK_INTERVAL_SECONDS", "60"))
 
 # ✅ FIX: Only require API credentials in real trading mode
 # Simulation mode can run without real API keys
@@ -83,21 +88,30 @@ if not SIMULATION_MODE:
         )  # True=simulation (record only, no real trading), False=real trading
 
 # Setup logging
-# TimedRotatingFileHandler: rotate daily, keep 3 days
-file_handler = TimedRotatingFileHandler(
-    LOG_FILE,
-    when="midnight",
-    interval=1,
-    backupCount=3,
-    encoding="utf-8",
-)
-file_handler.suffix = "%Y-%m-%d"
-console_handler = logging.StreamHandler()
+# Railway logs are billed, reduce file logging frequency
+# Only log to stdout in Railway (file logging disabled by default)
+LOG_TO_FILE = os.getenv("LOG_TO_FILE", "false").lower() == "true"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Reduce debug logging for high-frequency market data
+REDUCE_MARKET_DATA_LOGS = os.getenv("REDUCE_MARKET_DATA_LOGS", "true").lower() == "true"
+
+handlers = [logging.StreamHandler()]
+
+if LOG_TO_FILE:
+    file_handler = TimedRotatingFileHandler(
+        LOG_FILE,
+        when="midnight",
+        interval=1,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.suffix = "%Y-%m-%d"
+    handlers.append(file_handler)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[file_handler, console_handler],
+    handlers=handlers,
 )
 logger = logging.getLogger(__name__)
 
@@ -195,7 +209,6 @@ momentum_active_orders: Dict[str, Dict] = (
 )  # instId -> {ordIds: [str], buy_prices: [float], buy_sizes: [float], next_hour_close_times: [datetime], ...}
 # ✅ FIX: Throttle intra-hour buy signal checks to prevent CPU overload
 last_intra_hour_check: Dict[str, datetime] = {}  # instId -> last check time
-INTRA_HOUR_CHECK_THROTTLE_SECONDS = 30  # Check at most once per 30 seconds per instId
 momentum_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 lock = threading.Lock()
 
@@ -232,7 +245,6 @@ candle_ws = candle_ws_ref["ws"]
 # ✅ NEW: Track last 1H candle receive time for monitoring
 # Format: instId -> last_candle_timestamp
 last_1h_candle_time: Dict[str, datetime] = {}
-CANDLE_TIMEOUT_MINUTES = 90  # Alert if no candle received for 90 minutes
 
 
 def get_trade_api() -> Optional[TradeAPI]:
@@ -263,11 +275,22 @@ def get_instrument_precision(instId: str, use_cache: bool = True) -> Optional[Di
     return _get_instrument_precision(instId, use_cache, TRADING_FLAG)
 
 
-def get_db_connection(max_retries=3, retry_delay=1):
-    """Get PostgreSQL database connection with retry logic"""
+def get_db_connection(max_retries=None, retry_delay=None):
+    """Get PostgreSQL database connection with retry logic
+
+    Note: Neon database URL includes '-pooler' which provides connection pooling
+    at the database level. For high-load scenarios, consider implementing
+    application-level connection pooling (e.g., psycopg2.pool) to further
+    reduce connection overhead.
+    """
+    # Environment-configurable connection parameters
+    max_retries = max_retries or int(os.getenv("DB_CONNECT_MAX_RETRIES", "3"))
+    retry_delay = retry_delay or float(os.getenv("DB_CONNECT_RETRY_DELAY", "1.0"))
+    connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))  # Reduced from 10 to 5
+
     for attempt in range(max_retries):
         try:
-            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=connect_timeout)
             # Test connection
             cur = conn.cursor()
             try:
@@ -791,6 +814,65 @@ def monitor_websocket_health(now: datetime):
         logger.debug(f"Error in monitor_websocket_health: {e}")
 
 
+def get_thread_count():
+    """Get current thread count for monitoring"""
+    return threading.active_count()
+
+
+def monitor_thread_count():
+    """Monitor thread count and log warning if too high"""
+    thread_count = get_thread_count()
+    max_threads = int(os.getenv("MAX_THREADS", "50"))
+
+    if thread_count > max_threads:
+        logger.warning(
+            f"⚠️ THREAD COUNT: {thread_count} threads active (max: {max_threads}). "
+            f"Thread breakdown: WS={2}, timeout={1}, deep_recover={1}, "
+            f"buy/sell={thread_count - 4}"
+        )
+    else:
+        logger.debug(f"Thread count: {thread_count}")
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP health check handler for long-lived services (Railway, etc.)
+
+    Note: Not suitable for serverless platforms like Vercel.
+    Use ENABLE_HEALTH_CHECK_SERVER env var to enable.
+    """
+
+    def do_GET(self):
+        if self.path == "/health" or self.path == "/":
+            try:
+                # Check database connection
+                conn = get_db_connection()
+                conn.close()
+                db_status = "ok"
+            except Exception as e:
+                db_status = f"error: {str(e)}"
+
+            thread_count = get_thread_count()
+
+            response = {
+                "status": "healthy",
+                "database": db_status,
+                "threads": thread_count,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        # Suppress default HTTP server logging
+        pass
+
+
 def check_sell_timeout():
     """Unified sell scheduler: robust fallback mechanism
 
@@ -803,7 +885,7 @@ def check_sell_timeout():
     sync_counter = 0
     while True:
         try:
-            time.sleep(60)  # ✅ FIX: Check every 60 seconds (was 30)
+            time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)
             now = datetime.now()
 
             # ✅ FIX: Sync with database every cycle (1 minute)
@@ -816,6 +898,9 @@ def check_sell_timeout():
 
             # ✅ NEW: Monitor WebSocket health - alert if candles not received
             monitor_websocket_health(now)
+
+            # ✅ NEW: Monitor thread count
+            monitor_thread_count()
 
             # ✅ ENHANCED: Check all orders (memory + DB) for sell triggers
             orders_to_sell = []
@@ -872,7 +957,7 @@ def check_sell_timeout():
                     ).start()
         except Exception as e:
             logger.error(f"Error in check_sell_timeout: {e}")
-            time.sleep(60)  # Wait longer on error
+            time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)  # Wait on error
 
 
 def main():
@@ -944,6 +1029,32 @@ def main():
     timeout_check_thread.start()
     logger.warning("✅ Sell timeout checker thread started")
 
+    # Start health check HTTP server only if enabled (for Railway, not Vercel)
+    enable_health_check = (
+        os.getenv("ENABLE_HEALTH_CHECK_SERVER", "false").lower() == "true"
+    )
+    if enable_health_check:
+        health_check_port = int(os.getenv("HEALTH_CHECK_PORT", "8080"))
+        try:
+            health_server = HTTPServer(
+                ("0.0.0.0", health_check_port), HealthCheckHandler
+            )
+            health_thread = threading.Thread(
+                target=health_server.serve_forever,
+                daemon=True,
+                name="HealthCheckServer",
+            )
+            health_thread.start()
+            logger.warning(
+                f"✅ Health check server started on port {health_check_port}"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to start health check server: {e}")
+    else:
+        logger.info(
+            "Health check server disabled (set ENABLE_HEALTH_CHECK_SERVER=true to enable)"
+        )
+
     # Keep main thread alive with health check
     last_refresh_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
 
@@ -957,6 +1068,9 @@ def main():
                     f"{len(reference_prices)} reference prices, "
                     f"{len(active_orders)} active orders"
                 )
+
+            # Monitor thread count in main loop
+            monitor_thread_count()
 
             now = datetime.now()
             current_hour = now.replace(minute=0, second=0, microsecond=0)

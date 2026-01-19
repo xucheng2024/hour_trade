@@ -6,11 +6,14 @@ Handles checking and canceling unfilled orders after timeout
 """
 
 import logging
+import os
 import time
 from datetime import datetime, timedelta
-from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Environment-configurable timeout
+ORDER_TIMEOUT_SECONDS = int(os.getenv("ORDER_TIMEOUT_SECONDS", "60"))
 
 
 def check_and_cancel_unfilled_order_after_timeout(
@@ -24,12 +27,12 @@ def check_and_cancel_unfilled_order_after_timeout(
     momentum_active_orders: dict,
     lock,
 ):
-    """Check order status after 1 minute timeout, cancel if not filled"""
+    """Check order status after timeout, cancel if not filled"""
     if simulation_mode or ordId.startswith("HLW-SIM-") or ordId.startswith("MVE-SIM-"):
         return
 
     try:
-        time.sleep(60)
+        time.sleep(ORDER_TIMEOUT_SECONDS)
 
         with lock:
             order_exists = False
@@ -160,9 +163,38 @@ def check_and_cancel_unfilled_order_after_timeout(
                                         momentum_active_orders[instId]["buy_sizes"][
                                             idx
                                         ] = filled_size
-                                    momentum_active_orders[instId][
-                                        "next_hour_close_time"
-                                    ] = next_hour
+                                    # Update next_hour_close_times list, not singular next_hour_close_time
+                                    if (
+                                        "next_hour_close_times"
+                                        not in momentum_active_orders[instId]
+                                    ):
+                                        momentum_active_orders[instId][
+                                            "next_hour_close_times"
+                                        ] = []
+                                    if idx < len(
+                                        momentum_active_orders[instId][
+                                            "next_hour_close_times"
+                                        ]
+                                    ):
+                                        momentum_active_orders[instId][
+                                            "next_hour_close_times"
+                                        ][idx] = next_hour
+                                    else:
+                                        # Extend list if needed
+                                        while (
+                                            len(
+                                                momentum_active_orders[instId][
+                                                    "next_hour_close_times"
+                                                ]
+                                            )
+                                            <= idx
+                                        ):
+                                            momentum_active_orders[instId][
+                                                "next_hour_close_times"
+                                            ].append(next_hour)
+                                        momentum_active_orders[instId][
+                                            "next_hour_close_times"
+                                        ][idx] = next_hour
                                     logger.warning(
                                         f"{strategy_name} Updated momentum_active_order for partial fill: {instId}, "
                                         f"ordId={ordId}, filled_size={filled_size}, "

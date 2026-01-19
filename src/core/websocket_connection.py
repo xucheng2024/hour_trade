@@ -59,8 +59,20 @@ def connect_websocket(
     ws_lock: threading.Lock,
 ):
     """Connect to WebSocket with reconnection logic and exponential backoff"""
-    reconnect_delay = 1
-    max_delay = 60
+    import os
+
+    # Environment-configurable reconnection parameters
+    initial_delay = float(os.getenv("WS_RECONNECT_INITIAL_DELAY", "1.0"))
+    max_delay = float(
+        os.getenv("WS_RECONNECT_MAX_DELAY", "300")
+    )  # Increased from 60 to 300 (5 min)
+    backoff_multiplier = float(os.getenv("WS_RECONNECT_BACKOFF_MULTIPLIER", "2.0"))
+    min_stable_time = float(
+        os.getenv("WS_MIN_STABLE_TIME", "60.0")
+    )  # Minimum stable time before resetting delay
+
+    reconnect_delay = initial_delay
+    last_successful_connect = None
 
     while True:
         try:
@@ -105,7 +117,9 @@ def connect_websocket(
             ping_thread = threading.Thread(target=send_ping, args=(ws,), daemon=True)
             ping_thread.start()
 
-            reconnect_delay = 1
+            # Track successful connection time
+            last_successful_connect = time.time()
+            reconnect_delay = initial_delay  # Reset delay on successful connection
             ws.run_forever()
 
         except KeyboardInterrupt:
@@ -113,6 +127,16 @@ def connect_websocket(
             raise
         except Exception as e:
             logger.error(f"WebSocket connection failed: {e}")
+
+            # Reset delay if connection was stable for min_stable_time
+            if last_successful_connect:
+                stable_duration = time.time() - last_successful_connect
+                if stable_duration >= min_stable_time:
+                    reconnect_delay = initial_delay
+                    logger.info(
+                        f"Connection was stable for {stable_duration:.1f}s, resetting delay"
+                    )
+
             logger.warning(f"Retrying in {reconnect_delay} seconds...")
             time.sleep(reconnect_delay)
-            reconnect_delay = min(reconnect_delay * 2, max_delay)
+            reconnect_delay = min(reconnect_delay * backoff_multiplier, max_delay)

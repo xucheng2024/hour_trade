@@ -376,7 +376,20 @@ def process_momentum_sell_signal(
                     else:
                         ordIds.append(ordId)
 
+        # Only query DB if instId doesn't exist in memory
+        # If it exists in memory but no ordId is ready, don't query DB
+        # (that would ignore per-order sell times and could sell early)
         if not ordIds:
+            with lock:
+                instId_in_memory = instId in momentum_active_orders
+            if instId_in_memory:
+                logger.debug(
+                    f"{strategy_name} {instId} exists in memory but no orders ready yet, "
+                    f"skipping DB query to avoid early sell"
+                )
+                return
+
+            # Only query DB if instId is not in memory (recovery case)
             conn = get_db_connection_func()
             try:
                 cur = conn.cursor()
