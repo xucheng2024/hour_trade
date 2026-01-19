@@ -124,18 +124,29 @@ def get_trading_records():
         cryptos[inst_id]["trades"].append(trade)
 
         # Update strategy-specific data
+        # ✅ FIX: Only process buy orders for profit calculation
+        # Sell orders should not be counted separately
+        # (they're already in buy order's sell_price)
         if strategy_flag in cryptos[inst_id]["strategies"]:
             strategy_data = cryptos[inst_id]["strategies"][strategy_flag]
             strategy_data["trades"].append(trade)
+            # Only count buy orders for profit calculation
             if trade["side"] == "buy":
                 strategy_data["buy_amount"] += trade["amount"]
-                if sell_price > 0 and size > 0:
+                # Only count sell_amount if order was actually sold
+                # (state == "sold out")
+                # This ensures we don't count sell_price from orders
+                # that weren't actually sold
+                if state == "sold out" and sell_price > 0 and size > 0:
                     strategy_data["sell_amount"] += sell_price * size
 
         # Update overall data
+        # ✅ FIX: Only process buy orders for profit calculation
         if trade["side"] == "buy":
             cryptos[inst_id]["buy_amount"] += trade["amount"]
-            if sell_price > 0 and size > 0:
+            # Only count sell_amount if order was actually sold
+            # (state == "sold out")
+            if state == "sold out" and sell_price > 0 and size > 0:
                 cryptos[inst_id]["sell_amount"] += sell_price * size
 
     # Calculate profit
@@ -145,13 +156,15 @@ def get_trading_records():
         if data["buy_amount"] > 0:
             data["profit_pct"] = (profit / data["buy_amount"]) * 100
         data["trades"].sort(key=lambda x: x["buy_time"], reverse=True)
-        
+
         # Calculate profit for each strategy
         for strategy_name, strategy_data in data["strategies"].items():
             strategy_profit = strategy_data["sell_amount"] - strategy_data["buy_amount"]
             strategy_data["profit"] = strategy_profit
             if strategy_data["buy_amount"] > 0:
-                strategy_data["profit_pct"] = (strategy_profit / strategy_data["buy_amount"]) * 100
+                strategy_data["profit_pct"] = (
+                    strategy_profit / strategy_data["buy_amount"]
+                ) * 100
             strategy_data["trades"].sort(key=lambda x: x["buy_time"], reverse=True)
 
     result = dict(cryptos)
@@ -180,9 +193,10 @@ class handler(BaseHTTPRequestHandler):
                     d["strategies"][STRATEGY_NAME]["profit"] for d in cryptos.values()
                 )
                 momentum_profit = sum(
-                    d["strategies"][MOMENTUM_STRATEGY_NAME]["profit"] for d in cryptos.values()
+                    d["strategies"][MOMENTUM_STRATEGY_NAME]["profit"]
+                    for d in cryptos.values()
                 )
-                
+
                 response = {
                     "success": True,
                     "data": {
@@ -200,7 +214,11 @@ class handler(BaseHTTPRequestHandler):
                             MOMENTUM_STRATEGY_NAME: {
                                 "profit": momentum_profit,
                                 "trades": sum(
-                                    len(d["strategies"][MOMENTUM_STRATEGY_NAME]["trades"])
+                                    len(
+                                        d["strategies"][MOMENTUM_STRATEGY_NAME][
+                                            "trades"
+                                        ]
+                                    )
                                     for d in cryptos.values()
                                 ),
                             },
