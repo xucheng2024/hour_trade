@@ -8,7 +8,7 @@ Display trading records grouped by cryptocurrency with profit calculation
 import os
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 import psycopg2.extras
@@ -318,7 +318,12 @@ def get_trading_records():
         # Optimize timestamp formatting - define format function once
         def format_time(ts):
             if ts:
-                return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
+                # Convert to UTC datetime first
+                utc_dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                # Convert to Singapore time (UTC+8)
+                sgt_tz = timezone(timedelta(hours=8))
+                sgt_dt = utc_dt.astimezone(sgt_tz)
+                return sgt_dt.strftime("%Y-%m-%d %H:%M:%S")
             return None
 
         process_start = time.time()

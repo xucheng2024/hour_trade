@@ -9,7 +9,7 @@ import json
 import os
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 
 import psycopg2
@@ -85,11 +85,14 @@ def get_trading_records():
     )
 
     def fmt_time(ts):
-        return (
-            datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
-            if ts
-            else None
-        )
+        if ts:
+            # Convert to UTC datetime first
+            utc_dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+            # Convert to Singapore time (UTC+8)
+            sgt_tz = timezone(timedelta(hours=8))
+            sgt_dt = utc_dt.astimezone(sgt_tz)
+            return sgt_dt.strftime("%Y-%m-%d %H:%M:%S")
+        return None
 
     for row in rows:
         inst_id = row["instid"]
