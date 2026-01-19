@@ -128,17 +128,29 @@
                             </thead>
                             <tbody>`;
                 
+                // Format price function - show more decimals for small prices
+                function formatPrice(price) {
+                    if (!price || price === 0) return '0.00';
+                    if (price >= 1) return price.toFixed(2);
+                    if (price >= 0.01) return price.toFixed(4);
+                    if (price >= 0.001) return price.toFixed(5);
+                    if (price >= 0.0001) return price.toFixed(6);
+                    if (price >= 0.00001) return price.toFixed(7);
+                    return price.toFixed(8);
+                }
+                
                 for (const trade of cryptoData.trades) {
                     const timeStr = trade.state === 'sold out' && trade.sell_time ? 
                                    trade.sell_time : trade.buy_time;
-                    const sellPrice = trade.sell_price > 0 ? trade.sell_price.toFixed(2) : '-';
+                    const buyPrice = formatPrice(trade.price);
+                    const sellPrice = trade.sell_price > 0 ? formatPrice(trade.sell_price) : '-';
                     const statusClass = trade.state === 'sold out' ? 'status-sold' : 'status-active';
                     
                     html += `
                         <tr>
                             <td>${timeStr}</td>
                             <td><span class="side-${trade.side}">${trade.side.toUpperCase()}</span></td>
-                            <td>${trade.price.toFixed(2)}</td>
+                            <td>${buyPrice}</td>
                             <td>${sellPrice}</td>
                             <td>${trade.size.toFixed(6)}</td>
                             <td>${trade.amount.toFixed(2)}</td>

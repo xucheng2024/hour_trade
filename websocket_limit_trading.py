@@ -93,6 +93,9 @@ logger = logging.getLogger(__name__)
 # Global variables
 crypto_limits: Dict[str, float] = {}  # instId -> limit_percent
 current_prices: Dict[str, float] = {}  # instId -> last_price
+reference_prices: Dict[str, float] = (
+    {}
+)  # instId -> current hour's open price (reference for limit calculation)
 pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 active_orders: Dict[str, Dict] = (
     {}
@@ -106,6 +109,7 @@ ws_lock = threading.Lock()
 
 # Initialize TradeAPI instance (singleton pattern)
 trade_api: Optional[TradeAPI] = None
+market_api: Optional[MarketAPI] = None
 
 
 def get_trade_api() -> TradeAPI:
@@ -114,6 +118,14 @@ def get_trade_api() -> TradeAPI:
     if trade_api is None:
         trade_api = TradeAPI(API_KEY, API_SECRET, API_PASSPHRASE, False, TRADING_FLAG)
     return trade_api
+
+
+def get_market_api() -> MarketAPI:
+    """Get or initialize MarketAPI instance (singleton)"""
+    global market_api
+    if market_api is None:
+        market_api = MarketAPI(flag=TRADING_FLAG)
+    return market_api
 
 
 def get_db_connection(max_retries=3, retry_delay=1):
@@ -233,6 +245,8 @@ def remove_crypto_from_system(instId: str):
                 del crypto_limits[instId]
             if instId in current_prices:
                 del current_prices[instId]
+            if instId in reference_prices:
+                del reference_prices[instId]
             if instId in pending_buys:
                 del pending_buys[instId]
             if instId in active_orders:
@@ -341,9 +355,85 @@ def load_crypto_limits():
         return False
 
 
-def calculate_limit_price(current_price: float, limit_percent: float) -> float:
-    """Calculate limit buy price based on limit_percent"""
-    return current_price * (limit_percent / 100.0)
+def calculate_limit_price(reference_price: float, limit_percent: float) -> float:
+    """Calculate limit buy price based on reference price and limit_percent"""
+    return reference_price * (limit_percent / 100.0)
+
+
+def fetch_current_hour_open_price(instId: str) -> Optional[float]:
+    """Fetch current hour's open price for a cryptocurrency"""
+    try:
+        market_api = get_market_api()
+        # ✅ FIX: Use 1H (1 hour) candlestick instead of 1D (1 day)
+        # Strategy is hourly trading: buy at current hour, sell at next hour
+        # So reference price should be current hour's open, not daily open
+        result = market_api.get_candlesticks(instId=instId, bar="1H", limit="1")
+
+        if result.get("code") == "0" and result.get("data"):
+            data = result["data"]
+            if data and len(data) > 0:
+                # Data format: [timestamp, open, high, low, close, volume, ...]
+                # data[0] = [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
+                candle = data[0]
+                candle_ts = int(candle[0]) / 1000  # Convert ms to seconds
+                hour_open = float(candle[1])
+
+                # ✅ FIX: Verify the timestamp to ensure we got the current hour's candle
+                # OKX K-line timestamp (ts) is the start time of that hour
+                current_hour_start = (
+                    datetime.now()
+                    .replace(minute=0, second=0, microsecond=0)
+                    .timestamp()
+                )
+                candle_hour_start = (
+                    datetime.fromtimestamp(candle_ts)
+                    .replace(minute=0, second=0, microsecond=0)
+                    .timestamp()
+                )
+
+                # Check if the candle belongs to the current hour
+                # Allow small tolerance (±60 seconds) for timing differences
+                if abs(candle_hour_start - current_hour_start) <= 60:
+                    logger.info(
+                        f"📊 {instId} current hour's open price: ${hour_open:.6f} (ts={datetime.fromtimestamp(candle_ts).strftime('%H:%M:%S')})"
+                    )
+                    return hour_open
+                else:
+                    # Got a different hour's candle (probably previous hour if called too early at hour start)
+                    logger.warning(
+                        f"⚠️ {instId} got different hour's candle: "
+                        f"expected hour={datetime.fromtimestamp(current_hour_start).strftime('%H:00')}, "
+                        f"got hour={datetime.fromtimestamp(candle_hour_start).strftime('%H:00')}, "
+                        f"open=${hour_open:.6f}"
+                    )
+                    # Return None to trigger retry or use fallback
+                    return None
+        else:
+            error_msg = result.get("msg", "Unknown error")
+            logger.warning(
+                f"⚠️ Failed to get current hour's open for {instId}: {error_msg}"
+            )
+    except Exception as e:
+        logger.error(f"Error fetching current hour's open for {instId}: {e}")
+    return None
+
+
+def initialize_reference_prices():
+    """Initialize reference prices (current hour's open) for all cryptos"""
+    logger.warning(
+        "🔄 Initializing reference prices (current hour's open) for all cryptos..."
+    )
+    count = 0
+    for instId in crypto_limits.keys():
+        open_price = fetch_current_hour_open_price(instId)
+        if open_price and open_price > 0:
+            with lock:
+                reference_prices[instId] = open_price
+            count += 1
+        time.sleep(0.1)  # Rate limiting
+    logger.warning(
+        f"✅ Initialized {count}/{len(crypto_limits)} reference prices (current hour's open)"
+    )
 
 
 def buy_limit_order(
@@ -385,7 +475,6 @@ def buy_limit_order(
                 if result.get("code") == "0":
                     order_data = result.get("data", [{}])[0]
                     ordId = order_data.get("ordId")
-                    result_msg = order_data.get("sMsg", "")
 
                     if ordId:
                         amount_usdt = float(buy_price) * float(size)
@@ -457,24 +546,41 @@ def buy_limit_order(
 
         return ordId
     except Exception as e:
-        logger.error(f"{STRATEGY_NAME} buy limit DB error: {instId}, {ordId}, {e}")
+        logger.error(
+            f"{STRATEGY_NAME} buy limit DB error: {instId}, ordId may be undefined, {e}"
+        )
         conn.rollback()
+        # ✅ FIX: Return None on error instead of potentially undefined ordId
+        return None
     finally:
         cur.close()
-
-    return ordId
 
 
 def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, conn):
     """Place market sell order"""
     size = format_number(size)
 
-    # Get sell price from current_prices (for simulation) or actual trade
-    with lock:
-        sell_price = current_prices.get(instId, 0.0)
-
     if SIMULATION_MODE:
         # Simulation mode: skip actual trading, use current price as sell price
+        # ✅ FIX: Try to get current price, if not available use a reasonable estimate
+        with lock:
+            sell_price = current_prices.get(instId, 0.0)
+
+        # If no current price in memory, try to get from ticker API
+        if sell_price <= 0:
+            try:
+                market_api = get_market_api()
+                ticker_result = market_api.get_ticker(instId=instId)
+                if ticker_result.get("code") == "0" and ticker_result.get("data"):
+                    ticker_data = ticker_result["data"]
+                    if ticker_data and len(ticker_data) > 0:
+                        sell_price = float(ticker_data[0].get("last", 0))
+                        logger.info(
+                            f"📊 {instId} fetched current price for simulation: ${sell_price:.6f}"
+                        )
+            except Exception as e:
+                logger.warning(f"⚠️ Could not get current price for {instId}: {e}")
+
         sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
         logger.warning(
             f"💰 [SIM] SELL: {instId}, price={sell_price:.6f}, size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
@@ -483,6 +589,7 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
         # Real trading mode
         max_attempts = 3
         failed_flag = 0
+        sell_price = 0.0
 
         for attempt in range(max_attempts):
             try:
@@ -501,12 +608,51 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                 if result.get("code") == "0":
                     order_data = result.get("data", [{}])[0]
                     order_id = order_data.get("ordId", "N/A")
-                    sell_amount_usdt = (
-                        float(sell_price) * float(size) if sell_price > 0 else 0
-                    )
-                    logger.warning(
-                        f"💰 SELL ORDER: {instId}, price={sell_price:.6f}, size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={order_id}"
-                    )
+
+                    # ✅ FIX: Get actual fill price from order (OKX official API returns weighted average)
+                    # get_order() returns fillPx which is already the weighted average of all fills
+                    # No need to call get_fills() separately - simpler and more efficient
+                    time.sleep(0.5)  # Small delay to ensure order is processed
+                    try:
+                        order_result = tradeAPI.get_order(instId=instId, ordId=order_id)
+                        if order_result.get("code") == "0" and order_result.get("data"):
+                            order_info = order_result["data"][0]
+                            fill_px = order_info.get("fillPx", "")
+                            acc_fill_sz = order_info.get("accFillSz", "0")
+
+                            # fillPx from OKX is already the weighted average of all fills
+                            if (
+                                fill_px
+                                and fill_px != ""
+                                and acc_fill_sz
+                                and float(acc_fill_sz) > 0
+                            ):
+                                sell_price = float(fill_px)
+                                logger.warning(
+                                    f"💰 SELL ORDER: {instId}, fill price={sell_price:.6f} (weighted avg from OKX), size={size}, ordId={order_id}"
+                                )
+                            else:
+                                # Fill price not available yet, fallback to current price
+                                with lock:
+                                    sell_price = current_prices.get(instId, 0.0)
+                                logger.warning(
+                                    f"💰 SELL ORDER: {instId}, using current price={sell_price:.6f} (fill price not available yet), size={size}, ordId={order_id}"
+                                )
+                        else:
+                            # Order query failed, fallback to current price
+                            with lock:
+                                sell_price = current_prices.get(instId, 0.0)
+                            logger.warning(
+                                f"💰 SELL ORDER: {instId}, using current price={sell_price:.6f} (order query failed), size={size}, ordId={order_id}"
+                            )
+                    except Exception as e:
+                        # Fallback to current price on error
+                        with lock:
+                            sell_price = current_prices.get(instId, 0.0)
+                        logger.warning(
+                            f"💰 SELL ORDER: {instId}, using current price={sell_price:.6f} (error getting fill price: {e}), size={size}, ordId={order_id}"
+                        )
+
                     failed_flag = 0
                     break
                 else:
@@ -581,22 +727,66 @@ def on_ticker_message(ws, msg_string):
                                 and instId not in active_orders
                             ):
                                 limit_percent = crypto_limits[instId]
-                                limit_price = calculate_limit_price(
-                                    last_price, limit_percent
-                                )
 
-                                if last_price <= limit_price:
-                                    logger.warning(
-                                        f"🚀 BUY SIGNAL: {instId}, price={last_price:.6f} <= limit={limit_price:.6f} ({limit_percent}%)"
-                                    )
-                                    pending_buys[instId] = True
-                                    # Trigger buy in separate thread to avoid blocking
-                                    # Blacklist check will happen in process_buy_signal
-                                    threading.Thread(
-                                        target=process_buy_signal,
-                                        args=(instId, limit_price),
-                                        daemon=True,
-                                    ).start()
+                                # Get reference price (current hour's open), fetch if not available
+                                ref_price = reference_prices.get(instId)
+
+                        # If no reference price, try to fetch it (outside lock to avoid blocking)
+                        if ref_price is None or ref_price <= 0:
+                            logger.warning(
+                                f"⚠️ No reference price for {instId}, fetching current hour's open..."
+                            )
+                            ref_price = fetch_current_hour_open_price(instId)
+                            if ref_price and ref_price > 0:
+                                with lock:
+                                    # Double-check conditions after fetching (another thread might have started buying)
+                                    if (
+                                        instId not in pending_buys
+                                        and instId not in active_orders
+                                    ):
+                                        reference_prices[instId] = ref_price
+                            else:
+                                # ✅ FIX: Skip this check instead of using current price as fallback
+                                # Using current price as fallback could cause immediate trigger if price already dropped
+                                # Better to skip and wait for next tick when API might succeed
+                                logger.warning(
+                                    f"⚠️ Failed to get reference price for {instId}, skipping buy check (will retry next tick)"
+                                )
+                                continue
+
+                        # Calculate limit price based on reference price (current hour's open)
+                        limit_price = calculate_limit_price(ref_price, limit_percent)
+
+                        # Check if current price has dropped to or below limit price
+                        if last_price <= limit_price:
+                            # ✅ FIX: Double-check conditions and set pending_buys atomically to prevent race condition
+                            with lock:
+                                # Re-check conditions to prevent race condition
+                                if instId in pending_buys or instId in active_orders:
+                                    # Another thread already started processing this signal
+                                    continue
+                                # Set pending_buys atomically within the lock
+                                pending_buys[instId] = True
+
+                            logger.warning(
+                                f"🚀 BUY SIGNAL: {instId}, current={last_price:.6f} <= limit={limit_price:.6f} (ref={ref_price:.6f}, {limit_percent}%)"
+                            )
+                            # Trigger buy in separate thread to avoid blocking
+                            # Blacklist check will happen in process_buy_signal
+                            threading.Thread(
+                                target=process_buy_signal,
+                                args=(instId, limit_price),
+                                daemon=True,
+                            ).start()
+                        else:
+                            # Log when price is close but not yet at limit (for debugging)
+                            price_diff_pct = (
+                                (last_price - limit_price) / ref_price
+                            ) * 100
+                            if price_diff_pct < 2.0:  # Within 2% of limit
+                                logger.debug(
+                                    f"📊 {instId} close to limit: current={last_price:.6f}, limit={limit_price:.6f}, diff={price_diff_pct:.2f}%"
+                                )
     except Exception as e:
         logger.error(f"Ticker message error: {msg_string}, {e}")
 
@@ -672,8 +862,8 @@ def check_and_cancel_unfilled_order_after_timeout(
                         try:
                             cur = conn.cursor()
                             cur.execute(
-                                """UPDATE orders 
-                                   SET state = %s, size = %s, price = %s 
+                                """UPDATE orders
+                                   SET state = %s, size = %s, price = %s
                                    WHERE instId = %s AND ordId = %s AND flag = %s""",
                                 (
                                     "filled",
@@ -739,6 +929,7 @@ def process_buy_signal(instId: str, limit_price: float):
                         "buy_price": limit_price,
                         "buy_time": now,
                         "next_hour_close_time": next_hour,
+                        "sell_triggered": False,  # ✅ FIX: Initialize flag to prevent duplicate sells
                     }
                     logger.warning(
                         f"📊 ACTIVE ORDER: {instId}, ordId={ordId}, buy_price={limit_price:.6f}, sell_time={next_hour.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -752,6 +943,14 @@ def process_buy_signal(instId: str, limit_price: float):
                             args=(instId, ordId, api),
                             daemon=True,
                         ).start()
+            else:
+                # ✅ FIX: Order creation failed, clean up pending_buys
+                logger.error(
+                    f"❌ Failed to create buy order for {instId}, cleaning up pending_buys"
+                )
+                with lock:
+                    if instId in pending_buys:
+                        del pending_buys[instId]
         finally:
             conn.close()
     except Exception as e:
@@ -785,9 +984,50 @@ def on_candle_message(ws, msg_string):
                 ]  # Latest candle [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
                 # candle_data is a list: [timestamp, open, high, low, close, volume, ...]
                 if isinstance(candle_data, list) and len(candle_data) >= 9:
+                    candle_ts = int(candle_data[0]) / 1000  # Convert ms to seconds
+                    candle_hour = datetime.fromtimestamp(candle_ts).replace(
+                        minute=0, second=0, microsecond=0
+                    )
+                    open_price = float(candle_data[1])  # Open price at index 1
                     confirm = str(candle_data[8])  # confirm is at index 8
+
+                    # ✅ FIX: Update reference price from WebSocket candle data (more accurate and real-time)
+                    # When a new hour starts, WebSocket sends the new hour's candle with open price
+                    # This is better than calling REST API which may have timing issues
+                    if instId in crypto_limits:
+                        with lock:
+                            # Update reference price if this is the current hour's candle
+                            current_hour = datetime.now().replace(
+                                minute=0, second=0, microsecond=0
+                            )
+                            if (
+                                abs((candle_hour - current_hour).total_seconds())
+                                <= 3600
+                            ):
+                                # This is current hour or very recent hour's candle
+                                reference_prices[instId] = open_price
+                                logger.info(
+                                    f"📊 {instId} updated reference price from WebSocket: ${open_price:.6f} "
+                                    f"(hour={candle_hour.strftime('%H:00')})"
+                                )
+
                     # 'confirm' = '1' means candle is confirmed (closed)
-                    if confirm == "1" and instId in active_orders:
+                    if confirm == "1":
+                        # ✅ FIX: Check with lock to prevent race condition and duplicate triggers
+                        with lock:
+                            if instId not in active_orders:
+                                # No active order, skip
+                                return
+                            # Mark as processing to prevent duplicate triggers for same candle
+                            # Add a flag to track if sell is already triggered
+                            if active_orders[instId].get("sell_triggered", False):
+                                logger.debug(
+                                    f"⚠️ Sell already triggered for {instId}, skipping duplicate candle confirm"
+                                )
+                                return
+                            # Mark as triggered
+                            active_orders[instId]["sell_triggered"] = True
+
                         # This hour's candle just closed, sell the position
                         close_price = (
                             float(candle_data[4]) if len(candle_data) > 4 else 0
@@ -996,6 +1236,9 @@ def main():
 
     logger.warning(f"Loaded {len(crypto_limits)} cryptos with limits")
 
+    # Initialize reference prices (current hour's open prices)
+    initialize_reference_prices()
+
     # Initialize database connection with retry
     try:
         conn = get_db_connection()
@@ -1029,14 +1272,29 @@ def main():
     logger.warning("WebSocket connections started, waiting for messages...")
 
     # Keep main thread alive with health check
+    last_refresh_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
     try:
         while True:
             time.sleep(60)
             # Periodic status log
             with lock:
                 logger.info(
-                    f"Status: {len(current_prices)} prices, {len(active_orders)} active orders"
+                    f"Status: {len(current_prices)} prices, {len(reference_prices)} reference prices, {len(active_orders)} active orders"
                 )
+
+            # Hourly refresh: update reference prices at start of new hour
+            # ✅ FIX: Refresh every hour since we use hourly open price, not daily
+            # ⚠️ IMPORTANT: Delay a few seconds after hour start to ensure new hour's K-line is available
+            # OKX may not have the new hour's K-line immediately at 00:00, so wait until 00:05
+            now = datetime.now()
+            current_hour = now.replace(minute=0, second=0, microsecond=0)
+            # Only refresh if we're past the 5-minute mark of the new hour (ensures K-line is available)
+            if current_hour > last_refresh_hour and now.minute >= 1:
+                logger.warning(
+                    f"🔄 New hour detected ({current_hour.strftime('%H:00')}), refreshing reference prices (hourly open)..."
+                )
+                initialize_reference_prices()
+                last_refresh_hour = current_hour
 
             # Health check: verify WebSocket threads are alive
             if not ticker_thread.is_alive():
