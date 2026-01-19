@@ -306,6 +306,9 @@ def format_number(number, instId: Optional[str] = None):
         number: Number to format (price or size)
         instId: Optional instrument ID (e.g., 'BTC-USDT') to use instrument-specific precision
     """
+    if _format_number is None:
+        logger.error("format_number module not available - module import failed")
+        raise RuntimeError("format_number function not available")
     return _format_number(number, instId, TRADING_FLAG)
 
 
@@ -418,11 +421,19 @@ order_sync_manager: Optional[object] = None
 
 def fetch_current_hour_open_price(instId: str) -> Optional[float]:
     """Fetch current hour's open price for a cryptocurrency"""
+    if price_manager is None:
+        logger.error(
+            f"PriceManager not available, cannot fetch open price for {instId}"
+        )
+        return None
     return price_manager.fetch_current_hour_open_price(instId)
 
 
 def initialize_reference_prices():
     """Initialize reference prices (current hour's open) for all cryptos"""
+    if price_manager is None:
+        logger.error("PriceManager not available, cannot initialize reference prices")
+        return
     price_manager.initialize_reference_prices(crypto_limits)
     # Sync with global reference_prices dict
     with lock:

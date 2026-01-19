@@ -61,6 +61,7 @@ class OrderSyncManager:
         self.process_sell_signal = process_sell_signal
         self.process_momentum_sell_signal = process_momentum_sell_signal
         self.last_deep_recovery_time: Optional[datetime] = None
+        self.deep_recovery_running: bool = False
 
     def sync_orders_from_database(self):
         """Sync active_orders with database state
@@ -240,19 +241,31 @@ class OrderSyncManager:
             now: Current datetime for time comparison
         """
         # Check if deep recovery is needed (once per day)
-        if (
+        # Run in background thread to avoid blocking the timeout loop
+        if not self.deep_recovery_running and (
             self.last_deep_recovery_time is None
             or (now - self.last_deep_recovery_time).total_seconds() >= 86400  # 24 hours
         ):
-            logger.info("🔄 Starting daily deep recovery scan...")
-            try:
-                self.deep_recover_orders_from_database(now)
-                # Only update timestamp if deep recovery completed successfully
-                self.last_deep_recovery_time = now
-                logger.info("✅ Deep recovery completed successfully")
-            except Exception as e:
-                logger.error(f"❌ Deep recovery failed, will retry on next cycle: {e}")
-                # Don't update last_deep_recovery_time so it will retry sooner
+            logger.info("🔄 Starting daily deep recovery scan in background thread...")
+            # Mark as running to prevent multiple concurrent deep recoveries
+            self.deep_recovery_running = True
+            self.last_deep_recovery_time = now
+
+            def run_deep_recovery():
+                try:
+                    self.deep_recover_orders_from_database(now)
+                    logger.info("✅ Deep recovery completed successfully")
+                except Exception as e:
+                    logger.error(
+                        f"❌ Deep recovery failed, will retry on next cycle: {e}"
+                    )
+                    # Reset timestamp on failure so it retries sooner
+                    self.last_deep_recovery_time = None
+                finally:
+                    # Always clear running flag when done
+                    self.deep_recovery_running = False
+
+            threading.Thread(target=run_deep_recovery, daemon=True).start()
 
         try:
             conn = self.get_db_connection()
