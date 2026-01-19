@@ -10,3 +10,7 @@ python-okx==0.4.0
 
 # Environment variables
 python-dotenv==1.0.1
+
+# Data processing (required by okx_functions, okx_ws_manage, okx_order_manage)
+numpy==1.24.3
+pandas==2.0.3
