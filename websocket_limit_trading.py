@@ -2892,6 +2892,7 @@ def recover_orders_from_database(now: datetime):
         conn = get_db_connection()
         cur = conn.cursor()
 
+        # ✅ FIX: Remove 24h and LIMIT restrictions to prevent missing orders
         # Find original strategy orders: filled/partially_filled but not sold
         cur.execute(
             """
@@ -2900,9 +2901,7 @@ def recover_orders_from_database(now: datetime):
             WHERE flag = %s
               AND state IN ('filled', 'partially_filled')
               AND (sell_price IS NULL OR sell_price = '')
-              AND create_time > (EXTRACT(EPOCH FROM NOW()) - 86400) * 1000
             ORDER BY create_time DESC
-            LIMIT 100
             """,
             (STRATEGY_NAME,),
         )
@@ -2921,9 +2920,46 @@ def recover_orders_from_database(now: datetime):
                     # Already tracked, skip (will be handled by timeout check)
                     continue
 
-            # Calculate next_hour_close_time from create_time
-            create_time = datetime.fromtimestamp(create_time_ms / 1000)
-            next_hour = create_time.replace(
+            # ✅ FIX: Get fillTime from OKX API instead of using create_time
+            # create_time is when order was placed, fillTime is when it was filled
+            # For late fills or partial fills, using fillTime is more accurate
+            fill_time = None
+            next_hour = None
+            
+            api = get_trade_api()
+            if api is not None:
+                try:
+                    result = api.get_order(instId=instId, ordId=ordId)
+                    if result and result.get("data") and len(result["data"]) > 0:
+                        order_data = result["data"][0]
+                        fill_time_ms = order_data.get("fillTime", "")
+                        if fill_time_ms and fill_time_ms != "":
+                            try:
+                                fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
+                                logger.info(
+                                    f"✅ RECOVER: Using OKX fillTime for {instId}, ordId={ordId}: "
+                                    f"{fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                            except (ValueError, TypeError) as e:
+                                logger.warning(
+                                    f"⚠️ RECOVER: Invalid fillTime from OKX: {fill_time_ms}, "
+                                    f"falling back to create_time: {e}"
+                                )
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ RECOVER: Failed to get order from OKX for {instId}, "
+                        f"ordId={ordId}: {e}, falling back to create_time"
+                    )
+            
+            # Fallback to create_time if fillTime not available
+            if fill_time is None:
+                fill_time = datetime.fromtimestamp(create_time_ms / 1000)
+                logger.debug(
+                    f"📝 RECOVER: Using create_time as fallback for {instId}, ordId={ordId}"
+                )
+            
+            # Calculate next_hour_close_time from fill_time (or create_time fallback)
+            next_hour = fill_time.replace(
                 minute=0, second=0, microsecond=0
             ) + timedelta(hours=1)
 
@@ -2931,7 +2967,8 @@ def recover_orders_from_database(now: datetime):
             if now >= next_hour:
                 logger.warning(
                     f"🔄 RECOVER: Found filled order not in memory: {instId}, "
-                    f"ordId={ordId}, state={db_state}, recovering to active_orders"
+                    f"ordId={ordId}, state={db_state}, fill_time={fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                    f"recovering to active_orders"
                 )
 
                 # Restore to active_orders
@@ -2940,7 +2977,7 @@ def recover_orders_from_database(now: datetime):
                         "ordId": ordId,
                         "next_hour_close_time": next_hour,
                         "sell_triggered": False,
-                        "fill_time": create_time,
+                        "fill_time": fill_time,
                         "last_sell_attempt_time": None,
                     }
 
@@ -2953,6 +2990,7 @@ def recover_orders_from_database(now: datetime):
                     target=process_sell_signal, args=(instId,), daemon=True
                 ).start()
 
+        # ✅ FIX: Remove 24h and LIMIT restrictions to prevent missing orders
         # Find momentum strategy orders
         cur.execute(
             """
@@ -2961,9 +2999,7 @@ def recover_orders_from_database(now: datetime):
             WHERE flag = %s
               AND state IN ('filled', 'partially_filled')
               AND (sell_price IS NULL OR sell_price = '')
-              AND create_time > (EXTRACT(EPOCH FROM NOW()) - 86400) * 1000
             ORDER BY create_time DESC
-            LIMIT 100
             """,
             (MOMENTUM_STRATEGY_NAME,),
         )
@@ -2984,6 +3020,7 @@ def recover_orders_from_database(now: datetime):
             momentum_orders_by_inst[instId].append({
                 "ordId": ordId,
                 "create_time": datetime.fromtimestamp(create_time_ms / 1000),
+                "create_time_ms": create_time_ms,
                 "state": db_state,
                 "size": db_size,
             })
@@ -2994,16 +3031,53 @@ def recover_orders_from_database(now: datetime):
                     # Already tracked, skip
                     continue
 
-            # Use earliest create_time to calculate next_hour_close_time
-            earliest_time = min(o["create_time"] for o in orders)
-            next_hour = earliest_time.replace(
+            # ✅ FIX: Get fillTime from OKX API for each order, use earliest fillTime
+            # This ensures accurate sell time calculation for late/partial fills
+            earliest_fill_time = None
+            api = get_trade_api()
+            
+            if api is not None:
+                for order in orders:
+                    ordId = order["ordId"]
+                    try:
+                        result = api.get_order(instId=instId, ordId=ordId)
+                        if result and result.get("data") and len(result["data"]) > 0:
+                            order_data = result["data"][0]
+                            fill_time_ms = order_data.get("fillTime", "")
+                            if fill_time_ms and fill_time_ms != "":
+                                try:
+                                    fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
+                                    if earliest_fill_time is None or fill_time < earliest_fill_time:
+                                        earliest_fill_time = fill_time
+                                    logger.debug(
+                                        f"✅ RECOVER: Using OKX fillTime for momentum {instId}, "
+                                        f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                    )
+                                except (ValueError, TypeError):
+                                    pass
+                    except Exception as e:
+                        logger.debug(
+                            f"⚠️ RECOVER: Failed to get order from OKX for momentum {instId}, "
+                            f"ordId={ordId}: {e}"
+                        )
+            
+            # Fallback to earliest create_time if fillTime not available
+            if earliest_fill_time is None:
+                earliest_fill_time = min(o["create_time"] for o in orders)
+                logger.debug(
+                    f"📝 RECOVER: Using earliest create_time as fallback for momentum {instId}"
+                )
+            
+            # Calculate next_hour_close_time from earliest fill_time
+            next_hour = earliest_fill_time.replace(
                 minute=0, second=0, microsecond=0
             ) + timedelta(hours=1)
 
             if now >= next_hour:
                 logger.warning(
                     f"🔄 RECOVER: Found momentum orders not in memory: {instId}, "
-                    f"count={len(orders)}, recovering to momentum_active_orders"
+                    f"count={len(orders)}, earliest_fill_time={earliest_fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                    f"recovering to momentum_active_orders"
                 )
 
                 # Restore to momentum_active_orders
@@ -3012,7 +3086,7 @@ def recover_orders_from_database(now: datetime):
                         "ordIds": [o["ordId"] for o in orders],
                         "buy_prices": [],  # Will be filled from DB if needed
                         "buy_sizes": [float(o["size"]) for o in orders],
-                        "buy_times": [o["create_time"] for o in orders],
+                        "buy_times": [earliest_fill_time] * len(orders),  # Use fill_time
                         "next_hour_close_time": next_hour,
                         "sell_triggered": False,
                         "last_sell_attempt_time": None,
@@ -3090,6 +3164,9 @@ def check_sell_timeout():
             
             # ✅ NEW: Reverse validation from DB - find filled orders not yet sold
             recover_orders_from_database(now)
+            
+            # ✅ NEW: Monitor WebSocket health - alert if candles not received
+            monitor_websocket_health(now)
 
             # ✅ ENHANCED: Check all orders (memory + DB) for sell triggers
             orders_to_sell = []
