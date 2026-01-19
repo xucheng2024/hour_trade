@@ -17,8 +17,6 @@ from okx.Account import AccountAPI
 from okx.MarketData import MarketAPI
 from okx.Trade import TradeAPI
 
-from src.core.okx_functions import sell_market
-
 # Load environment variables
 load_dotenv()
 
@@ -290,6 +288,9 @@ def main():
                 is_sell = pre_sell(instId, marketDataAPI)
                 if is_sell > 0:
                     continue
+
+                # Lazy import to avoid circular import issues
+                from src.core.okx_functions import sell_market
 
                 sell_market(instId, ordId, size, tradeAPI_dict[flag], flag, conn)
 
