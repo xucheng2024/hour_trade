@@ -421,8 +421,9 @@ class OrderSyncManager:
                 with self.lock:
                     existing_ordIds = set()
                     if instId in self.momentum_active_orders:
+                        # ✅ OPTIMIZED: Use orders dict instead of ordIds list
                         existing_ordIds = set(
-                            self.momentum_active_orders[instId].get("ordIds", [])
+                            self.momentum_active_orders[instId].get("orders", {}).keys()
                         )
 
                 # Filter to only process missing ordIds

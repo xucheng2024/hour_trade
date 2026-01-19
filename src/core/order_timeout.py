@@ -230,7 +230,8 @@ def check_and_cancel_unfilled_order_after_timeout(
                                             momentum_active_orders[instId][
                                                 "next_hour_close_times"
                                             ].pop(idx)
-                                if not momentum_active_orders[instId].get("ordIds", []):
+                                # ✅ OPTIMIZED: Check orders dict instead of ordIds list
+                                if not momentum_active_orders[instId].get("orders", {}):
                                     del momentum_active_orders[instId]
                 else:
                     logger.warning(
