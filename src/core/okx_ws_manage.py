@@ -280,12 +280,28 @@ def candle_open(ws):
         ws.send(json.dumps(message))
 
 
-base_dir = "/Users/mac/Downloads/stocks/ex_okx/"
-
-# Load cryptos
-cryptos_file = os.path.join(base_dir, "src/config", "cryptos_selected.json")
-with open(cryptos_file, "r") as file:
-    cryptos = json.load(file)
+# Load cryptos - use relative path from project root
+# This file is not used by websocket_limit_trading.py, but if imported,
+# we need to handle the case where the file doesn't exist
+try:
+    # Try relative path first (for Railway deployment)
+    base_dir = Path(__file__).parent.parent.parent
+    cryptos_file = base_dir / "src" / "config" / "cryptos_selected.json"
+    if not cryptos_file.exists():
+        # Fallback to hardcoded path (for local development)
+        base_dir = Path("/Users/mac/Downloads/stocks/ex_okx")
+        cryptos_file = base_dir / "src" / "config" / "cryptos_selected.json"
+    
+    if cryptos_file.exists():
+        with open(cryptos_file, "r") as file:
+            cryptos = json.load(file)
+    else:
+        # If file doesn't exist, use empty list (module won't work but won't crash)
+        cryptos = []
+        m_logger.warning("cryptos_selected.json not found, using empty list")
+except Exception as e:
+    cryptos = []
+    m_logger.warning(f"Failed to load cryptos_selected.json: {e}, using empty list")
 
 
 last_prices_df = pd.DataFrame(

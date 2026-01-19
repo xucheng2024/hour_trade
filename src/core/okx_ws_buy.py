@@ -3,19 +3,46 @@ import base64
 import hmac
 import json
 import logging
-import time
 import os
+import time
 from datetime import datetime
-import websockets
+from pathlib import Path
+
 import websocket
+import websockets
 import threading
-from okx.Trade import TradeAPI
 from logging.handlers import RotatingFileHandler
+from okx.Trade import TradeAPI
 
-
-logging.basicConfig(filename='/Users/mac/Downloads/stocks/ex_okx/okx_ws_buy.log',format='%(asctime)s - %(levelname)s - %(message)s',level=logging.WARNING)
-handler = RotatingFileHandler(filename='/Users/mac/Downloads/stocks/ex_okx/okx_ws_buy.log', maxBytes=100*1024*1024, backupCount=3)
-logging.getLogger().addHandler(handler)
+# Only use file logging if directory exists (for local development)
+# In Railway/Vercel, prefer stdout logging
+try:
+    log_dir = Path("/Users/mac/Downloads/stocks/ex_okx")
+    if log_dir.exists() and log_dir.is_dir():
+        log_file = log_dir / "okx_ws_buy.log"
+        logging.basicConfig(
+            filename=str(log_file),
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            level=logging.WARNING
+        )
+        handler = RotatingFileHandler(
+            filename=str(log_file),
+            maxBytes=100*1024*1024,
+            backupCount=3
+        )
+        logging.getLogger().addHandler(handler)
+    else:
+        # Fall back to stdout logging
+        logging.basicConfig(
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            level=logging.WARNING
+        )
+except (OSError, PermissionError):
+    # Fall back to stdout logging
+    logging.basicConfig(
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        level=logging.WARNING
+    )
 
 
 def sign(key : str, secret : str, passphrase : str):
@@ -289,7 +316,13 @@ if not all([API_KEY, API_SECRET, API_PASSPHARSE]):
 
 
 if __name__ == '__main__':
-    dir = '/Users/mac/Downloads/stocks/ex_okx/'
+    # Use relative path from project root, fallback to hardcoded path for local dev
+    try:
+        base_dir = Path(__file__).parent.parent.parent
+        dir = str(base_dir) + '/'
+    except Exception:
+        # Fallback for local development
+        dir = '/Users/mac/Downloads/stocks/ex_okx/'
     file_name = dir +'okx_1H_low_pos.json'
     with open(file_name, 'r') as file:
         buy_low_points = json.load(file)
