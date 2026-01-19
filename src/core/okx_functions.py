@@ -7,12 +7,14 @@ import os
 import time
 import warnings
 from datetime import datetime, timedelta
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 import requests
 from okx.Account import AccountAPI
 from okx.MarketData import MarketAPI
+from okx.PublicData import PublicAPI
 from okx.Trade import TradeAPI
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -27,6 +29,14 @@ try:
 except ImportError:
     # Fallback if import fails
     BlacklistManager = None
+
+# Singleton instances for API clients
+_trade_api: Optional[TradeAPI] = None
+_market_api: Optional[MarketAPI] = None
+_public_api: Optional[PublicAPI] = None
+
+# Cache for instrument precision info
+_instrument_precision_cache: Dict[str, Dict] = {}
 
 
 # def pre_buy(instId,marketDataAPI):
@@ -81,8 +91,170 @@ except ImportError:
 #         return 1
 
 
-def format_number(number):
+def get_trade_api(
+    api_key: Optional[str] = None,
+    api_secret: Optional[str] = None,
+    api_passphrase: Optional[str] = None,
+    trading_flag: str = "0",
+    simulation_mode: bool = False,
+) -> Optional[TradeAPI]:
+    """Get or initialize TradeAPI instance (singleton)
+
+    Args:
+        api_key: OKX API key (if None, reads from env)
+        api_secret: OKX API secret (if None, reads from env)
+        api_passphrase: OKX API passphrase (if None, reads from env)
+        trading_flag: Trading flag ("0"=production, "1"=demo)
+        simulation_mode: If True, allows None if API keys not provided
+
+    Returns:
+        TradeAPI instance, or None if in simulation mode without API keys
+    """
+    global _trade_api
+    if _trade_api is None:
+        if api_key is None:
+            api_key = os.getenv("OKX_API_KEY")
+        if api_secret is None:
+            api_secret = os.getenv("OKX_SECRET")
+        if api_passphrase is None:
+            api_passphrase = os.getenv("OKX_PASSPHRASE")
+
+        if simulation_mode and not all([api_key, api_secret, api_passphrase]):
+            logging.debug("Simulation mode: TradeAPI not initialized (no API keys)")
+            return None
+        try:
+            _trade_api = TradeAPI(
+                api_key, api_secret, api_passphrase, False, trading_flag
+            )
+        except Exception as e:
+            if simulation_mode:
+                logging.warning(
+                    f"Simulation mode: TradeAPI init failed: {e}, continuing without it"
+                )
+                return None
+            raise
+    return _trade_api
+
+
+def get_market_api(trading_flag: str = "0") -> MarketAPI:
+    """Get or initialize MarketAPI instance (singleton)
+
+    Args:
+        trading_flag: Trading flag ("0"=production, "1"=demo)
+
+    Returns:
+        MarketAPI instance
+    """
+    global _market_api
+    if _market_api is None:
+        _market_api = MarketAPI(flag=trading_flag)
+    return _market_api
+
+
+def get_public_api(trading_flag: str = "0") -> PublicAPI:
+    """Get or initialize PublicAPI instance (singleton)
+
+    Args:
+        trading_flag: Trading flag ("0"=production, "1"=demo)
+
+    Returns:
+        PublicAPI instance
+    """
+    global _public_api
+    if _public_api is None:
+        _public_api = PublicAPI(flag=trading_flag)
+    return _public_api
+
+
+def get_instrument_precision(
+    instId: str, use_cache: bool = True, trading_flag: str = "0"
+) -> Optional[Dict]:
+    """Get instrument precision info (lotSz, tickSz, minSz) from OKX API
+    Returns None if API call fails, falls back to format_number default behavior
+
+    Args:
+        instId: Instrument ID (e.g., 'BTC-USDT')
+        use_cache: Whether to use cached result
+        trading_flag: Trading flag ("0"=production, "1"=demo)
+
+    Returns:
+        Dict with precision info or None
+    """
+    global _instrument_precision_cache
+    # Check cache first
+    if use_cache and instId in _instrument_precision_cache:
+        return _instrument_precision_cache[instId]
+
+    try:
+        api = get_public_api(trading_flag)
+        result = api.get_instruments(instType="SPOT", instId=instId)
+
+        if result.get("code") == "0" and result.get("data"):
+            instruments = result["data"]
+            if instruments and len(instruments) > 0:
+                inst = instruments[0]
+                tick_sz = inst.get("tickSz", "")
+                lot_sz = inst.get("lotSz", "")
+                min_sz = inst.get("minSz", "")
+
+                # Calculate precision (decimal places)
+                def count_decimal_places(s: str) -> int:
+                    if "." in s:
+                        return len(s.split(".")[-1].rstrip("0"))
+                    return 0
+
+                precision_info = {
+                    "tickSz": tick_sz,
+                    "tickPrecision": count_decimal_places(tick_sz),
+                    "lotSz": lot_sz,
+                    "lotPrecision": count_decimal_places(lot_sz),
+                    "minSz": min_sz,
+                    "minPrecision": count_decimal_places(min_sz),
+                }
+
+                # Cache the result
+                _instrument_precision_cache[instId] = precision_info
+                logging.debug(
+                    f"📊 Cached instrument precision for {instId}: {precision_info}"
+                )
+                return precision_info
+    except Exception as e:
+        logging.debug(f"⚠️ Failed to get instrument precision for {instId}: {e}")
+
+    return None
+
+
+def format_number(number, instId: Optional[str] = None, trading_flag: str = "0"):
+    """Format number according to OKX precision requirements
+    If instId is provided, uses OKX instrument precision (lotSz) for better accuracy
+    Falls back to heuristic precision if instrument info is not available
+
+    Args:
+        number: Number to format (price or size)
+        instId: Optional instrument ID (e.g., 'BTC-USDT') to use instrument-specific precision
+        trading_flag: Trading flag ("0"=production, "1"=demo)
+    """
     number = float(number)
+
+    # Try to use OKX instrument precision if instId is provided
+    if instId:
+        precision_info = get_instrument_precision(
+            instId, use_cache=True, trading_flag=trading_flag
+        )
+        if precision_info:
+            lot_precision = precision_info.get("lotPrecision", 0)
+            lot_sz = float(precision_info.get("lotSz", "1"))
+
+            # Round to lotSz increment
+            if lot_sz > 0:
+                rounded = round(number / lot_sz) * lot_sz
+                # Format with appropriate precision
+                if lot_precision > 0:
+                    return f"{rounded:.{lot_precision}f}".rstrip("0").rstrip(".")
+                else:
+                    return f"{int(rounded)}"
+
+    # Fallback to original heuristic precision
     if number > 100:
         number = int(number)
     elif number > 1:
@@ -94,7 +266,6 @@ def format_number(number):
         decimal_places = digit + 2
         formatted_number = f"{number:.{decimal_places}f}"
         return formatted_number
-
     return f"{number}"
 
 
