@@ -168,15 +168,21 @@ class OrderSyncManager:
                             if instId in self.momentum_active_orders:
                                 # ✅ OPTIMIZED: Simple dict deletion instead of complex index management
                                 for ordId in ordIds_to_remove:
-                                    if ordId in self.momentum_active_orders[instId].get("orders", {}):
-                                        del self.momentum_active_orders[instId]["orders"][ordId]
+                                    if ordId in self.momentum_active_orders[instId].get(
+                                        "orders", {}
+                                    ):
+                                        del self.momentum_active_orders[instId][
+                                            "orders"
+                                        ][ordId]
                                         logger.warning(
                                             f"🔄 SYNC: {instId} (momentum) ordId={ordId} already sold in DB, "
                                             f"removing from momentum_active_orders"
                                         )
 
                                 # If no more orders, remove the entry
-                                if not self.momentum_active_orders[instId].get("orders", {}):
+                                if not self.momentum_active_orders[instId].get(
+                                    "orders", {}
+                                ):
                                     del self.momentum_active_orders[instId]
                                     if self.momentum_strategy is not None:
                                         self.momentum_strategy.reset_position(instId)
@@ -342,11 +348,11 @@ class OrderSyncManager:
                     )
 
                 # Calculate next_hour_close_time from fill_time
-                # Sell at 55 minutes of the hour when order was filled
+                # ✅ FIX: Always sell at next hour's 55 minutes
+                # Calculate next hour's 55 minutes
                 next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                # If fill time is past 55 minutes, sell at next hour's 55 minutes
-                if fill_time.minute >= 55:
-                    next_hour = next_hour + timedelta(hours=1)
+                # Always add 1 hour to ensure we sell at next hour's close
+                next_hour = next_hour + timedelta(hours=1)
 
                 # Only recover if past sell time
                 if now >= next_hour:
@@ -487,11 +493,11 @@ class OrderSyncManager:
                             f"(API unavailable or rate limited)"
                         )
 
-                    # Sell at 55 minutes of the hour when order was filled
+                    # ✅ FIX: Always sell at next hour's 55 minutes
+                    # Calculate next hour's 55 minutes
                     next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
-                    if fill_time.minute >= 55:
-                        next_hour = next_hour + timedelta(hours=1)
+                    # Always add 1 hour to ensure we sell at next hour's close
+                    next_hour = next_hour + timedelta(hours=1)
 
                     orders_with_fill_time.append(
                         {
@@ -530,7 +536,9 @@ class OrderSyncManager:
                                         "buy_price": 0.0,  # Not available from recovery
                                         "buy_size": float(o["size"]),
                                         "buy_time": o["fill_time"],
-                                        "next_hour_close_time": o["next_hour_close_time"],
+                                        "next_hour_close_time": o[
+                                            "next_hour_close_time"
+                                        ],
                                     }
                             else:
                                 # ✅ OPTIMIZED: Use orders dict structure
@@ -540,7 +548,9 @@ class OrderSyncManager:
                                             "buy_price": 0.0,  # Not available from recovery
                                             "buy_size": float(o["size"]),
                                             "buy_time": o["fill_time"],
-                                            "next_hour_close_time": o["next_hour_close_time"],
+                                            "next_hour_close_time": o[
+                                                "next_hour_close_time"
+                                            ],
                                         }
                                         for o in hour_orders
                                     },
@@ -556,6 +566,7 @@ class OrderSyncManager:
                         # Note: Thread pool should be passed from main, but for now use threading
                         # This is in recovery code which runs infrequently, so threading.Thread is acceptable
                         import threading as threading_module
+
                         threading_module.Thread(
                             target=self.process_momentum_sell_signal,
                             args=(instId,),
@@ -666,11 +677,11 @@ class OrderSyncManager:
                     fill_time = datetime.fromtimestamp(create_time_ms / 1000)
 
                 # Calculate next_hour_close_time from fill_time
-                # Sell at 55 minutes of the hour when order was filled
+                # ✅ FIX: Always sell at next hour's 55 minutes
+                # Calculate next hour's 55 minutes
                 next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                # If fill time is past 55 minutes, sell at next hour's 55 minutes
-                if fill_time.minute >= 55:
-                    next_hour = next_hour + timedelta(hours=1)
+                # Always add 1 hour to ensure we sell at next hour's close
+                next_hour = next_hour + timedelta(hours=1)
 
                 # Only recover if past sell time
                 if now >= next_hour:
@@ -801,11 +812,11 @@ class OrderSyncManager:
                     if fill_time is None:
                         fill_time = order["create_time"]
 
-                    # Sell at 55 minutes of the hour when order was filled
+                    # ✅ FIX: Always sell at next hour's 55 minutes
+                    # Calculate next hour's 55 minutes
                     next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
-                    if fill_time.minute >= 55:
-                        next_hour = next_hour + timedelta(hours=1)
+                    # Always add 1 hour to ensure we sell at next hour's close
+                    next_hour = next_hour + timedelta(hours=1)
 
                     orders_with_fill_time.append(
                         {
@@ -844,7 +855,9 @@ class OrderSyncManager:
                                         "buy_price": 0.0,  # Not available from recovery
                                         "buy_size": float(o["size"]),
                                         "buy_time": o["fill_time"],
-                                        "next_hour_close_time": o["next_hour_close_time"],
+                                        "next_hour_close_time": o[
+                                            "next_hour_close_time"
+                                        ],
                                     }
                             else:
                                 # ✅ OPTIMIZED: Use orders dict structure
@@ -854,7 +867,9 @@ class OrderSyncManager:
                                             "buy_price": 0.0,  # Not available from recovery
                                             "buy_size": float(o["size"]),
                                             "buy_time": o["fill_time"],
-                                            "next_hour_close_time": o["next_hour_close_time"],
+                                            "next_hour_close_time": o[
+                                                "next_hour_close_time"
+                                            ],
                                         }
                                         for o in hour_orders
                                     },
@@ -870,6 +885,7 @@ class OrderSyncManager:
                         # Note: Thread pool should be passed from main, but for now use threading
                         # This is in recovery code which runs infrequently, so threading.Thread is acceptable
                         import threading as threading_module
+
                         threading_module.Thread(
                             target=self.process_momentum_sell_signal,
                             args=(instId,),

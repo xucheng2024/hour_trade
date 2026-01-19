@@ -89,11 +89,11 @@ def check_and_cancel_unfilled_order_after_timeout(
                         )
                         fill_time = datetime.now()
 
-                    # Sell at 55 minutes of the hour when order was filled
+                    # ✅ FIX: Always sell at next hour's 55 minutes
+                    # Calculate next hour's 55 minutes
                     next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
-                    if fill_time.minute >= 55:
-                        next_hour = next_hour + timedelta(hours=1)
+                    # Always add 1 hour to ensure we sell at next hour's close
+                    next_hour = next_hour + timedelta(hours=1)
                     sell_time_ms = int(next_hour.timestamp() * 1000)
 
                     if not acc_fill_sz or acc_fill_sz == "" or acc_fill_sz == "0":
@@ -153,9 +153,15 @@ def check_and_cancel_unfilled_order_after_timeout(
                         elif strategy_name == "momentum_volume_exhaustion":
                             if instId in momentum_active_orders:
                                 # ✅ OPTIMIZED: Use orders dict instead of parallel lists
-                                if ordId in momentum_active_orders[instId].get("orders", {}):
-                                    momentum_active_orders[instId]["orders"][ordId]["buy_size"] = filled_size
-                                    momentum_active_orders[instId]["orders"][ordId]["next_hour_close_time"] = next_hour
+                                if ordId in momentum_active_orders[instId].get(
+                                    "orders", {}
+                                ):
+                                    momentum_active_orders[instId]["orders"][ordId][
+                                        "buy_size"
+                                    ] = filled_size
+                                    momentum_active_orders[instId]["orders"][ordId][
+                                        "next_hour_close_time"
+                                    ] = next_hour
                                     logger.warning(
                                         f"{strategy_name} Updated momentum_active_order for partial fill: {instId}, "
                                         f"ordId={ordId}, filled_size={filled_size}, "
@@ -188,7 +194,9 @@ def check_and_cancel_unfilled_order_after_timeout(
                         elif strategy_name == "momentum_volume_exhaustion":
                             if instId in momentum_active_orders:
                                 # ✅ FIXED: Use orders dict instead of legacy lists
-                                if ordId in momentum_active_orders[instId].get("orders", {}):
+                                if ordId in momentum_active_orders[instId].get(
+                                    "orders", {}
+                                ):
                                     del momentum_active_orders[instId]["orders"][ordId]
                                     logger.warning(
                                         f"{strategy_name} Removed canceled momentum order: {instId}, ordId={ordId}"
@@ -221,11 +229,11 @@ def check_and_cancel_unfilled_order_after_timeout(
                         )
                         fill_time = datetime.now()
 
-                    # Sell at 55 minutes of the hour when order was filled
+                    # ✅ FIX: Always sell at next hour's 55 minutes
+                    # Calculate next hour's 55 minutes
                     next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                    # If fill time is past 55 minutes, sell at next hour's 55 minutes
-                    if fill_time.minute >= 55:
-                        next_hour = next_hour + timedelta(hours=1)
+                    # Always add 1 hour to ensure we sell at next hour's close
+                    next_hour = next_hour + timedelta(hours=1)
                     sell_time_ms = int(next_hour.timestamp() * 1000)
 
                     if not acc_fill_sz or acc_fill_sz == "" or acc_fill_sz == "0":
@@ -271,8 +279,12 @@ def check_and_cancel_unfilled_order_after_timeout(
                             elif strategy_name == "momentum_volume_exhaustion":
                                 if instId in momentum_active_orders:
                                     # ✅ OPTIMIZED: Simple dict update instead of complex index management
-                                    if ordId in momentum_active_orders[instId].get("orders", {}):
-                                        momentum_active_orders[instId]["orders"][ordId]["next_hour_close_time"] = next_hour
+                                    if ordId in momentum_active_orders[instId].get(
+                                        "orders", {}
+                                    ):
+                                        momentum_active_orders[instId]["orders"][ordId][
+                                            "next_hour_close_time"
+                                        ] = next_hour
                                         logger.warning(
                                             f"{strategy_name} Updated momentum_active_order for fill: {instId}, "
                                             f"ordId={ordId}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
