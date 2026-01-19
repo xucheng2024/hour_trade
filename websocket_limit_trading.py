@@ -221,11 +221,25 @@ instrument_precision_cache: Dict[str, Dict] = (
 )  # instId -> {lotSz, tickSz, minSz, lotPrecision, tickPrecision}
 
 
-def get_trade_api() -> TradeAPI:
-    """Get or initialize TradeAPI instance (singleton)"""
+def get_trade_api() -> Optional[TradeAPI]:
+    """Get or initialize TradeAPI instance (singleton)
+    
+    Returns:
+        TradeAPI instance, or None if in simulation mode without API keys
+    """
     global trade_api
     if trade_api is None:
-        trade_api = TradeAPI(API_KEY, API_SECRET, API_PASSPHRASE, False, TRADING_FLAG)
+        # ✅ FIX: In simulation mode, allow None if API keys not provided
+        if SIMULATION_MODE and not all([API_KEY, API_SECRET, API_PASSPHRASE]):
+            logger.debug("Simulation mode: TradeAPI not initialized (no API keys)")
+            return None
+        try:
+            trade_api = TradeAPI(API_KEY, API_SECRET, API_PASSPHRASE, False, TRADING_FLAG)
+        except Exception as e:
+            if SIMULATION_MODE:
+                logger.warning(f"Simulation mode: TradeAPI init failed: {e}, continuing without it")
+                return None
+            raise
     return trade_api
 
 
@@ -1610,6 +1624,9 @@ def process_buy_signal(instId: str, limit_price: float):
 
         # Get trade API instance
         api = get_trade_api()
+        if api is None and not SIMULATION_MODE:
+            logger.error(f"{STRATEGY_NAME} TradeAPI not available for {instId}")
+            return
 
         # Calculate size
         size = TRADING_AMOUNT_USDT / limit_price
@@ -1681,6 +1698,11 @@ def process_momentum_buy_signal(instId: str, buy_price: float, buy_pct: float):
 
         # Get trade API instance
         api = get_trade_api()
+        if api is None and not SIMULATION_MODE:
+            logger.error(
+                f"{MOMENTUM_STRATEGY_NAME} TradeAPI not available for {instId}"
+            )
+            return
 
         # Place buy order
         conn = get_db_connection()
@@ -1819,7 +1841,7 @@ def on_candle_message(ws, msg_string):
                                     f"(hour={candle_hour.strftime('%H:00')})"
                                 )
 
-                    # ✅ CRITICAL FIX: Only update history and check signals on confirmed candles
+                    # ✅ CRITICAL FIX: Update history only on confirmed candles
                     # 'confirm' = '1' means candle is confirmed (closed)
                     # OKX sends multiple unconfirmed updates during the hour, which would
                     # break the 1H unified time scale (M=10 would not represent 10 hours)
@@ -1828,8 +1850,7 @@ def on_candle_message(ws, msg_string):
                         now = datetime.now()
                         with lock:
                             last_1h_candle_time[instId] = now
-                        with lock:
-                            last_1h_candle_time[instId] = now
+                        
                         # Update momentum strategy with confirmed candle data
                         # (only confirmed candles ensure true 1H time scale)
                         if momentum_strategy is not None and instId in crypto_limits:
@@ -1915,6 +1936,64 @@ def on_candle_message(ws, msg_string):
                                                         ),
                                                         daemon=True,
                                                     ).start()
+                    
+                    # ✅ ENHANCEMENT: Also check buy signal on unconfirmed candles (for intra-hour triggers)
+                    # This allows buying during the hour if conditions are met
+                    # Note: History is only updated on confirmed candles to maintain 1H time scale
+                    # But we can check signals on any candle update using current price
+                    if momentum_strategy is not None and instId in crypto_limits:
+                        # Use current close price from unconfirmed candle for signal check
+                        # (but don't update history - that only happens on confirm)
+                        current_close_price = (
+                            float(candle_data[4])
+                            if len(candle_data) > 4
+                            else open_price
+                        )
+                        
+                        # Check buy signal with current price (intra-hour trigger)
+                        # This allows buying during the hour, not just at close
+                        should_buy, buy_pct = momentum_strategy.check_buy_signal(
+                            instId, current_close_price
+                        )
+                        if should_buy and buy_pct:
+                            with lock:
+                                # Check if already processing or has active orders
+                                if instId in momentum_pending_buys:
+                                    logger.debug(
+                                        f"⏭️ {instId} Momentum buy already pending (intra-hour), skipping"
+                                    )
+                                elif instId in momentum_active_orders:
+                                    logger.debug(
+                                        f"⏭️ {instId} Momentum order already active (intra-hour), skipping"
+                                    )
+                                else:
+                                    # Check if already at max position
+                                    position = momentum_strategy.get_position_info(instId)
+                                    if (
+                                        position
+                                        and position.get("total_buy_pct", 0.0) >= 0.70
+                                    ):
+                                        logger.debug(
+                                            f"⏸️ {instId} Already at max position (intra-hour): "
+                                            f"{position.get('total_buy_pct', 0.0):.1%}"
+                                        )
+                                    else:
+                                        momentum_pending_buys[instId] = True
+
+                                        logger.warning(
+                                            f"🎯 MOMENTUM BUY SIGNAL (intra-hour): {instId}, "
+                                            f"current_price={current_close_price:.6f}, buy_pct={buy_pct:.1%}"
+                                        )
+                                        # Trigger buy in separate thread
+                                        threading.Thread(
+                                            target=process_momentum_buy_signal,
+                                            args=(
+                                                instId,
+                                                current_close_price,
+                                                buy_pct,
+                                            ),
+                                            daemon=True,
+                                        ).start()
 
                         # Process sell signals for confirmed candles
                         # ✅ FIX: Check with lock to prevent race condition
@@ -2001,6 +2080,11 @@ def process_sell_signal(instId: str):
 
         # Get trade API instance
         api = get_trade_api()
+        if api is None and not SIMULATION_MODE:
+            logger.error(
+                f"{STRATEGY_NAME} TradeAPI not available for sell: {instId}"
+            )
+            return
 
         # ✅ ENHANCED: Check order state and prevent duplicate sells (idempotent)
         conn = get_db_connection()
@@ -2204,6 +2288,11 @@ def process_momentum_sell_signal(instId: str):
 
         # Get trade API instance
         api = get_trade_api()
+        if api is None and not SIMULATION_MODE:
+            logger.error(
+                f"{MOMENTUM_STRATEGY_NAME} TradeAPI not available for sell: {instId}"
+            )
+            return
 
         # Sell all orders for this crypto
         conn = get_db_connection()
