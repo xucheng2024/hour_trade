@@ -17,6 +17,7 @@ import psycopg2.extras
 
 # Configuration
 STRATEGY_NAME = "hourly_limit_ws"
+MOMENTUM_STRATEGY_NAME = "momentum_volume_exhaustion"
 CACHE_TTL = 15
 _cache = {"data": None, "timestamp": 0}
 
@@ -45,18 +46,18 @@ def get_trading_records():
     cur.execute(
         """
         SELECT instId, ordId, create_time, state,
-               price, size, sell_time, side, sell_price
+               price, size, sell_time, side, sell_price, flag
         FROM orders
-        WHERE flag LIKE %s
+        WHERE flag IN (%s, %s)
         ORDER BY create_time DESC
         LIMIT 500
     """,
-        (f"{STRATEGY_NAME}%",),
+        (STRATEGY_NAME, MOMENTUM_STRATEGY_NAME),
     )
 
     rows = cur.fetchall()
 
-    # Process data
+    # Process data - separate by strategy
     cryptos = defaultdict(
         lambda: {
             "trades": [],
@@ -64,6 +65,22 @@ def get_trading_records():
             "profit_pct": 0.0,
             "buy_amount": 0.0,
             "sell_amount": 0.0,
+            "strategies": {
+                STRATEGY_NAME: {
+                    "trades": [],
+                    "profit": 0.0,
+                    "profit_pct": 0.0,
+                    "buy_amount": 0.0,
+                    "sell_amount": 0.0,
+                },
+                MOMENTUM_STRATEGY_NAME: {
+                    "trades": [],
+                    "profit": 0.0,
+                    "profit_pct": 0.0,
+                    "buy_amount": 0.0,
+                    "sell_amount": 0.0,
+                },
+            },
         }
     )
 
@@ -80,6 +97,7 @@ def get_trading_records():
         sell_price = float(row.get("sell_price") or 0)
         size = float(row["size"] or 0)
         state = row["state"] or "active"
+        strategy_flag = row.get("flag") or STRATEGY_NAME
 
         # Calculate profit/loss for this trade
         trade_profit = 0.0
@@ -100,10 +118,21 @@ def get_trading_records():
             "state": state,
             "profit": trade_profit,
             "profit_pct": trade_profit_pct,
+            "strategy": strategy_flag,
         }
 
         cryptos[inst_id]["trades"].append(trade)
 
+        # Update strategy-specific data
+        if strategy_flag in cryptos[inst_id]["strategies"]:
+            strategy_data = cryptos[inst_id]["strategies"][strategy_flag]
+            strategy_data["trades"].append(trade)
+            if trade["side"] == "buy":
+                strategy_data["buy_amount"] += trade["amount"]
+                if sell_price > 0 and size > 0:
+                    strategy_data["sell_amount"] += sell_price * size
+
+        # Update overall data
         if trade["side"] == "buy":
             cryptos[inst_id]["buy_amount"] += trade["amount"]
             if sell_price > 0 and size > 0:
@@ -116,6 +145,14 @@ def get_trading_records():
         if data["buy_amount"] > 0:
             data["profit_pct"] = (profit / data["buy_amount"]) * 100
         data["trades"].sort(key=lambda x: x["buy_time"], reverse=True)
+        
+        # Calculate profit for each strategy
+        for strategy_name, strategy_data in data["strategies"].items():
+            strategy_profit = strategy_data["sell_amount"] - strategy_data["buy_amount"]
+            strategy_data["profit"] = strategy_profit
+            if strategy_data["buy_amount"] > 0:
+                strategy_data["profit_pct"] = (strategy_profit / strategy_data["buy_amount"]) * 100
+            strategy_data["trades"].sort(key=lambda x: x["buy_time"], reverse=True)
 
     result = dict(cryptos)
     _cache["data"] = result
@@ -138,12 +175,36 @@ class handler(BaseHTTPRequestHandler):
             if path == "/api/orders":
                 cryptos = get_trading_records()
 
+                # Calculate strategy totals
+                original_profit = sum(
+                    d["strategies"][STRATEGY_NAME]["profit"] for d in cryptos.values()
+                )
+                momentum_profit = sum(
+                    d["strategies"][MOMENTUM_STRATEGY_NAME]["profit"] for d in cryptos.values()
+                )
+                
                 response = {
                     "success": True,
                     "data": {
                         "total_cryptos": len(cryptos),
                         "total_trades": sum(len(d["trades"]) for d in cryptos.values()),
                         "total_profit": sum(d["profit"] for d in cryptos.values()),
+                        "strategies": {
+                            STRATEGY_NAME: {
+                                "profit": original_profit,
+                                "trades": sum(
+                                    len(d["strategies"][STRATEGY_NAME]["trades"])
+                                    for d in cryptos.values()
+                                ),
+                            },
+                            MOMENTUM_STRATEGY_NAME: {
+                                "profit": momentum_profit,
+                                "trades": sum(
+                                    len(d["strategies"][MOMENTUM_STRATEGY_NAME]["trades"])
+                                    for d in cryptos.values()
+                                ),
+                            },
+                        },
                         "cryptos": cryptos,
                     },
                 }

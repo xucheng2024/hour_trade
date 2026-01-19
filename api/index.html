@@ -67,8 +67,22 @@
                 <div class="summary-value" id="total-trades">-</div>
             </div>
             <div class="summary-item">
-                <div class="summary-label">Profit</div>
+                <div class="summary-label">Total Profit</div>
                 <div class="summary-value" id="total-profit">-</div>
+            </div>
+        </div>
+        <div class="summary" style="margin-top: 12px;">
+            <div class="summary-item">
+                <div class="summary-label">Original Strategy</div>
+                <div class="summary-value" id="original-profit">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">Momentum Strategy</div>
+                <div class="summary-value" id="momentum-profit">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">Strategy Comparison</div>
+                <div class="summary-value" id="strategy-comparison" style="font-size: 14px;">-</div>
             </div>
         </div>
         <div id="crypto-list" class="loading">Loading data...</div>
@@ -108,6 +122,38 @@
                 (data.total_profit > 0 ? 'profit-positive' : 
                  data.total_profit < 0 ? 'profit-negative' : '');
             
+            // Update strategy-specific profits
+            if (data.strategies) {
+                const originalProfit = data.strategies['hourly_limit_ws']?.profit || 0;
+                const momentumProfit = data.strategies['momentum_volume_exhaustion']?.profit || 0;
+                
+                const originalEl = document.getElementById('original-profit');
+                originalEl.textContent = originalProfit.toFixed(2) + ' USDT';
+                originalEl.className = 'summary-value ' + 
+                    (originalProfit > 0 ? 'profit-positive' : 
+                     originalProfit < 0 ? 'profit-negative' : '');
+                
+                const momentumEl = document.getElementById('momentum-profit');
+                momentumEl.textContent = momentumProfit.toFixed(2) + ' USDT';
+                momentumEl.className = 'summary-value ' + 
+                    (momentumProfit > 0 ? 'profit-positive' : 
+                     momentumProfit < 0 ? 'profit-negative' : '');
+                
+                // Strategy comparison
+                const comparisonEl = document.getElementById('strategy-comparison');
+                const diff = momentumProfit - originalProfit;
+                if (diff > 0) {
+                    comparisonEl.textContent = 'Momentum +' + diff.toFixed(2) + ' USDT';
+                    comparisonEl.className = 'summary-value profit-positive';
+                } else if (diff < 0) {
+                    comparisonEl.textContent = 'Original +' + Math.abs(diff).toFixed(2) + ' USDT';
+                    comparisonEl.className = 'summary-value profit-negative';
+                } else {
+                    comparisonEl.textContent = 'Equal';
+                    comparisonEl.className = 'summary-value';
+                }
+            }
+            
             // Render crypto list
             const cryptoList = document.getElementById('crypto-list');
             
@@ -121,18 +167,31 @@
                 const profitClass = cryptoData.profit > 0 ? 'profit-positive' : 
                                    cryptoData.profit < 0 ? 'profit-negative' : '';
                 
+                // Get strategy-specific profits
+                const originalProfit = cryptoData.strategies?.['hourly_limit_ws']?.profit || 0;
+                const momentumProfit = cryptoData.strategies?.['momentum_volume_exhaustion']?.profit || 0;
+                const originalTrades = cryptoData.strategies?.['hourly_limit_ws']?.trades?.length || 0;
+                const momentumTrades = cryptoData.strategies?.['momentum_volume_exhaustion']?.trades?.length || 0;
+                
                 html += `
                     <div class="crypto-section">
                         <div class="crypto-header">
                             <div class="crypto-name">${crypto}</div>
-                            <div class="crypto-profit ${profitClass}">
-                                ${cryptoData.profit.toFixed(2)} USDT (${cryptoData.profit_pct.toFixed(2)}% - ${cryptoData.trades.length}笔)
+                            <div style="display: flex; gap: 12px; align-items: center;">
+                                <div class="crypto-profit ${profitClass}">
+                                    Total: ${cryptoData.profit.toFixed(2)} USDT (${cryptoData.profit_pct.toFixed(2)}%)
+                                </div>
+                                <div style="font-size: 12px; color: #718096;">
+                                    Original: ${originalProfit.toFixed(2)} (${originalTrades}) | 
+                                    Momentum: ${momentumProfit.toFixed(2)} (${momentumTrades})
+                                </div>
                             </div>
                         </div>
                         <table>
                             <thead>
                                 <tr>
                                     <th class="text">Time</th>
+                                    <th class="text">Strategy</th>
                                     <th class="num">Buy Price</th>
                                     <th class="num">Sell Price</th>
                                     <th class="num">Size</th>
@@ -160,6 +219,10 @@
                     const buyPrice = formatPrice(trade.price);
                     const sellPrice = trade.sell_price > 0 ? formatPrice(trade.sell_price) : '-';
                     const statusClass = trade.state === 'sold out' ? 'status-sold' : 'status-active';
+                    const strategyName = trade.strategy === 'momentum_volume_exhaustion' ? 
+                                        'Momentum' : 'Original';
+                    const strategyClass = trade.strategy === 'momentum_volume_exhaustion' ? 
+                                        'momentum' : 'original';
                     
                     // Calculate profit percentage
                     let profitPct = '-';
@@ -177,6 +240,7 @@
                     html += `
                         <tr class="${rowClass}">
                             <td class="text">${timeStr}</td>
+                            <td class="text"><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${trade.strategy === 'momentum_volume_exhaustion' ? '#dbeafe' : '#fef3c7'}; color: ${trade.strategy === 'momentum_volume_exhaustion' ? '#1e40af' : '#92400e'};">${strategyName}</span></td>
                             <td class="num">${buyPrice}</td>
                             <td class="num">${sellPrice}</td>
                             <td class="num">${trade.size.toFixed(6)}</td>

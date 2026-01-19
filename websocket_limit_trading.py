@@ -25,6 +25,7 @@ import psycopg2.extras
 import websocket
 from dotenv import load_dotenv
 from okx.MarketData import MarketAPI
+from okx.PublicData import PublicAPI
 from okx.Trade import TradeAPI
 
 # Add src directory to path to import blacklist_manager
@@ -33,6 +34,12 @@ try:
     from crypto_remote.blacklist_manager import BlacklistManager
 except ImportError:
     BlacklistManager = None
+
+# Import momentum-volume strategy
+try:
+    from core.momentum_volume_strategy import MomentumVolumeStrategy
+except ImportError:
+    MomentumVolumeStrategy = None
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -68,6 +75,7 @@ TRADING_AMOUNT_USDT = int(
     os.getenv("TRADING_AMOUNT_USDT", "100")
 )  # Amount per trade in USDT
 STRATEGY_NAME = "hourly_limit_ws"
+MOMENTUM_STRATEGY_NAME = "momentum_volume_exhaustion"
 SIMULATION_MODE = (
     os.getenv("SIMULATION_MODE", "true").lower() == "true"
 )  # True=simulation (record only, no real trading), False=real trading
@@ -97,11 +105,29 @@ current_prices: Dict[str, float] = {}  # instId -> last_price
 reference_prices: Dict[str, float] = (
     {}
 )  # instId -> current hour's open price (reference for limit calculation)
+# ✅ FIX: Cache reference price fetch attempts to prevent rate limiting
+reference_price_fetch_time: Dict[str, float] = {}  # instId -> last fetch timestamp
+reference_price_fetch_attempts: Dict[str, int] = (
+    {}
+)  # instId -> consecutive fetch failures
 pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time}
+# Momentum strategy active orders (separate tracking)
+momentum_active_orders: Dict[str, Dict] = (
+    {}
+)  # instId -> {ordIds: [str], buy_prices: [float], buy_sizes: [float], ...}
+momentum_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 lock = threading.Lock()
+
+# Initialize momentum-volume strategy
+momentum_strategy: Optional[MomentumVolumeStrategy] = None
+if MomentumVolumeStrategy is not None:
+    momentum_strategy = MomentumVolumeStrategy()
+    logger.warning("✅ Momentum-Volume Exhaustion strategy initialized")
+else:
+    logger.warning("⚠️ Momentum-Volume strategy not available")
 
 # WebSocket connections for unsubscribe
 ticker_ws: Optional[websocket.WebSocketApp] = None
@@ -111,6 +137,12 @@ ws_lock = threading.Lock()
 # Initialize TradeAPI instance (singleton pattern)
 trade_api: Optional[TradeAPI] = None
 market_api: Optional[MarketAPI] = None
+public_api: Optional[PublicAPI] = None
+
+# Cache for instrument precision info (lotSz, tickSz, minSz)
+instrument_precision_cache: Dict[str, Dict] = (
+    {}
+)  # instId -> {lotSz, tickSz, minSz, lotPrecision, tickPrecision}
 
 
 def get_trade_api() -> TradeAPI:
@@ -127,6 +159,61 @@ def get_market_api() -> MarketAPI:
     if market_api is None:
         market_api = MarketAPI(flag=TRADING_FLAG)
     return market_api
+
+
+def get_public_api() -> PublicAPI:
+    """Get or initialize PublicAPI instance (singleton)"""
+    global public_api
+    if public_api is None:
+        public_api = PublicAPI(flag=TRADING_FLAG)
+    return public_api
+
+
+def get_instrument_precision(instId: str, use_cache: bool = True) -> Optional[Dict]:
+    """Get instrument precision info (lotSz, tickSz, minSz) from OKX API
+    Returns None if API call fails, falls back to format_number default behavior
+    """
+    # Check cache first
+    if use_cache and instId in instrument_precision_cache:
+        return instrument_precision_cache[instId]
+
+    try:
+        api = get_public_api()
+        result = api.get_instruments(instType="SPOT", instId=instId)
+
+        if result.get("code") == "0" and result.get("data"):
+            instruments = result["data"]
+            if instruments and len(instruments) > 0:
+                inst = instruments[0]
+                tick_sz = inst.get("tickSz", "")
+                lot_sz = inst.get("lotSz", "")
+                min_sz = inst.get("minSz", "")
+
+                # Calculate precision (decimal places)
+                def count_decimal_places(s: str) -> int:
+                    if "." in s:
+                        return len(s.split(".")[-1].rstrip("0"))
+                    return 0
+
+                precision_info = {
+                    "tickSz": tick_sz,
+                    "tickPrecision": count_decimal_places(tick_sz),
+                    "lotSz": lot_sz,
+                    "lotPrecision": count_decimal_places(lot_sz),
+                    "minSz": min_sz,
+                    "minPrecision": count_decimal_places(min_sz),
+                }
+
+                # Cache the result
+                instrument_precision_cache[instId] = precision_info
+                logger.debug(
+                    f"📊 Cached instrument precision for {instId}: {precision_info}"
+                )
+                return precision_info
+    except Exception as e:
+        logger.debug(f"⚠️ Failed to get instrument precision for {instId}: {e}")
+
+    return None
 
 
 def get_db_connection(max_retries=3, retry_delay=1):
@@ -203,9 +290,40 @@ def play_sound(sound_type: str):
         logger.debug(f"Could not play sound: {e}")
 
 
-def format_number(number):
-    """Format number according to OKX precision requirements"""
+def format_number(number, instId: Optional[str] = None):
+    """Format number according to OKX precision requirements
+    If instId is provided, uses OKX instrument precision (lotSz) for better accuracy
+    Falls back to heuristic precision if instrument info is not available
+
+    Args:
+        number: Number to format (price or size)
+        instId: Optional instrument ID (e.g., 'BTC-USDT') to use instrument-specific precision
+    """
     number = float(number)
+
+    # ✅ OPTIMIZE: Try to use OKX instrument precision if instId is provided
+    if instId:
+        precision_info = get_instrument_precision(instId, use_cache=True)
+        if precision_info:
+            # For size/quantity, use lotSz precision
+            # For price, use tickSz precision
+            # Determine if this is likely a price or size based on value
+            # (prices are usually > 0.001, sizes vary)
+            # Use lotSz for now as it's more commonly needed for order sizes
+            lot_precision = precision_info.get("lotPrecision", 0)
+            lot_sz = float(precision_info.get("lotSz", "1"))
+
+            # Round to lotSz increment
+            if lot_sz > 0:
+                # Round to nearest lotSz increment
+                rounded = round(number / lot_sz) * lot_sz
+                # Format with appropriate precision
+                if lot_precision > 0:
+                    return f"{rounded:.{lot_precision}f}".rstrip("0").rstrip(".")
+                else:
+                    return f"{int(rounded)}"
+
+    # Fallback to original heuristic precision
     if number > 100:
         number = int(number)
     elif number > 1:
@@ -249,6 +367,10 @@ def remove_crypto_from_system(instId: str):
                 del current_prices[instId]
             if instId in reference_prices:
                 del reference_prices[instId]
+            if instId in reference_price_fetch_time:
+                del reference_price_fetch_time[instId]
+            if instId in reference_price_fetch_attempts:
+                del reference_price_fetch_attempts[instId]
             if instId in pending_buys:
                 del pending_buys[instId]
             if instId in active_orders:
@@ -457,6 +579,8 @@ def initialize_reference_prices():
         if open_price and open_price > 0:
             with lock:
                 reference_prices[instId] = open_price
+                # Reset fetch attempts on successful initialization
+                reference_price_fetch_attempts[instId] = 0
             count += 1
         time.sleep(0.1)  # Rate limiting
     logger.warning(
@@ -474,8 +598,8 @@ def buy_limit_order(
         # Already blacklisted, block the buy
         return None
 
-    buy_price = format_number(limit_price)
-    size = format_number(size)
+    buy_price = format_number(limit_price, instId)
+    size = format_number(size, instId)
 
     if SIMULATION_MODE:
         # Simulation mode: generate fake ordId with strategy prefix for isolation
@@ -592,9 +716,15 @@ def buy_limit_order(
         cur.close()
 
 
-def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, conn):
-    """Place market sell order"""
-    size = format_number(size)
+def sell_market_order(
+    instId: str, ordId: str, size: float, tradeAPI: TradeAPI, conn
+) -> bool:
+    """Place market sell order
+
+    Returns:
+        True if sell order was successfully placed and recorded, False otherwise
+    """
+    size = format_number(size, instId)
 
     if SIMULATION_MODE:
         # Simulation mode: skip actual trading, use current price as sell price
@@ -727,31 +857,45 @@ def sell_market_order(instId: str, ordId: str, size: float, tradeAPI: TradeAPI, 
                     time.sleep(1)
 
         if failed_flag > 0:
-            return
+            logger.error(
+                f"❌ {STRATEGY_NAME} SELL FAILED: {instId}, ordId={ordId}, "
+                f"all {max_attempts} attempts failed"
+            )
+            return False
 
-    # Update database
+    # Update database - verify update succeeded
     cur = conn.cursor()
     try:
         # Format sell price for database
-        sell_price_str = format_number(sell_price) if sell_price > 0 else ""
+        sell_price_str = format_number(sell_price, instId) if sell_price > 0 else ""
 
         cur.execute(
             "UPDATE orders SET state = %s, sell_price = %s "
             "WHERE instId = %s AND ordId = %s AND flag = %s",
             ("sold out", sell_price_str, instId, ordId, STRATEGY_NAME),
         )
+        rows_updated = cur.rowcount
         conn.commit()
+
+        if rows_updated == 0:
+            logger.error(
+                f"❌ {STRATEGY_NAME} SELL DB UPDATE FAILED: {instId}, ordId={ordId}, "
+                f"no rows updated"
+            )
+            return False
+
         sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
         logger.warning(
             f"✅ SELL SAVED: {instId}, price={sell_price_str}, size={size}, "
             f"amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
         )
 
-        # Play sell sound
         play_sound("sell")
+        return True
     except Exception as e:
         logger.error(f"{STRATEGY_NAME} sell market DB error: {instId}, {ordId}, {e}")
         conn.rollback()
+        return False
     finally:
         cur.close()
 
@@ -775,11 +919,40 @@ def on_ticker_message(ws, msg_string):
                 instId = ticker.get("instId")
                 if instId in crypto_limits:
                     last_price = float(ticker.get("last", 0))
+                    # For ticker updates, we don't have per-period volume
+                    # Use a normalized approach: estimate volume from price activity
+                    # or use 24h volume normalized (less accurate but works)
+                    # Note: Ticker volume is 24h cumulative, not per-tick
+                    # We'll use a small normalized value for ticker updates
+                    # Real volume data should come from candle WebSocket
+                    # Note: volume_24h not used - volume tracking relies on candle data
+
                     if last_price > 0:
                         with lock:
                             current_prices[instId] = last_price
 
-                            # Check if we should buy
+                            # ✅ FIX: Reset fetch attempts on ticker update to allow recovery from high backoff
+                            # If we're receiving ticker updates, the coin is active and we should be able to fetch reference price
+                            if (
+                                instId in reference_price_fetch_attempts
+                                and reference_price_fetch_attempts[instId] > 0
+                            ):
+                                reference_price_fetch_attempts[instId] = 0
+                                logger.debug(
+                                    f"📊 Reset reference_price_fetch_attempts for {instId} "
+                                    f"on ticker update (coin is active)"
+                                )
+
+                            # ✅ FIX: Don't update volume from ticker (unit mismatch)
+                            # Only update price - volume should come from candle WebSocket
+                            if momentum_strategy is not None:
+                                # Get last volume from history if available, otherwise skip volume update
+                                # This avoids mixing ticker volume (normalized 24h) with candle volume (actual)
+                                momentum_strategy.update_price_volume(
+                                    instId, last_price, 0.0
+                                )
+
+                            # Check if we should buy (original strategy)
                             if (
                                 instId not in pending_buys
                                 and instId not in active_orders
@@ -793,6 +966,28 @@ def on_ticker_message(ws, msg_string):
                         # If no reference price, try to fetch it
                         # (outside lock to avoid blocking)
                         if ref_price is None or ref_price <= 0:
+                            # ✅ FIX: Add backoff/cache to prevent rate limiting
+                            with lock:
+                                last_fetch = reference_price_fetch_time.get(instId, 0)
+                                fetch_attempts = reference_price_fetch_attempts.get(
+                                    instId, 0
+                                )
+                                time_since_fetch = time.time() - last_fetch
+
+                                # Backoff: wait at least 5 seconds between fetches for same instId
+                                # Exponential backoff: 5s, 10s, 20s, 40s (max 60s)
+                                min_wait = min(5 * (2 ** min(fetch_attempts, 4)), 60)
+
+                                if time_since_fetch < min_wait:
+                                    logger.debug(
+                                        f"⏳ Skipping reference price fetch for {instId}: "
+                                        f"backoff ({time_since_fetch:.1f}s < {min_wait}s)"
+                                    )
+                                    continue
+
+                                # Update fetch time
+                                reference_price_fetch_time[instId] = time.time()
+
                             logger.warning(
                                 f"⚠️ No reference price for {instId}, "
                                 f"fetching current hour's open..."
@@ -807,17 +1002,18 @@ def on_ticker_message(ws, msg_string):
                                         and instId not in active_orders
                                     ):
                                         reference_prices[instId] = ref_price
+                                        # Reset fetch attempts on success
+                                        reference_price_fetch_attempts[instId] = 0
                             else:
-                                # ✅ FIX: Skip this check instead of using
-                                # current price as fallback
-                                # Using current price as fallback could cause
-                                # immediate trigger if price already dropped
-                                # Better to skip and wait for next tick
-                                # when API might succeed
+                                # ✅ FIX: Increment fetch attempts and skip this check
+                                with lock:
+                                    reference_price_fetch_attempts[instId] = (
+                                        fetch_attempts + 1
+                                    )
                                 logger.warning(
                                     f"⚠️ Failed to get reference price for "
                                     f"{instId}, skipping buy check "
-                                    f"(will retry next tick)"
+                                    f"(will retry after backoff, attempts={fetch_attempts + 1})"
                                 )
                                 continue
 
@@ -864,117 +1060,495 @@ def on_ticker_message(ws, msg_string):
                                     f"limit={limit_price:.6f}, "
                                     f"diff={price_diff_pct:.2f}%"
                                 )
+
+                    # Check momentum strategy buy signal (independent of original strategy)
+                    if momentum_strategy is not None and instId in crypto_limits:
+                        should_buy, buy_pct = momentum_strategy.check_buy_signal(
+                            instId, last_price
+                        )
+                        if should_buy and buy_pct:
+                            with lock:
+                                # Check if already processing or has active orders
+                                if instId in momentum_pending_buys:
+                                    continue
+                                # Check if already at max position
+                                position = momentum_strategy.get_position_info(instId)
+                                if (
+                                    position
+                                    and position.get("total_buy_pct", 0.0) >= 0.70
+                                ):
+                                    continue
+                                momentum_pending_buys[instId] = True
+
+                            logger.warning(
+                                f"🎯 MOMENTUM BUY SIGNAL: {instId}, "
+                                f"price={last_price:.6f}, buy_pct={buy_pct:.1%}"
+                            )
+                            # Trigger buy in separate thread
+                            threading.Thread(
+                                target=process_momentum_buy_signal,
+                                args=(instId, last_price, buy_pct),
+                                daemon=True,
+                            ).start()
     except Exception as e:
         logger.error(f"Ticker message error: {msg_string}, {e}")
 
 
 def check_and_cancel_unfilled_order_after_timeout(
-    instId: str, ordId: str, tradeAPI: TradeAPI
+    instId: str, ordId: str, tradeAPI: TradeAPI, strategy_name: str = STRATEGY_NAME
 ):
     """Check order status after 1 minute timeout, cancel if not filled"""
     # Skip timeout check in simulation mode (orders are virtual)
-    if SIMULATION_MODE or ordId.startswith("HLW-SIM-"):
+    if SIMULATION_MODE or ordId.startswith("HLW-SIM-") or ordId.startswith("MVE-SIM-"):
         return
 
     try:
         time.sleep(60)  # Wait 1 minute
 
-        # Check if order still exists in active_orders
+        # ✅ FIX: Check if order exists quickly with lock, then release for API/DB operations
         with lock:
-            if (
-                instId not in active_orders
-                or active_orders[instId].get("ordId") != ordId
-            ):
+            order_exists = False
+            if strategy_name == STRATEGY_NAME:
+                if (
+                    instId in active_orders
+                    and active_orders[instId].get("ordId") == ordId
+                ):
+                    order_exists = True
+            elif strategy_name == MOMENTUM_STRATEGY_NAME:
+                if instId in momentum_active_orders:
+                    if ordId in momentum_active_orders[instId].get("ordIds", []):
+                        order_exists = True
+
+            if not order_exists:
                 # Order already processed or removed
                 return
 
-            # Check order status
-            try:
-                result = tradeAPI.get_order(instId=instId, ordId=ordId)
-                if result and result.get("data") and len(result["data"]) > 0:
-                    order_data = result["data"][0]
-                    acc_fill_sz = order_data.get("accFillSz", "0")
-                    fill_px = order_data.get("fillPx", "0")
-                    state = order_data.get("state", "")
-                    filled_size = (
-                        float(acc_fill_sz) if acc_fill_sz and acc_fill_sz != "" else 0.0
-                    )
-                    is_filled = filled_size > 0 or state in [
-                        "filled",
-                        "partially_filled",
-                    ]
+        # ✅ FIX: Release lock before API/DB operations to avoid blocking
+        # Check order status
+        try:
+            result = tradeAPI.get_order(instId=instId, ordId=ordId)
+            if result and result.get("data") and len(result["data"]) > 0:
+                order_data = result["data"][0]
+                acc_fill_sz = order_data.get("accFillSz", "0")
+                fill_px = order_data.get("fillPx", "0")
+                state = order_data.get("state", "")
+                # ✅ FIX: Get fillTime from OKX order data (more accurate than local time)
+                fill_time_ms = order_data.get("fillTime", "")
+                filled_size = (
+                    float(acc_fill_sz) if acc_fill_sz and acc_fill_sz != "" else 0.0
+                )
+                # ✅ FIX: Handle partially_filled - cancel remaining unfilled portion
+                is_fully_filled = state == "filled" and filled_size > 0
+                is_partially_filled = state == "partially_filled" and filled_size > 0
 
-                    if not is_filled:
-                        # Order not filled after 1 minute, cancel it
+                if is_partially_filled:
+                    # ✅ FIX: Partially filled: keep in active_orders, update with filled size, recalculate sell_time
+                    logger.warning(
+                        f"{strategy_name} Order partially filled: {instId}, ordId={ordId}, "
+                        f"filled={acc_fill_sz}, state={state}"
+                    )
+
+                    # ✅ FIX: Use OKX fillTime if available, otherwise fallback to local time
+                    if fill_time_ms and fill_time_ms != "":
+                        try:
+                            fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
+                            logger.info(
+                                f"{strategy_name} Using OKX fillTime for {instId}, ordId={ordId}: "
+                                f"{fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                        except (ValueError, TypeError) as e:
+                            logger.warning(
+                                f"{strategy_name} Invalid fillTime from OKX: {fill_time_ms}, "
+                                f"using local time: {e}"
+                            )
+                            fill_time = datetime.now()
+                    else:
+                        logger.warning(
+                            f"{strategy_name} No fillTime from OKX for {instId}, ordId={ordId}, "
+                            f"using local time (may have clock drift)"
+                        )
+                        fill_time = datetime.now()
+
+                    next_hour = fill_time.replace(
+                        minute=0, second=0, microsecond=0
+                    ) + timedelta(hours=1)
+                    sell_time_ms = int(next_hour.timestamp() * 1000)
+
+                    # ✅ FIX: Use accFillSz string directly to preserve precision
+                    # Validate that accFillSz is a valid numeric string
+                    if not acc_fill_sz or acc_fill_sz == "" or acc_fill_sz == "0":
+                        logger.error(
+                            f"{strategy_name} Invalid accFillSz for partially filled order: "
+                            f"{instId}, ordId={ordId}, accFillSz={acc_fill_sz}"
+                        )
+                        return
+
+                    # Update database with actual filled size (as string to preserve precision) and recalculated sell_time
+                    conn = get_db_connection()
+                    try:
+                        cur = conn.cursor()
+                        cur.execute(
+                            """UPDATE orders
+                               SET state = %s, size = %s, price = %s, sell_time = %s
+                               WHERE instId = %s AND ordId = %s AND flag = %s""",
+                            (
+                                "partially_filled",
+                                acc_fill_sz,  # Use string directly to preserve precision
+                                fill_px,
+                                sell_time_ms,
+                                instId,
+                                ordId,
+                                strategy_name,
+                            ),
+                        )
+                        conn.commit()
+                        cur.close()
+                    finally:
+                        conn.close()
+
+                    # Cancel remaining unfilled portion
+                    try:
                         tradeAPI.cancel_order(instId=instId, ordId=ordId)
                         logger.warning(
-                            f"{STRATEGY_NAME} Canceled unfilled order after 1 minute: "
+                            f"{strategy_name} Canceled remaining unfilled portion: "
                             f"{instId}, ordId={ordId}"
                         )
-
-                        # Update database
-                        conn = get_db_connection()
-                        try:
-                            cur = conn.cursor()
-                            cur.execute(
-                                "UPDATE orders SET state = %s "
-                                "WHERE instId = %s AND ordId = %s AND flag = %s",
-                                ("canceled", instId, ordId, STRATEGY_NAME),
-                            )
-                            conn.commit()
-                            cur.close()
-                        finally:
-                            conn.close()
-
-                        # Remove from active_orders
-                        with lock:
-                            if instId in active_orders:
-                                del active_orders[instId]
-                    else:
-                        # ✅ FIX: Order is filled, update database with actual fill info
-                        logger.warning(
-                            f"{STRATEGY_NAME} Order filled within 1 minute: "
-                            f"{instId}, ordId={ordId}, "
-                            f"fillSize={acc_fill_sz}, fillPrice={fill_px}"
+                    except Exception as e:
+                        logger.error(
+                            f"{strategy_name} Error canceling partial order: {instId}, {ordId}, {e}"
                         )
 
-                        # Update database with filled status and actual fill data
-                        conn = get_db_connection()
-                        try:
-                            cur = conn.cursor()
-                            cur.execute(
-                                """UPDATE orders
-                                   SET state = %s, size = %s, price = %s
-                                   WHERE instId = %s AND ordId = %s AND flag = %s""",
-                                (
-                                    "filled",
-                                    acc_fill_sz,
-                                    fill_px,
-                                    instId,
-                                    ordId,
-                                    STRATEGY_NAME,
-                                ),
-                            )
-                            conn.commit()
+                    # ✅ FIX: Keep in active_orders with updated filled_size and recalculated next_hour_close_time
+                    with lock:
+                        if strategy_name == STRATEGY_NAME:
+                            if instId in active_orders:
+                                active_orders[instId]["filled_size"] = filled_size
+                                active_orders[instId]["fill_price"] = (
+                                    float(fill_px) if fill_px else 0.0
+                                )
+                                active_orders[instId][
+                                    "next_hour_close_time"
+                                ] = next_hour
+                                active_orders[instId]["fill_time"] = fill_time
+                                logger.warning(
+                                    f"{strategy_name} Updated active_order for partial fill: {instId}, "
+                                    f"filled_size={filled_size}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                )
+                        elif strategy_name == MOMENTUM_STRATEGY_NAME:
+                            if instId in momentum_active_orders:
+                                if ordId in momentum_active_orders[instId].get(
+                                    "ordIds", []
+                                ):
+                                    idx = momentum_active_orders[instId][
+                                        "ordIds"
+                                    ].index(ordId)
+                                    # Update sizes to reflect partial fill
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_sizes", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId]["buy_sizes"][
+                                            idx
+                                        ] = filled_size
+                                    # Update next_hour_close_time based on fill time
+                                    momentum_active_orders[instId][
+                                        "next_hour_close_time"
+                                    ] = next_hour
+                                    logger.warning(
+                                        f"{strategy_name} Updated momentum_active_order for partial fill: {instId}, "
+                                        f"ordId={ordId}, filled_size={filled_size}, "
+                                        f"next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                    )
+                    return
 
-                            # Update active_orders with actual filled size
-                            with lock:
+                if not is_fully_filled:
+                    # Order not filled after 1 minute, cancel it
+                    tradeAPI.cancel_order(instId=instId, ordId=ordId)
+                    logger.warning(
+                        f"{strategy_name} Canceled unfilled order after 1 minute: "
+                        f"{instId}, ordId={ordId}"
+                    )
+
+                    # Update database
+                    conn = get_db_connection()
+                    try:
+                        cur = conn.cursor()
+                        cur.execute(
+                            "UPDATE orders SET state = %s "
+                            "WHERE instId = %s AND ordId = %s AND flag = %s",
+                            ("canceled", instId, ordId, strategy_name),
+                        )
+                        conn.commit()
+                        cur.close()
+                    finally:
+                        conn.close()
+
+                    # Remove from active_orders or momentum_active_orders
+                    with lock:
+                        if strategy_name == STRATEGY_NAME:
+                            if instId in active_orders:
+                                del active_orders[instId]
+                        elif strategy_name == MOMENTUM_STRATEGY_NAME:
+                            if instId in momentum_active_orders:
+                                # Remove this ordId from the list
+                                if ordId in momentum_active_orders[instId].get(
+                                    "ordIds", []
+                                ):
+                                    idx = momentum_active_orders[instId][
+                                        "ordIds"
+                                    ].index(ordId)
+                                    momentum_active_orders[instId]["ordIds"].pop(idx)
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_prices", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId][
+                                            "buy_prices"
+                                        ].pop(idx)
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_sizes", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId]["buy_sizes"].pop(
+                                            idx
+                                        )
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_times", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId]["buy_times"].pop(
+                                            idx
+                                        )
+                                # If no more orders, remove the entry
+                                if not momentum_active_orders[instId].get("ordIds", []):
+                                    del momentum_active_orders[instId]
+                else:
+                    # ✅ FIX: Order is filled, update database with actual fill info and recalculate sell_time
+                    logger.warning(
+                        f"{strategy_name} Order filled within 1 minute: "
+                        f"{instId}, ordId={ordId}, "
+                        f"fillSize={acc_fill_sz}, fillPrice={fill_px}"
+                    )
+
+                    # ✅ FIX: Use OKX fillTime if available, otherwise fallback to local time
+                    fill_time_ms = order_data.get("fillTime", "")
+                    if fill_time_ms and fill_time_ms != "":
+                        try:
+                            fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
+                            logger.info(
+                                f"{strategy_name} Using OKX fillTime for {instId}, ordId={ordId}: "
+                                f"{fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                        except (ValueError, TypeError) as e:
+                            logger.warning(
+                                f"{strategy_name} Invalid fillTime from OKX: {fill_time_ms}, "
+                                f"using local time: {e}"
+                            )
+                            fill_time = datetime.now()
+                    else:
+                        logger.warning(
+                            f"{strategy_name} No fillTime from OKX for {instId}, ordId={ordId}, "
+                            f"using local time (may have clock drift)"
+                        )
+                        fill_time = datetime.now()
+
+                    next_hour = fill_time.replace(
+                        minute=0, second=0, microsecond=0
+                    ) + timedelta(hours=1)
+                    sell_time_ms = int(next_hour.timestamp() * 1000)
+
+                    # ✅ FIX: Use accFillSz string directly to preserve precision
+                    # Validate that accFillSz is a valid numeric string
+                    if not acc_fill_sz or acc_fill_sz == "" or acc_fill_sz == "0":
+                        logger.error(
+                            f"{strategy_name} Invalid accFillSz for filled order: "
+                            f"{instId}, ordId={ordId}, accFillSz={acc_fill_sz}"
+                        )
+                        return
+
+                    # Update database with filled status, actual fill data (as string to preserve precision), and recalculated sell_time
+                    conn = get_db_connection()
+                    try:
+                        cur = conn.cursor()
+                        cur.execute(
+                            """UPDATE orders
+                               SET state = %s, size = %s, price = %s, sell_time = %s
+                               WHERE instId = %s AND ordId = %s AND flag = %s""",
+                            (
+                                "filled",
+                                acc_fill_sz,  # Use string directly to preserve precision
+                                fill_px,
+                                sell_time_ms,
+                                instId,
+                                ordId,
+                                strategy_name,
+                            ),
+                        )
+                        conn.commit()
+
+                        # ✅ FIX: Update active_orders with actual filled size and recalculated next_hour_close_time
+                        with lock:
+                            if strategy_name == STRATEGY_NAME:
                                 if instId in active_orders:
                                     active_orders[instId]["filled_size"] = filled_size
                                     active_orders[instId]["fill_price"] = (
                                         float(fill_px) if fill_px else 0.0
                                     )
+                                    active_orders[instId][
+                                        "next_hour_close_time"
+                                    ] = next_hour
+                                    active_orders[instId]["fill_time"] = fill_time
+                                    logger.warning(
+                                        f"{strategy_name} Updated active_order for fill: {instId}, "
+                                        f"next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                    )
+                            elif strategy_name == MOMENTUM_STRATEGY_NAME:
+                                if instId in momentum_active_orders:
+                                    # Update next_hour_close_time based on fill time
+                                    momentum_active_orders[instId][
+                                        "next_hour_close_time"
+                                    ] = next_hour
+                                    logger.warning(
+                                        f"{strategy_name} Updated momentum_active_order for fill: {instId}, "
+                                        f"ordId={ordId}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                    )
 
-                            cur.close()
-                        finally:
-                            conn.close()
-            except Exception as e:
-                logger.error(
-                    f"{STRATEGY_NAME} Error checking order status after timeout "
-                    f"{instId}, {ordId}: {e}"
-                )
+                        cur.close()
+                    finally:
+                        conn.close()
+        except Exception as e:
+            logger.error(
+                f"{strategy_name} Error checking order status after timeout "
+                f"{instId}, {ordId}: {e}"
+            )
     except Exception as e:
-        logger.error(f"{STRATEGY_NAME} Error in timeout check {instId}, {ordId}: {e}")
+        logger.error(f"{strategy_name} Error in timeout check {instId}, {ordId}: {e}")
+
+
+def buy_momentum_order(
+    instId: str, buy_price: float, buy_pct: float, tradeAPI: TradeAPI, conn
+) -> Optional[str]:
+    """Place momentum strategy buy order and record in database"""
+    # Check blacklist before buying
+    if check_blacklist_before_buy(instId):
+        return None
+
+    # Calculate size based on buy percentage
+    total_amount = TRADING_AMOUNT_USDT * buy_pct
+    size = total_amount / buy_price if buy_price > 0 else 0
+
+    buy_price_str = format_number(buy_price, instId)
+    size_str = format_number(size, instId)
+
+    if SIMULATION_MODE:
+        ordId = f"MVE-SIM-{uuid.uuid4().hex[:12]}"  # MVE = Momentum Volume Exhaustion
+        amount_usdt = float(buy_price_str) * float(size_str)
+        logger.warning(
+            f"🛒 [SIM] MOMENTUM BUY: {instId}, price={buy_price_str}, "
+            f"size={size_str}, amount={amount_usdt:.2f} USDT, "
+            f"pct={buy_pct:.1%}, ordId={ordId}"
+        )
+    else:
+        max_attempts = 3
+        failed_flag = 0
+        ordId = None
+
+        for attempt in range(max_attempts):
+            try:
+                result = tradeAPI.place_order(
+                    instId=instId,
+                    tdMode="cash",
+                    side="buy",
+                    ordType="limit",
+                    px=buy_price_str,
+                    sz=size_str,
+                )
+
+                if result.get("code") == "0":
+                    order_data = result.get("data", [{}])[0]
+                    ordId = order_data.get("ordId")
+                    if ordId:
+                        amount_usdt = float(buy_price_str) * float(size_str)
+                        logger.warning(
+                            f"🛒 MOMENTUM BUY ORDER: {instId}, price={buy_price_str}, "
+                            f"size={size_str}, amount={amount_usdt:.2f} USDT, "
+                            f"pct={buy_pct:.1%}, ordId={ordId}"
+                        )
+                        failed_flag = 0
+                        break
+                    else:
+                        logger.error(
+                            f"{MOMENTUM_STRATEGY_NAME} buy limit: {instId}, no ordId"
+                        )
+                        failed_flag = 1
+                else:
+                    error_msg = result.get("msg", "Unknown error")
+                    logger.error(
+                        f"{MOMENTUM_STRATEGY_NAME} buy limit failed: {instId}, "
+                        f"code={result.get('code')}, msg={error_msg}"
+                    )
+                    failed_flag = 1
+
+                if failed_flag > 0 and attempt < max_attempts - 1:
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"{MOMENTUM_STRATEGY_NAME} buy limit error: {instId}, {e}")
+                failed_flag = 1
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+
+        if failed_flag > 0:
+            return None
+
+    # Record in database
+    cur = conn.cursor()
+    try:
+        now = datetime.now()
+        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        create_time = int(now.timestamp() * 1000)
+        sell_time = int(next_hour.timestamp() * 1000)
+        order_state = "filled" if SIMULATION_MODE else ""
+
+        cur.execute(
+            """INSERT INTO orders (instId, flag, ordId, create_time,
+                       orderType, state, price, size, sell_time, side)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (
+                instId,
+                MOMENTUM_STRATEGY_NAME,
+                ordId,
+                create_time,
+                "limit",
+                order_state,
+                buy_price_str,
+                size_str,
+                sell_time,
+                "buy",
+            ),
+        )
+        conn.commit()
+        amount_usdt = float(buy_price_str) * float(size_str)
+        logger.warning(
+            f"✅ MOMENTUM BUY SAVED: {instId}, price={buy_price_str}, "
+            f"size={size_str}, amount={amount_usdt:.2f} USDT, "
+            f"pct={buy_pct:.1%}, ordId={ordId}"
+        )
+
+        play_sound("buy")
+        return ordId
+    except Exception as e:
+        logger.error(
+            f"{MOMENTUM_STRATEGY_NAME} buy limit DB error: {instId}, "
+            f"ordId may be undefined, {e}"
+        )
+        conn.rollback()
+        return None
+    finally:
+        cur.close()
 
 
 def process_buy_signal(instId: str, limit_price: float):
@@ -1025,7 +1599,7 @@ def process_buy_signal(instId: str, limit_price: float):
                     if not SIMULATION_MODE:
                         threading.Thread(
                             target=check_and_cancel_unfilled_order_after_timeout,
-                            args=(instId, ordId, api),
+                            args=(instId, ordId, api, STRATEGY_NAME),
                             daemon=True,
                         ).start()
             else:
@@ -1044,6 +1618,90 @@ def process_buy_signal(instId: str, limit_price: float):
         with lock:
             if instId in pending_buys:
                 del pending_buys[instId]
+
+
+def process_momentum_buy_signal(instId: str, buy_price: float, buy_pct: float):
+    """Process momentum strategy buy signal in separate thread"""
+    try:
+        # Check blacklist before processing buy signal
+        if check_blacklist_before_buy(instId):
+            logger.warning(
+                f"🚫 Skipping momentum buy signal for {instId} - blacklisted"
+            )
+            with lock:
+                if instId in momentum_pending_buys:
+                    del momentum_pending_buys[instId]
+            return
+
+        # Get trade API instance
+        api = get_trade_api()
+
+        # Place buy order
+        conn = get_db_connection()
+        try:
+            ordId = buy_momentum_order(instId, buy_price, buy_pct, api, conn)
+            if ordId:
+                with lock:
+                    if instId in momentum_pending_buys:
+                        del momentum_pending_buys[instId]
+
+                    # Record in momentum strategy
+                    if momentum_strategy is not None:
+                        total_amount = TRADING_AMOUNT_USDT * buy_pct
+                        size = total_amount / buy_price if buy_price > 0 else 0
+                        momentum_strategy.record_buy(instId, buy_price, size, ordId)
+
+                    # Track in active orders
+                    now = datetime.now()
+                    next_hour = now.replace(
+                        minute=0, second=0, microsecond=0
+                    ) + timedelta(hours=1)
+
+                    if instId not in momentum_active_orders:
+                        momentum_active_orders[instId] = {
+                            "ordIds": [],
+                            "buy_prices": [],
+                            "buy_sizes": [],
+                            "buy_times": [],
+                            "next_hour_close_time": next_hour,
+                            "sell_triggered": False,
+                        }
+
+                    momentum_active_orders[instId]["ordIds"].append(ordId)
+                    momentum_active_orders[instId]["buy_prices"].append(buy_price)
+                    total_amount = TRADING_AMOUNT_USDT * buy_pct
+                    size = total_amount / buy_price if buy_price > 0 else 0
+                    momentum_active_orders[instId]["buy_sizes"].append(size)
+                    momentum_active_orders[instId]["buy_times"].append(now)
+
+                    logger.warning(
+                        f"📊 MOMENTUM ACTIVE ORDER: {instId}, ordId={ordId}, "
+                        f"buy_price={buy_price:.6f}, pct={buy_pct:.1%}, "
+                        f"sell_time={next_hour.strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
+
+                    # Start 1-minute timeout check thread (only in real trading mode)
+                    if not SIMULATION_MODE:
+                        threading.Thread(
+                            target=check_and_cancel_unfilled_order_after_timeout,
+                            args=(instId, ordId, api, MOMENTUM_STRATEGY_NAME),
+                            daemon=True,
+                        ).start()
+            else:
+                logger.error(
+                    f"❌ Failed to create momentum buy order for {instId}, "
+                    f"cleaning up momentum_pending_buys"
+                )
+                with lock:
+                    if instId in momentum_pending_buys:
+                        del momentum_pending_buys[instId]
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"process_momentum_buy_signal error: {instId}, {e}")
+        with lock:
+            if instId in momentum_pending_buys:
+                del momentum_pending_buys[instId]
 
 
 def on_candle_message(ws, msg_string):
@@ -1090,17 +1748,56 @@ def on_candle_message(ws, msg_string):
                             current_hour = datetime.now().replace(
                                 minute=0, second=0, microsecond=0
                             )
-                            if (
-                                abs((candle_hour - current_hour).total_seconds())
-                                <= 3600
-                            ):
-                                # This is current hour or very recent hour's
-                                # candle
+                            # ✅ FIX: Strictly check - only accept current hour's candle
+                            # Allow small tolerance (±60 seconds) for timing differences
+                            time_diff = abs(
+                                (candle_hour - current_hour).total_seconds()
+                            )
+                            if time_diff <= 60:
+                                # This is current hour's candle
                                 reference_prices[instId] = open_price
+                                # ✅ OPTIMIZE: Reset fetch attempts on candle update
+                                # This allows recovery even if ticker updates are missing
+                                if (
+                                    instId in reference_price_fetch_attempts
+                                    and reference_price_fetch_attempts[instId] > 0
+                                ):
+                                    reference_price_fetch_attempts[instId] = 0
+                                    logger.debug(
+                                        f"📊 Reset reference_price_fetch_attempts for {instId} "
+                                        f"on candle update (coin is active)"
+                                    )
                                 logger.info(
                                     f"📊 {instId} updated reference price from "
                                     f"WebSocket: ${open_price:.6f} "
                                     f"(hour={candle_hour.strftime('%H:00')})"
+                                )
+
+                        # Update momentum strategy with candle volume data
+                        # (more accurate than ticker volume estimates)
+                        if momentum_strategy is not None and instId in crypto_limits:
+                            candle_volume = (
+                                float(candle_data[5]) if len(candle_data) > 5 else 0.0
+                            )
+                            close_price = (
+                                float(candle_data[4])
+                                if len(candle_data) > 4
+                                else open_price
+                            )
+                            # Use volCcy (index 6) which is in quote currency (USDT)
+                            # This is more consistent for comparison across different cryptos
+                            volume_ccy = (
+                                float(candle_data[6])
+                                if len(candle_data) > 6
+                                else candle_volume
+                            )
+                            # Use volume_ccy if available, otherwise fallback to base volume
+                            volume_to_use = (
+                                volume_ccy if volume_ccy > 0 else candle_volume
+                            )
+                            if volume_to_use > 0:
+                                momentum_strategy.update_price_volume(
+                                    instId, close_price, volume_to_use
                                 )
 
                     # 'confirm' = '1' means candle is confirmed (closed)
@@ -1108,32 +1805,60 @@ def on_candle_message(ws, msg_string):
                         # ✅ FIX: Check with lock to prevent race condition
                         # and duplicate triggers
                         with lock:
-                            if instId not in active_orders:
-                                # No active order, skip
-                                return
-                            # Mark as processing to prevent duplicate triggers
-                            # for same candle
-                            # Add a flag to track if sell is already triggered
-                            if active_orders[instId].get("sell_triggered", False):
-                                logger.debug(
-                                    f"⚠️ Sell already triggered for {instId}, "
-                                    f"skipping duplicate candle confirm"
-                                )
-                                return
-                            # Mark as triggered
-                            active_orders[instId]["sell_triggered"] = True
+                            # Check original strategy
+                            if instId in active_orders:
+                                # Mark as processing to prevent duplicate triggers
+                                # ✅ FIX: sell_triggered will be reset if sell fails
+                                if active_orders[instId].get("sell_triggered", False):
+                                    logger.debug(
+                                        f"⚠️ Sell already triggered for {instId}, "
+                                        f"skipping duplicate candle confirm"
+                                    )
+                                else:
+                                    active_orders[instId]["sell_triggered"] = True
+                                    # This hour's candle just closed, sell the position
+                                    close_price = (
+                                        float(candle_data[4])
+                                        if len(candle_data) > 4
+                                        else 0
+                                    )
+                                    logger.warning(
+                                        f"🕐 KLINE CONFIRMED: {instId}, "
+                                        f"close_price={close_price:.6f}, trigger SELL (original)"
+                                    )
+                                    threading.Thread(
+                                        target=process_sell_signal,
+                                        args=(instId,),
+                                        daemon=True,
+                                    ).start()
 
-                        # This hour's candle just closed, sell the position
-                        close_price = (
-                            float(candle_data[4]) if len(candle_data) > 4 else 0
-                        )
-                        logger.warning(
-                            f"🕐 KLINE CONFIRMED: {instId}, "
-                            f"close_price={close_price:.6f}, trigger SELL"
-                        )
-                        threading.Thread(
-                            target=process_sell_signal, args=(instId,), daemon=True
-                        ).start()
+                            # Check momentum strategy
+                            if instId in momentum_active_orders:
+                                if momentum_active_orders[instId].get(
+                                    "sell_triggered", False
+                                ):
+                                    logger.debug(
+                                        f"⚠️ Momentum sell already triggered for {instId}, "
+                                        f"skipping duplicate candle confirm"
+                                    )
+                                else:
+                                    momentum_active_orders[instId][
+                                        "sell_triggered"
+                                    ] = True
+                                    close_price = (
+                                        float(candle_data[4])
+                                        if len(candle_data) > 4
+                                        else 0
+                                    )
+                                    logger.warning(
+                                        f"🕐 KLINE CONFIRMED: {instId}, "
+                                        f"close_price={close_price:.6f}, trigger SELL (momentum)"
+                                    )
+                                    threading.Thread(
+                                        target=process_momentum_sell_signal,
+                                        args=(instId,),
+                                        daemon=True,
+                                    ).start()
     except Exception as e:
         logger.error(f"Candle message error: {msg_string}, {e}")
 
@@ -1182,39 +1907,471 @@ def process_sell_signal(instId: str):
                             del active_orders[instId]
                     return
 
-                # Verify order was filled before selling
-                if db_state not in ["filled", ""] or not db_size or db_size == "0":
-                    logger.warning(
-                        f"{STRATEGY_NAME} Order not filled: {instId}, {ordId}, "
-                        f"state={db_state}, size={db_size}"
-                    )
-                    with lock:
-                        if instId in active_orders:
-                            del active_orders[instId]
+                    # ✅ FIX: Allow both "filled" and "partially_filled" states for selling
+                    # Use actual filled size for selling
+                    if (
+                        db_state not in ["filled", "partially_filled"]
+                        or not db_size
+                        or db_size == "0"
+                    ):
+                        logger.warning(
+                            f"{STRATEGY_NAME} Order not ready to sell: {instId}, {ordId}, "
+                            f"state={db_state}, size={db_size}"
+                        )
+                    # ✅ FIX: Don't remove from active_orders if state is empty or not filled yet
+                    # Wait for order to be filled (might be delayed)
+                    if db_state == "":
+                        logger.info(
+                            f"{STRATEGY_NAME} Order still pending fill: {instId}, {ordId}, "
+                            f"will retry later"
+                        )
+                        # Reset sell_triggered to allow retry, but record attempt time for cooldown
+                        with lock:
+                            if instId in active_orders:
+                                active_orders[instId]["sell_triggered"] = False
+                                active_orders[instId][
+                                    "last_sell_attempt_time"
+                                ] = datetime.now()
+                    else:
+                        # Order is canceled or in invalid state, remove it
+                        logger.warning(
+                            f"{STRATEGY_NAME} Order in invalid state, removing: {instId}, {ordId}, "
+                            f"state={db_state}"
+                        )
+                        with lock:
+                            if instId in active_orders:
+                                del active_orders[instId]
                     return
 
-                size = float(db_size)
+                # ✅ FIX: Use db_size string directly and validate precision before converting
+                # This ensures we use the exact accFillSz value stored in database
+                try:
+                    size = float(db_size)
+                    if size <= 0:
+                        logger.error(
+                            f"{STRATEGY_NAME} Invalid size for selling: {instId}, {ordId}, "
+                            f"size={db_size}"
+                        )
+                        return
+                except (ValueError, TypeError) as e:
+                    logger.error(
+                        f"{STRATEGY_NAME} Cannot convert size to float: {instId}, {ordId}, "
+                        f"size={db_size}, error={e}"
+                    )
+                    return
             finally:
                 cur.close()
 
-            # Place market sell order
-            sell_market_order(instId, ordId, size, api, conn)
+            # Place market sell order - verify success
+            sell_success = sell_market_order(instId, ordId, size, api, conn)
 
-            # Remove from active orders AFTER successful sell
-            with lock:
-                if instId in active_orders:
-                    del active_orders[instId]
-                    logger.warning(
-                        f"{STRATEGY_NAME} Sold and removed: {instId}, {ordId}"
-                    )
+            # ✅ FIX: Only remove from active orders AFTER successful sell
+            if sell_success:
+                with lock:
+                    if instId in active_orders:
+                        del active_orders[instId]
+                        logger.warning(
+                            f"{STRATEGY_NAME} Sold and removed: {instId}, {ordId}"
+                        )
+            else:
+                logger.error(
+                    f"❌ {STRATEGY_NAME} SELL FAILED: {instId}, {ordId}, "
+                    f"keeping in active_orders for retry"
+                )
+                # ✅ FIX: Reset sell_triggered flag to allow retry
+                with lock:
+                    if instId in active_orders:
+                        active_orders[instId]["sell_triggered"] = False
+                        logger.warning(
+                            f"{STRATEGY_NAME} Reset sell_triggered for {instId}, {ordId} to allow retry"
+                        )
         finally:
             conn.close()
     except Exception as e:
         logger.error(f"process_sell_signal error: {instId}, {e}")
-        # Clean up on error to prevent stuck orders
+        # ✅ FIX: Don't clean up on exception - keep order for retry
+        # Only reset sell_triggered flag to allow retry
         with lock:
             if instId in active_orders:
-                del active_orders[instId]
+                active_orders[instId]["sell_triggered"] = False
+                logger.warning(
+                    f"{STRATEGY_NAME} Reset sell_triggered for {instId} after exception to allow retry"
+                )
+
+
+def process_momentum_sell_signal(instId: str):
+    """Process momentum strategy sell signal at next hour close"""
+    try:
+        with lock:
+            if instId not in momentum_active_orders:
+                logger.info(f"{MOMENTUM_STRATEGY_NAME} No active order for {instId}")
+                return
+            order_info = momentum_active_orders[instId].copy()
+            ordIds = order_info.get("ordIds", [])
+
+        if not ordIds:
+            logger.warning(f"{MOMENTUM_STRATEGY_NAME} No order IDs for {instId}")
+            with lock:
+                if instId in momentum_active_orders:
+                    del momentum_active_orders[instId]
+            return
+
+        # Get trade API instance
+        api = get_trade_api()
+
+        # Sell all orders for this crypto
+        conn = get_db_connection()
+        try:
+            for ordId in ordIds:
+                cur = conn.cursor()
+                try:
+                    # Query state and size
+                    cur.execute(
+                        "SELECT state, size FROM orders WHERE instId = %s "
+                        "AND ordId = %s AND flag = %s",
+                        (instId, ordId, MOMENTUM_STRATEGY_NAME),
+                    )
+                    row = cur.fetchone()
+
+                    if not row:
+                        logger.warning(
+                            f"{MOMENTUM_STRATEGY_NAME} Order not found: {instId}, {ordId}"
+                        )
+                        with lock:
+                            if instId in momentum_active_orders:
+                                if ordId in momentum_active_orders[instId].get(
+                                    "ordIds", []
+                                ):
+                                    idx = momentum_active_orders[instId][
+                                        "ordIds"
+                                    ].index(ordId)
+                                    momentum_active_orders[instId]["ordIds"].pop(idx)
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_prices", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId][
+                                            "buy_prices"
+                                        ].pop(idx)
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_sizes", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId]["buy_sizes"].pop(
+                                            idx
+                                        )
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_times", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId]["buy_times"].pop(
+                                            idx
+                                        )
+                        continue
+
+                    db_state = row[0] if row[0] else ""
+                    db_size = row[1] if row[1] else "0"
+
+                    # Skip if already sold
+                    if db_state == "sold out":
+                        logger.debug(
+                            f"{MOMENTUM_STRATEGY_NAME} Already sold: {instId}, {ordId}"
+                        )
+                        continue
+
+                    # ✅ FIX: Allow both "filled" and "partially_filled" states for selling
+                    # Use actual filled size for selling
+                    if (
+                        db_state not in ["filled", "partially_filled"]
+                        or not db_size
+                        or db_size == "0"
+                    ):
+                        logger.warning(
+                            f"{MOMENTUM_STRATEGY_NAME} Order not ready to sell: {instId}, {ordId}, "
+                            f"state={db_state}, size={db_size}"
+                        )
+                        # ✅ OPTIMIZE: Track pending ordId state with timestamp to prevent permanent skip
+                        # Don't return here as it would block other ordIds from selling
+                        if db_state == "":
+                            logger.info(
+                                f"{MOMENTUM_STRATEGY_NAME} Order still pending fill: {instId}, {ordId}, "
+                                f"will retry later, continuing to next order"
+                            )
+                            with lock:
+                                if instId in momentum_active_orders:
+                                    # Track pending ordIds with timestamp for retry tracking
+                                    if (
+                                        "pending_ordIds"
+                                        not in momentum_active_orders[instId]
+                                    ):
+                                        momentum_active_orders[instId][
+                                            "pending_ordIds"
+                                        ] = {}
+                                    momentum_active_orders[instId]["pending_ordIds"][
+                                        ordId
+                                    ] = {
+                                        "first_pending_time": momentum_active_orders[
+                                            instId
+                                        ]["pending_ordIds"]
+                                        .get(ordId, {})
+                                        .get("first_pending_time")
+                                        or datetime.now(),
+                                        "retry_count": momentum_active_orders[instId][
+                                            "pending_ordIds"
+                                        ]
+                                        .get(ordId, {})
+                                        .get("retry_count", 0)
+                                        + 1,
+                                        "last_check_time": datetime.now(),
+                                    }
+                                    logger.debug(
+                                        f"{MOMENTUM_STRATEGY_NAME} Tracked pending ordId: {instId}, {ordId}, "
+                                        f"retry_count={momentum_active_orders[instId]['pending_ordIds'][ordId]['retry_count']}"
+                                    )
+                        continue
+
+                    # ✅ FIX: Use db_size string directly and validate precision before converting
+                    # This ensures we use the exact accFillSz value stored in database
+                    try:
+                        size = float(db_size)
+                        if size <= 0:
+                            logger.error(
+                                f"{MOMENTUM_STRATEGY_NAME} Invalid size for selling: {instId}, {ordId}, "
+                                f"size={db_size}"
+                            )
+                            continue
+                    except (ValueError, TypeError) as e:
+                        logger.error(
+                            f"{MOMENTUM_STRATEGY_NAME} Cannot convert size to float: {instId}, {ordId}, "
+                            f"size={db_size}, error={e}"
+                        )
+                        continue
+                finally:
+                    cur.close()
+
+                # Place market sell order - verify success
+                sell_success = sell_momentum_order(instId, ordId, size, api, conn)
+
+                if not sell_success:
+                    logger.error(
+                        f"❌ {MOMENTUM_STRATEGY_NAME} SELL FAILED: {instId}, {ordId}, "
+                        f"skipping remaining orders for this crypto"
+                    )
+                    # ✅ FIX: Reset sell_triggered flag to allow retry
+                    with lock:
+                        if instId in momentum_active_orders:
+                            momentum_active_orders[instId]["sell_triggered"] = False
+                            logger.warning(
+                                f"{MOMENTUM_STRATEGY_NAME} Reset sell_triggered for {instId}, {ordId} to allow retry"
+                            )
+                    # Don't remove from active_orders if sell failed
+                    return
+
+                with lock:
+                    if instId in momentum_active_orders:
+                        if ordId in momentum_active_orders[instId].get("ordIds", []):
+                            idx = momentum_active_orders[instId]["ordIds"].index(ordId)
+                            momentum_active_orders[instId]["ordIds"].pop(idx)
+                            if idx < len(
+                                momentum_active_orders[instId].get("buy_prices", [])
+                            ):
+                                momentum_active_orders[instId]["buy_prices"].pop(idx)
+                            if idx < len(
+                                momentum_active_orders[instId].get("buy_sizes", [])
+                            ):
+                                momentum_active_orders[instId]["buy_sizes"].pop(idx)
+                            if idx < len(
+                                momentum_active_orders[instId].get("buy_times", [])
+                            ):
+                                momentum_active_orders[instId]["buy_times"].pop(idx)
+
+            # ✅ FIX: Only remove when all ordIds are cleared
+            with lock:
+                if instId in momentum_active_orders:
+                    if not momentum_active_orders[instId].get("ordIds", []):
+                        del momentum_active_orders[instId]
+                        if momentum_strategy is not None:
+                            momentum_strategy.reset_position(instId)
+                        logger.warning(
+                            f"{MOMENTUM_STRATEGY_NAME} Sold and removed: {instId}"
+                        )
+                    else:
+                        momentum_active_orders[instId]["sell_triggered"] = False
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"process_momentum_sell_signal error: {instId}, {e}")
+        # ✅ FIX: Don't clean up on exception - keep order for retry
+        # Only reset sell_triggered flag to allow retry
+        with lock:
+            if instId in momentum_active_orders:
+                momentum_active_orders[instId]["sell_triggered"] = False
+                logger.warning(
+                    f"{MOMENTUM_STRATEGY_NAME} Reset sell_triggered for {instId} after exception to allow retry"
+                )
+
+
+def sell_momentum_order(
+    instId: str, ordId: str, size: float, tradeAPI: TradeAPI, conn
+) -> bool:
+    """Place momentum strategy market sell order
+
+    Returns:
+        True if sell order was successfully placed and recorded, False otherwise
+    """
+    size = format_number(size, instId)
+
+    if SIMULATION_MODE:
+        with lock:
+            sell_price = current_prices.get(instId, 0.0)
+
+        if sell_price <= 0:
+            try:
+                market_api = get_market_api()
+                ticker_result = market_api.get_ticker(instId=instId)
+                if ticker_result.get("code") == "0" and ticker_result.get("data"):
+                    ticker_data = ticker_result["data"]
+                    if ticker_data and len(ticker_data) > 0:
+                        sell_price = float(ticker_data[0].get("last", 0))
+            except Exception as e:
+                logger.warning(f"⚠️ Could not get current price for {instId}: {e}")
+
+        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
+        logger.warning(
+            f"💰 [SIM] MOMENTUM SELL: {instId}, price={sell_price:.6f}, "
+            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
+        )
+    else:
+        max_attempts = 3
+        failed_flag = 0
+        sell_price = 0.0
+
+        for attempt in range(max_attempts):
+            try:
+                result = tradeAPI.place_order(
+                    instId=instId,
+                    tdMode="cash",
+                    side="sell",
+                    ordType="market",
+                    sz=str(size),
+                    tgtCcy="base_ccy",
+                )
+
+                if result.get("code") == "0":
+                    order_data = result.get("data", [{}])[0]
+                    order_id = order_data.get("ordId", "N/A")
+
+                    time.sleep(0.5)
+                    try:
+                        order_result = tradeAPI.get_order(instId=instId, ordId=order_id)
+                        if order_result.get("code") == "0" and order_result.get("data"):
+                            order_info = order_result["data"][0]
+                            fill_px = order_info.get("fillPx", "")
+                            acc_fill_sz = order_info.get("accFillSz", "0")
+
+                            if (
+                                fill_px
+                                and fill_px != ""
+                                and acc_fill_sz
+                                and float(acc_fill_sz) > 0
+                            ):
+                                sell_price = float(fill_px)
+                                logger.warning(
+                                    f"💰 MOMENTUM SELL ORDER: {instId}, "
+                                    f"fill price={sell_price:.6f}, "
+                                    f"size={size}, ordId={order_id}"
+                                )
+                            else:
+                                with lock:
+                                    sell_price = current_prices.get(instId, 0.0)
+                                logger.warning(
+                                    f"💰 MOMENTUM SELL ORDER: {instId}, "
+                                    f"using current price={sell_price:.6f}, "
+                                    f"ordId={order_id}"
+                                )
+                        else:
+                            with lock:
+                                sell_price = current_prices.get(instId, 0.0)
+                            logger.warning(
+                                f"💰 MOMENTUM SELL ORDER: {instId}, "
+                                f"using current price={sell_price:.6f}, "
+                                f"ordId={order_id}"
+                            )
+                    except Exception as e:
+                        with lock:
+                            sell_price = current_prices.get(instId, 0.0)
+                        logger.warning(
+                            f"💰 MOMENTUM SELL ORDER: {instId}, "
+                            f"using current price={sell_price:.6f}, "
+                            f"error: {e}, ordId={order_id}"
+                        )
+
+                    failed_flag = 0
+                    break
+                else:
+                    error_msg = result.get("msg", "Unknown error")
+                    logger.error(
+                        f"{MOMENTUM_STRATEGY_NAME} sell market failed: {instId}, "
+                        f"code={result.get('code')}, msg={error_msg}"
+                    )
+                    failed_flag = 1
+
+                if failed_flag > 0 and attempt < max_attempts - 1:
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(
+                    f"{MOMENTUM_STRATEGY_NAME} sell market error: {instId}, {e}"
+                )
+                failed_flag = 1
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+
+        if failed_flag > 0:
+            logger.error(
+                f"❌ {MOMENTUM_STRATEGY_NAME} SELL FAILED: {instId}, ordId={ordId}, "
+                f"all {max_attempts} attempts failed"
+            )
+            return False
+
+    # Update database - verify update succeeded
+    cur = conn.cursor()
+    try:
+        sell_price_str = format_number(sell_price, instId) if sell_price > 0 else ""
+
+        cur.execute(
+            "UPDATE orders SET state = %s, sell_price = %s "
+            "WHERE instId = %s AND ordId = %s AND flag = %s",
+            ("sold out", sell_price_str, instId, ordId, MOMENTUM_STRATEGY_NAME),
+        )
+        rows_updated = cur.rowcount
+        conn.commit()
+
+        if rows_updated == 0:
+            logger.error(
+                f"❌ {MOMENTUM_STRATEGY_NAME} SELL DB UPDATE FAILED: {instId}, ordId={ordId}, "
+                f"no rows updated"
+            )
+            return False
+
+        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
+        logger.warning(
+            f"✅ MOMENTUM SELL SAVED: {instId}, price={sell_price_str}, "
+            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
+        )
+
+        play_sound("sell")
+        return True
+    except Exception as e:
+        logger.error(
+            f"{MOMENTUM_STRATEGY_NAME} sell market DB error: {instId}, {ordId}, {e}"
+        )
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
 
 
 def ticker_open(ws):
@@ -1319,6 +2476,233 @@ def connect_websocket(url, on_message, on_open, ws_type="ticker"):
             reconnect_delay = min(reconnect_delay * 2, max_delay)
 
 
+def sync_orders_from_database():
+    """Sync active_orders with database state
+    This handles cases where external processes or manual operations
+    sold orders but websocket_limit_trading.py memory still thinks they're active
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Check original strategy orders
+        with lock:
+            orders_to_check = list(active_orders.items())
+
+        for instId, order_info in orders_to_check:
+            ordId = order_info.get("ordId")
+            if not ordId:
+                continue
+
+            try:
+                # Check database state
+                cur.execute(
+                    "SELECT state FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
+                    (instId, ordId, STRATEGY_NAME),
+                )
+                row = cur.fetchone()
+
+                if row:
+                    db_state = row[0] if row[0] else ""
+                    # If database says sold but memory thinks active, sync memory
+                    if db_state == "sold out":
+                        with lock:
+                            if (
+                                instId in active_orders
+                                and active_orders[instId].get("ordId") == ordId
+                            ):
+                                logger.warning(
+                                    f"🔄 SYNC: {instId} (original) already sold in DB, "
+                                    f"removing from active_orders"
+                                )
+                                del active_orders[instId]
+            except Exception as e:
+                logger.debug(f"Error checking order {instId}/{ordId}: {e}")
+
+        # Check momentum strategy orders
+        with lock:
+            momentum_orders_to_check = list(momentum_active_orders.items())
+
+        for instId, order_info in momentum_orders_to_check:
+            ordIds = order_info.get("ordIds", [])
+            if not ordIds:
+                continue
+
+            try:
+                # Check each order in the list
+                ordIds_to_remove = []
+                for ordId in ordIds:
+                    cur.execute(
+                        "SELECT state FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
+                        (instId, ordId, MOMENTUM_STRATEGY_NAME),
+                    )
+                    row = cur.fetchone()
+
+                    if row:
+                        db_state = row[0] if row[0] else ""
+                        if db_state == "sold out":
+                            ordIds_to_remove.append(ordId)
+
+                # Remove sold orders from memory
+                if ordIds_to_remove:
+                    with lock:
+                        if instId in momentum_active_orders:
+                            for ordId in ordIds_to_remove:
+                                if ordId in momentum_active_orders[instId].get(
+                                    "ordIds", []
+                                ):
+                                    idx = momentum_active_orders[instId][
+                                        "ordIds"
+                                    ].index(ordId)
+                                    momentum_active_orders[instId]["ordIds"].pop(idx)
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_prices", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId][
+                                            "buy_prices"
+                                        ].pop(idx)
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_sizes", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId]["buy_sizes"].pop(
+                                            idx
+                                        )
+                                    if idx < len(
+                                        momentum_active_orders[instId].get(
+                                            "buy_times", []
+                                        )
+                                    ):
+                                        momentum_active_orders[instId]["buy_times"].pop(
+                                            idx
+                                        )
+                                    logger.warning(
+                                        f"🔄 SYNC: {instId} (momentum) ordId={ordId} already sold in DB, "
+                                        f"removing from momentum_active_orders"
+                                    )
+
+                            # If no more orders, remove the entry
+                            if not momentum_active_orders[instId].get("ordIds", []):
+                                del momentum_active_orders[instId]
+                                if momentum_strategy is not None:
+                                    momentum_strategy.reset_position(instId)
+                                logger.warning(
+                                    f"🔄 SYNC: {instId} (momentum) all orders sold, "
+                                    f"removed from momentum_active_orders"
+                                )
+            except Exception as e:
+                logger.debug(f"Error checking momentum orders {instId}: {e}")
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error in sync_orders_from_database: {e}")
+
+
+def check_sell_timeout():
+    """Background thread to check and trigger sells based on next_hour_close_time
+    This provides a fallback if K-line confirm event is missed
+    Also syncs with database periodically to ensure memory state matches database
+    """
+    sync_counter = 0
+    while True:
+        try:
+            time.sleep(30)  # Check every 30 seconds
+            now = datetime.now()
+
+            # ✅ FIX: Sync with database every 10 cycles (5 minutes)
+            # This ensures memory state matches database state
+            sync_counter += 1
+            if sync_counter >= 10:
+                sync_counter = 0
+                sync_orders_from_database()
+
+            # Check original strategy orders
+            with lock:
+                orders_to_sell = []
+                for instId, order_info in list(active_orders.items()):
+                    next_hour_close = order_info.get("next_hour_close_time")
+                    if next_hour_close and now >= next_hour_close:
+                        # Past sell time, trigger sell
+                        # ✅ OPTIMIZE: Add cooldown window to prevent frequent triggers when order state is ""
+                        last_sell_attempt = order_info.get("last_sell_attempt_time")
+                        fill_time = order_info.get("fill_time")
+
+                        # If order is not filled yet (no fill_time), add cooldown window
+                        # Wait at least 60 seconds between sell attempts for pending orders
+                        if fill_time is None and last_sell_attempt:
+                            time_since_last_attempt = (
+                                now - last_sell_attempt
+                            ).total_seconds()
+                            if time_since_last_attempt < 60:
+                                logger.debug(
+                                    f"⏳ Cooldown: {instId} sell attempt too soon "
+                                    f"({time_since_last_attempt:.0f}s < 60s), skipping"
+                                )
+                                continue
+
+                        # ✅ FIX: Don't set sell_triggered here - set it AFTER successful sell
+                        # This allows retry if sell fails
+                        if not order_info.get("sell_triggered", False):
+                            orders_to_sell.append((instId, "original"))
+                            # Mark as triggered to prevent duplicate threads, but will reset if sell fails
+                            order_info["sell_triggered"] = True
+                            # Record attempt time for cooldown
+                            order_info["last_sell_attempt_time"] = now
+
+                # Check momentum strategy orders
+                for instId, order_info in list(momentum_active_orders.items()):
+                    next_hour_close = order_info.get("next_hour_close_time")
+                    if next_hour_close and now >= next_hour_close:
+                        # Past sell time, trigger sell
+                        # ✅ OPTIMIZE: Add cooldown window for momentum orders
+                        last_sell_attempt = order_info.get("last_sell_attempt_time")
+                        # For momentum, check if any order has fill_time
+                        # If all orders are pending, apply cooldown
+                        ordIds = order_info.get("ordIds", [])
+                        if ordIds:
+                            # Check if any order has been filled (would have fill_time in active_orders)
+                            # For simplicity, apply cooldown if last attempt was recent
+                            if last_sell_attempt:
+                                time_since_last_attempt = (
+                                    now - last_sell_attempt
+                                ).total_seconds()
+                                if time_since_last_attempt < 60:
+                                    logger.debug(
+                                        f"⏳ Cooldown: {instId} momentum sell attempt too soon "
+                                        f"({time_since_last_attempt:.0f}s < 60s), skipping"
+                                    )
+                                    continue
+
+                        # ✅ FIX: Don't set sell_triggered here - set it AFTER successful sell
+                        if not order_info.get("sell_triggered", False):
+                            orders_to_sell.append((instId, "momentum"))
+                            order_info["sell_triggered"] = True
+                            # Record attempt time for cooldown
+                            order_info["last_sell_attempt_time"] = now
+
+            # Trigger sells outside of lock
+            for instId, strategy_type in orders_to_sell:
+                logger.warning(
+                    f"⏰ TIMEOUT SELL: {instId} ({strategy_type}), "
+                    f"next_hour_close_time reached, triggering sell"
+                )
+                if strategy_type == "original":
+                    threading.Thread(
+                        target=process_sell_signal, args=(instId,), daemon=True
+                    ).start()
+                elif strategy_type == "momentum":
+                    threading.Thread(
+                        target=process_momentum_sell_signal, args=(instId,), daemon=True
+                    ).start()
+        except Exception as e:
+            logger.error(f"Error in check_sell_timeout: {e}")
+            time.sleep(60)  # Wait longer on error
+
+
 def main():
     """Main function"""
     logger.warning(f"Starting {STRATEGY_NAME} trading system")
@@ -1368,6 +2752,18 @@ def main():
     candle_thread.start()
 
     logger.warning("WebSocket connections started, waiting for messages...")
+
+    # ✅ FIX: Sync with database on startup to ensure memory state matches database
+    logger.warning("🔄 Syncing with database on startup...")
+    sync_orders_from_database()
+    logger.warning("✅ Database sync completed")
+
+    # ✅ FIX: Start background thread to check sell timeouts (fallback mechanism)
+    timeout_check_thread = threading.Thread(
+        target=check_sell_timeout, daemon=True, name="SellTimeoutChecker"
+    )
+    timeout_check_thread.start()
+    logger.warning("✅ Sell timeout checker thread started")
 
     # Keep main thread alive with health check
     last_refresh_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
