@@ -33,6 +33,9 @@ def buy_limit_order(
     """Place limit buy order and record in database"""
     # Check blacklist before buying
     if check_blacklist_func(instId):
+        logger.warning(
+            f"🚫 buy_limit_order: {instId} is blacklisted, blocking order placement"
+        )
         return None
 
     # ✅ FIX: In simulation mode, use current price if it's less than limit price

@@ -454,16 +454,16 @@ def unsubscribe_from_websocket(instId: str):
 
 def check_blacklist_before_buy(instId, auto_remove=True):
     """Check if crypto is blacklisted. If blacklisted and auto_remove=True, remove from system."""
-    if _check_blacklist_before_buy:
-        return _check_blacklist_before_buy(
-            instId,
-            auto_remove,
-            BlacklistManager,
-            extract_base_currency,
-            remove_crypto_from_system,
-        )
-    logger.error("check_blacklist_before_buy not available - module import failed")
-    return False
+    if _check_blacklist_before_buy is None or BlacklistManager is None:
+        return False
+
+    return _check_blacklist_before_buy(
+        instId,
+        auto_remove,
+        BlacklistManager,
+        extract_base_currency,
+        remove_crypto_from_system,
+    )
 
 
 def load_crypto_limits():
@@ -1166,6 +1166,23 @@ def main():
         return
 
     logger.warning(f"Loaded {len(crypto_limits)} cryptos with limits")
+
+    # Verify blacklist functionality is working
+    if BlacklistManager is None:
+        logger.error(
+            "❌ CRITICAL: BlacklistManager is None - blacklist checks will be bypassed!"
+        )
+    elif _check_blacklist_before_buy is None:
+        logger.error(
+            "❌ CRITICAL: check_blacklist_before_buy function is None - blacklist checks will be bypassed!"
+        )
+    else:
+        # Quick test: VRA should be blacklisted
+        test_result = check_blacklist_before_buy("VRA-USDT", auto_remove=False)
+        if not test_result:
+            logger.error(
+                "❌ CRITICAL: VRA-USDT should be blacklisted but check returned False!"
+            )
 
     # Initialize reference prices (current hour's open prices)
     initialize_reference_prices()

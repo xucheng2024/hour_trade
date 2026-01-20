@@ -116,11 +116,10 @@ def check_blacklist_before_buy(
     extract_base_currency_func,
     remove_crypto_from_system_func,
 ):
-    """Check if crypto is blacklisted. If blacklisted and auto_remove=True, remove from system."""
+    """Check if crypto is blacklisted.
+    If blacklisted and auto_remove=True, remove from system.
+    """
     if BlacklistManager_class is None:
-        logger.warning(
-            f"BlacklistManager not available, skipping blacklist check for {instId}"
-        )
         return False
 
     try:
@@ -130,12 +129,14 @@ def check_blacklist_before_buy(
         if blacklist_manager.is_blacklisted(base_currency):
             reason = blacklist_manager.get_blacklist_reason(base_currency)
             logger.warning(
-                f"🚫 BLOCKED BUY: {instId} (base: {base_currency}) is blacklisted: {reason}"
+                f"🚫 BLOCKED BUY: {instId} (base: {base_currency}) "
+                f"is blacklisted: {reason}"
             )
 
             if auto_remove:
                 logger.warning(
-                    f"🗑️ Removing {instId} from system (unsubscribe + remove from hour_limit)"
+                    f"🗑️ Removing {instId} from system "
+                    f"(unsubscribe + remove from hour_limit)"
                 )
                 remove_crypto_from_system_func(instId)
 
@@ -143,7 +144,7 @@ def check_blacklist_before_buy(
 
         return False
     except Exception as e:
-        logger.error(f"Error checking blacklist for {instId}: {e}")
+        logger.error(f"❌ Error checking blacklist for {instId}: {e}")
         return False
 
 
