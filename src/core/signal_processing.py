@@ -130,9 +130,11 @@ def process_sell_signal(
     active_orders: dict,
     lock: threading.Lock,
 ):
-    """Process sell signal at next hour close - sells all unsold orders for this instId that are due (idempotent)
+    """Process sell signal - sells all unsold orders that are due for this instId (idempotent)
 
-    Only sells orders where sell_time <= now to respect each order's independent sell schedule.
+    Called at 55 and 59 minutes of each hour by check_sell_timeout.
+    Uses sell_time <= now to filter orders, which is based on fill_time, not create_time.
+    This correctly handles late-filled orders from earlier hours.
     """
     # ✅ FIX: Add per-instId lock to prevent concurrent sell attempts
     # This prevents multiple strategies from selling the same orders simultaneously
@@ -164,8 +166,9 @@ def process_sell_signal(
         try:
             cur = conn.cursor()
             try:
-                # ✅ FIX: Only query orders that are due to be sold (sell_time <= now)
-                # This ensures each order is sold at its own scheduled time, not prematurely
+                # Sell all unsold filled orders that are due to be sold
+                # Use sell_time <= now instead of create_time to handle late-filled orders correctly
+                # sell_time is updated based on fill_time in order_timeout.py, not create_time
                 now_ms = int(datetime.now().timestamp() * 1000)
 
                 cur.execute(
@@ -182,37 +185,6 @@ def process_sell_signal(
                 rows = cur.fetchall()
 
                 if not rows:
-                    # ✅ FIX: Check if there are unsold orders that are not due yet
-                    # If orders exist but sell_time > now, don't clean up active_orders
-                    try:
-                        cur_check = conn.cursor()
-                        try:
-                            cur_check.execute(
-                                """
-                                SELECT 1 FROM orders
-                                WHERE instId = %s
-                                  AND state IN ('filled', 'partially_filled')
-                                  AND (sell_price IS NULL OR sell_price = '')
-                                  AND sell_time > %s
-                                LIMIT 1
-                                """,
-                                (instId, now_ms),
-                            )
-                            has_future_orders = cur_check.fetchone() is not None
-                        finally:
-                            cur_check.close()
-                    except Exception as e:
-                        logger.warning(
-                            f"{strategy_name} Failed to check future orders: {instId}, {e}"
-                        )
-                        has_future_orders = False
-
-                    if has_future_orders:
-                        logger.info(
-                            f"{strategy_name} Orders not due yet, keeping active_orders: {instId}"
-                        )
-                        return
-
                     logger.debug(
                         f"{strategy_name} No sellable orders found in DB: {instId}"
                     )
