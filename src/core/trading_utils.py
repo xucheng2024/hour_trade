@@ -204,21 +204,52 @@ def initialize_momentum_strategy_history(
 
     initialized_count = 0
     failed_count = 0
+    vol_backfilled_count = 0
+
+    # Calculate candles needed: max(M+1 for momentum, VOL_HISTORY_HOURS+24 for volatility)
+    # OKX limit max is 300, which is exactly what we need
+    vol_history_hours = momentum_strategy.VOL_HISTORY_HOURS
+    candles_needed_momentum = M + 1  # 49 for momentum
+    candles_needed_vol = (
+        vol_history_hours + 24
+    )  # 300 for volatility (276 hours + 24h rolling)
+    candles_to_fetch = min(300, max(candles_needed_momentum, candles_needed_vol))
 
     for instId in crypto_limits.keys():
         try:
+            # Fetch candles once (up to OKX limit of 300)
             result = market_api.get_candlesticks(
-                instId=instId, bar="1H", limit=str(M + 1)
+                instId=instId, bar="1H", limit=str(candles_to_fetch)
             )
 
             if result.get("code") == "0" and result.get("data"):
                 candles = result["data"]
                 if candles and len(candles) > 0:
-                    success = momentum_strategy.initialize_history(
+                    # Step 1: Initialize momentum history (uses first M+1 candles)
+                    momentum_success = momentum_strategy.initialize_history(
                         instId, candles, logger
                     )
-                    if success:
+
+                    if momentum_success:
                         initialized_count += 1
+
+                        # Step 2: Backfill volatility history (uses all available candles)
+                        try:
+                            vol_success = momentum_strategy.backfill_volatility_history(
+                                instId, candles, logger
+                            )
+                            if vol_success:
+                                vol_backfilled_count += 1
+                            else:
+                                logger.debug(
+                                    f"⚠️ {instId} Volatility backfill failed, "
+                                    f"but momentum history initialized"
+                                )
+                        except Exception as vol_e:
+                            logger.warning(
+                                f"⚠️ {instId} Error backfilling volatility history: {vol_e}, "
+                                f"but momentum history initialized"
+                            )
                     else:
                         failed_count += 1
                 else:
@@ -237,5 +268,7 @@ def initialize_momentum_strategy_history(
             failed_count += 1
 
     logger.warning(
-        f"📊 History initialization complete: {initialized_count} succeeded, {failed_count} failed"
+        f"📊 History initialization complete: {initialized_count} momentum "
+        f"succeeded, {vol_backfilled_count} volatility backfilled, "
+        f"{failed_count} failed"
     )

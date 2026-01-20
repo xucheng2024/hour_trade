@@ -279,7 +279,7 @@ def on_candle_message(
                             )
                             if volume_to_use > 0:
                                 momentum_strategy.update_price_volume(
-                                    instId, close_price, volume_to_use
+                                    instId, close_price, volume_to_use, open_price
                                 )
 
                                 if (
