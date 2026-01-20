@@ -667,6 +667,7 @@ def process_buy_signal(instId: str, limit_price: float):
             pending_buys,
             lock,
             check_and_cancel_unfilled_order_after_timeout,
+            current_prices,  # ✅ FIX: Pass current prices to use actual market price
         )
     else:
         logger.error("process_buy_signal not available - module import failed")
@@ -730,6 +731,7 @@ def process_stable_buy_signal(instId: str, limit_price: float):
             stable_strategy,
             lock,
             check_and_cancel_unfilled_order_after_timeout,
+            current_prices,  # ✅ FIX: Pass current prices to use actual market price
         )
     else:
         logger.error("process_stable_buy_signal not available - module import failed")
@@ -866,6 +868,7 @@ def process_batch_buy_signal(instId: str, limit_price: float):
             check_and_cancel_unfilled_order_after_timeout,
             thread_pool,  # ✅ FIX: Pass thread pool to avoid unbounded thread creation
             process_batch_buy_signal,  # ✅ FIX: Pass self-reference for recursive batch triggering
+            current_prices,  # ✅ FIX: Pass current prices to use actual market price
         )
     else:
         logger.error("process_batch_buy_signal not available - module import failed")

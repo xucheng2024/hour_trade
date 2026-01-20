@@ -27,6 +27,7 @@ def process_buy_signal(
     pending_buys: dict,
     lock: threading.Lock,
     check_and_cancel_unfilled_order_func,
+    current_prices: Optional[dict] = None,  # Optional current prices dict to get actual market price
 ):
     """Process buy signal in separate thread"""
     try:
@@ -42,11 +43,26 @@ def process_buy_signal(
             logger.error(f"{strategy_name} TradeAPI not available for {instId}")
             return
 
-        size = trading_amount_usdt / limit_price
+        # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
+        # If current price > limit_price, limit order won't fill, so use current price
+        actual_buy_price = limit_price
+        if current_prices is not None:
+            with lock:
+                current_price = current_prices.get(instId)
+                if current_price and current_price > 0:
+                    # Use current price if it's <= limit_price, otherwise use limit_price
+                    actual_buy_price = min(current_price, limit_price)
+                    if actual_buy_price < limit_price:
+                        logger.warning(
+                            f"💰 BUY: {instId} using current price={actual_buy_price:.6f} "
+                            f"instead of limit={limit_price:.6f} (current <= limit)"
+                        )
+
+        size = trading_amount_usdt / actual_buy_price
 
         conn = get_db_connection_func()
         try:
-            ordId = buy_limit_order_func(instId, limit_price, size, api, conn)
+            ordId = buy_limit_order_func(instId, actual_buy_price, size, api, conn)
             if ordId:
                 with lock:
                     if instId in pending_buys:
@@ -59,14 +75,14 @@ def process_buy_signal(
                     sell_time = sell_time + timedelta(hours=1)
                     active_orders[instId] = {
                         "ordId": ordId,
-                        "buy_price": limit_price,
+                        "buy_price": actual_buy_price,  # ✅ FIX: Store actual buy price used
                         "buy_time": now,
                         "next_hour_close_time": sell_time,
                         "sell_triggered": False,
                     }
                     logger.warning(
                         f"📊 ACTIVE ORDER: {instId}, ordId={ordId}, "
-                        f"buy_price={limit_price:.6f}, "
+                        f"buy_price={actual_buy_price:.6f}, "
                         f"sell_time={sell_time.strftime('%Y-%m-%d %H:%M:%S')}"
                     )
 
@@ -260,6 +276,7 @@ def process_stable_buy_signal(
     stable_strategy: Optional[object],
     lock: threading.Lock,
     check_and_cancel_unfilled_order_func,
+    current_prices: Optional[dict] = None,  # Optional current prices dict to get actual market price
 ):
     """Process stable strategy buy signal in separate thread"""
     try:
@@ -277,11 +294,26 @@ def process_stable_buy_signal(
             logger.error(f"{strategy_name} TradeAPI not available for {instId}")
             return
 
-        size = trading_amount_usdt / limit_price
+        # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
+        # If current price > limit_price, limit order won't fill, so use current price
+        actual_buy_price = limit_price
+        if current_prices is not None:
+            with lock:
+                current_price = current_prices.get(instId)
+                if current_price and current_price > 0:
+                    # Use current price if it's <= limit_price, otherwise use limit_price
+                    actual_buy_price = min(current_price, limit_price)
+                    if actual_buy_price < limit_price:
+                        logger.warning(
+                            f"💰 STABLE BUY: {instId} using current price={actual_buy_price:.6f} "
+                            f"instead of limit={limit_price:.6f} (current <= limit)"
+                        )
+
+        size = trading_amount_usdt / actual_buy_price
 
         conn = get_db_connection_func()
         try:
-            ordId = buy_stable_order_func(instId, limit_price, size, api, conn)
+            ordId = buy_stable_order_func(instId, actual_buy_price, size, api, conn)
             if ordId:
                 with lock:
                     if instId in stable_pending_buys:
@@ -293,14 +325,14 @@ def process_stable_buy_signal(
                     sell_time = sell_time + timedelta(hours=1)
                     stable_active_orders[instId] = {
                         "ordId": ordId,
-                        "buy_price": limit_price,
+                        "buy_price": actual_buy_price,  # ✅ FIX: Store actual buy price used
                         "buy_time": now,
                         "next_hour_close_time": sell_time,
                         "sell_triggered": False,
                     }
                     logger.warning(
                         f"📊 STABLE ACTIVE ORDER: {instId}, ordId={ordId}, "
-                        f"buy_price={limit_price:.6f}, "
+                        f"buy_price={actual_buy_price:.6f}, "
                         f"sell_time={sell_time.strftime('%Y-%m-%d %H:%M:%S')}"
                     )
 
@@ -502,6 +534,7 @@ def process_batch_buy_signal(
     check_and_cancel_unfilled_order_func,
     thread_pool=None,  # Optional thread pool for scheduling next batch
     process_batch_buy_signal_func=None,  # Optional callback to trigger next batch
+    current_prices: Optional[dict] = None,  # Optional current prices dict to get actual market price
 ):
     """Process batch strategy buy signal - handles multiple batches with delays"""
     try:
@@ -522,19 +555,35 @@ def process_batch_buy_signal(
         # Get next batch to buy
         if not batch_strategy:
             return
-        
+
         batch_info = batch_strategy.get_next_batch(instId)
         if not batch_info:
             logger.debug(f"⏳ {instId} No batch ready to buy")
             return
-        
+
         batch_index, amount_usdt, batch_limit_price = batch_info
-        size = amount_usdt / batch_limit_price
+
+        # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
+        # If current price > limit_price, limit order won't fill, so use current price
+        actual_buy_price = batch_limit_price
+        if current_prices is not None:
+            with lock:
+                current_price = current_prices.get(instId)
+                if current_price and current_price > 0:
+                    # Use current price if it's <= limit_price, otherwise use limit_price
+                    actual_buy_price = min(current_price, batch_limit_price)
+                    if actual_buy_price < batch_limit_price:
+                        logger.warning(
+                            f"💰 BATCH BUY: {instId} using current price={actual_buy_price:.6f} "
+                            f"instead of limit={batch_limit_price:.6f} (current <= limit)"
+                        )
+
+        size = amount_usdt / actual_buy_price
 
         conn = get_db_connection_func()
         try:
             ordId = buy_batch_order_func(
-                instId, batch_limit_price, size, batch_index, api, conn
+                instId, actual_buy_price, size, batch_index, api, conn
             )
             if ordId:
                 # Get actual filled size from database (formatted size that was used)
@@ -556,29 +605,33 @@ def process_batch_buy_signal(
 
                 # Mark batch as filled
                 batch_strategy.mark_batch_filled(instId, batch_index)
-                
+
                 with lock:
                     now = datetime.now()
                     sell_time = now.replace(minute=55, second=0, microsecond=0)
                     sell_time = sell_time + timedelta(hours=1)
-                    
+
                     # Store batch order info
                     if instId not in batch_active_orders:
                         batch_active_orders[instId] = {
                             "ordIds": [],
-                            "buy_price": batch_limit_price,
+                            "buy_price": actual_buy_price,  # ✅ FIX: Store actual buy price used
                             "buy_time": now,
                             "next_hour_close_time": sell_time,
                             "sell_triggered": False,
                             "total_size": 0.0,
                         }
-                    
+                    else:
+                        # Update buy_price if this batch used a different price
+                        # Use average or latest price (for simplicity, use latest)
+                        batch_active_orders[instId]["buy_price"] = actual_buy_price
+
                     batch_active_orders[instId]["ordIds"].append(ordId)
                     batch_active_orders[instId]["total_size"] += actual_size
-                    
+
                     logger.warning(
                         f"📊 BATCH ACTIVE ORDER (batch {batch_index + 1}/3): {instId}, "
-                        f"ordId={ordId}, amount={amount_usdt:.2f} USDT, "
+                        f"ordId={ordId}, price={actual_buy_price:.6f}, amount={amount_usdt:.2f} USDT, "
                         f"total_batches={len(batch_active_orders[instId]['ordIds'])}/3"
                     )
 
@@ -595,8 +648,11 @@ def process_batch_buy_signal(
                         # This avoids creating unbounded threads for sleep operations
                         def schedule_next_batch_check():
                             import time
+
                             time.sleep(10)  # Wait for batch delay
-                            if batch_strategy and batch_strategy.is_batch_active(instId):
+                            if batch_strategy and batch_strategy.is_batch_active(
+                                instId
+                            ):
                                 next_batch_info = batch_strategy.get_next_batch(instId)
                                 if next_batch_info:
                                     # ✅ CRITICAL FIX: Actually trigger next batch instead of just logging
@@ -604,17 +660,21 @@ def process_batch_buy_signal(
                                         logger.warning(
                                             f"⏰ Auto-triggering next batch for {instId} after delay"
                                         )
-                                        process_batch_buy_signal_func(instId, batch_limit_price)
+                                        process_batch_buy_signal_func(
+                                            instId, batch_limit_price
+                                        )
                                     else:
                                         logger.error(
                                             f"❌ Cannot trigger next batch for {instId}: process_batch_buy_signal_func not provided"
                                         )
-                        
+
                         # Use thread pool to avoid unbounded thread creation
                         if thread_pool:
                             thread_pool.submit(schedule_next_batch_check)
                         else:
-                            threading.Thread(target=schedule_next_batch_check, daemon=True).start()
+                            threading.Thread(
+                                target=schedule_next_batch_check, daemon=True
+                            ).start()
 
                     if not simulation_mode:
                         threading.Thread(
@@ -747,7 +807,9 @@ def process_batch_sell_signal(
                 return
 
             # Sell all batches using actual filled size from DB
-            sell_success = sell_batch_order_func(instId, ordIds[0], total_size, api, conn)
+            sell_success = sell_batch_order_func(
+                instId, ordIds[0], total_size, api, conn
+            )
 
             if sell_success:
                 # Mark all batches as sold in DB
@@ -784,5 +846,3 @@ def process_batch_sell_signal(
         with lock:
             if instId in batch_active_orders:
                 batch_active_orders[instId]["sell_triggered"] = False
-
-
