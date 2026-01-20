@@ -3,7 +3,7 @@
 """
 Batch Buy Strategy
 Splits 100 USDT into three batches: 30, 30, 40
-Buys each batch with 10 second delay between batches
+Buys each batch with 30 second delay between batches
 """
 
 import logging
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Batch configuration
 BATCH_AMOUNTS = [30, 30, 40]  # USDT amounts for each batch
-BATCH_DELAY_SECONDS = 10  # Delay between batches
+BATCH_DELAY_SECONDS = 30  # Delay between batches
 
 
 class BatchBuyStrategy:

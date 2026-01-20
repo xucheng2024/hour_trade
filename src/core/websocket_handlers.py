@@ -473,5 +473,47 @@ def on_candle_message(
                                             daemon=True,
                                         ).start()
 
+                            # Check batch strategy orders
+                            if instId in batch_active_orders:
+                                order_info = batch_active_orders[instId]
+                                next_hour_close = order_info.get("next_hour_close_time")
+
+                                if not next_hour_close:
+                                    logger.warning(
+                                        f"🚫 {instId} KLINE CONFIRMED but missing next_hour_close_time (batch), "
+                                        f"blocking sell to prevent premature sale"
+                                    )
+                                elif now < next_hour_close:
+                                    logger.debug(
+                                        f"⏸️ {instId} KLINE CONFIRMED but not ready to sell yet (batch): "
+                                        f"now={now.strftime('%H:%M:%S')}, "
+                                        f"sell_time={next_hour_close.strftime('%H:%M:%S')}"
+                                    )
+                                elif order_info.get("sell_triggered", False):
+                                    logger.debug(
+                                        f"⚠️ Batch sell already triggered for {instId}, skipping duplicate candle confirm"
+                                    )
+                                else:
+                                    batch_active_orders[instId]["sell_triggered"] = True
+                                    close_price = (
+                                        float(candle_data[4])
+                                        if len(candle_data) > 4
+                                        else 0
+                                    )
+                                    logger.warning(
+                                        f"🕐 KLINE CONFIRMED: {instId}, "
+                                        f"close_price={close_price:.6f}, trigger SELL (batch)"
+                                    )
+                                    if thread_pool:
+                                        thread_pool.submit(
+                                            process_batch_sell_signal_func, instId
+                                        )
+                                    else:
+                                        threading.Thread(
+                                            target=process_batch_sell_signal_func,
+                                            args=(instId,),
+                                            daemon=True,
+                                        ).start()
+
     except Exception as e:
         logger.error(f"Candle message error: {msg_string}, {e}")

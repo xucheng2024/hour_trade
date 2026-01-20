@@ -1084,6 +1084,40 @@ def check_sell_timeout():
                                     f"past sell_time={next_hour_close.strftime('%H:%M:%S')}, triggering sell"
                                 )
 
+                    # Check stable strategy orders from memory
+                    for instId, order_info in list(stable_active_orders.items()):
+                        next_hour_close = order_info.get("next_hour_close_time")
+                        # Check if sell time has passed (from previous hours)
+                        if next_hour_close and now >= next_hour_close:
+                            # Past sell time, check if already triggered
+                            if not order_info.get("sell_triggered", False):
+                                orders_to_sell.append((instId, "stable"))
+                                # ✅ STRICT DEDUP: Set sell_triggered BEFORE attempting sell
+                                # Will be reset if sell fails
+                                order_info["sell_triggered"] = True
+                                order_info["last_sell_attempt_time"] = now
+                                logger.warning(
+                                    f"⏰ SELL CHECK ({current_minute}min): {instId} (stable) "
+                                    f"past sell_time={next_hour_close.strftime('%H:%M:%S')}, triggering sell"
+                                )
+
+                    # Check batch strategy orders from memory
+                    for instId, order_info in list(batch_active_orders.items()):
+                        next_hour_close = order_info.get("next_hour_close_time")
+                        # Check if sell time has passed (from previous hours)
+                        if next_hour_close and now >= next_hour_close:
+                            # Past sell time, check if already triggered
+                            if not order_info.get("sell_triggered", False):
+                                orders_to_sell.append((instId, "batch"))
+                                # ✅ STRICT DEDUP: Set sell_triggered BEFORE attempting sell
+                                # Will be reset if sell fails
+                                order_info["sell_triggered"] = True
+                                order_info["last_sell_attempt_time"] = now
+                                logger.warning(
+                                    f"⏰ SELL CHECK ({current_minute}min): {instId} (batch) "
+                                    f"past sell_time={next_hour_close.strftime('%H:%M:%S')}, triggering sell"
+                                )
+
             # Trigger sells outside of lock using thread pool
             for instId, strategy_type in orders_to_sell:
                 logger.warning(
@@ -1094,6 +1128,8 @@ def check_sell_timeout():
                     thread_pool.submit(process_sell_signal, instId)
                 elif strategy_type == "stable":
                     thread_pool.submit(process_stable_sell_signal, instId)
+                elif strategy_type == "batch":
+                    thread_pool.submit(process_batch_sell_signal, instId)
         except Exception as e:
             logger.error(f"Error in check_sell_timeout: {e}")
             time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)  # Wait on error

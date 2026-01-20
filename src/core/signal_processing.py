@@ -27,7 +27,9 @@ def process_buy_signal(
     pending_buys: dict,
     lock: threading.Lock,
     check_and_cancel_unfilled_order_func,
-    current_prices: Optional[dict] = None,  # Optional current prices dict to get actual market price
+    current_prices: Optional[
+        dict
+    ] = None,  # Optional current prices dict to get actual market price
 ):
     """Process buy signal in separate thread"""
     try:
@@ -46,17 +48,27 @@ def process_buy_signal(
         # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
         # If current price > limit_price, limit order won't fill, so use current price
         actual_buy_price = limit_price
+        current_price = None
         if current_prices is not None:
             with lock:
                 current_price = current_prices.get(instId)
-                if current_price and current_price > 0:
-                    # Use current price if it's <= limit_price, otherwise use limit_price
-                    actual_buy_price = min(current_price, limit_price)
-                    if actual_buy_price < limit_price:
-                        logger.warning(
-                            f"💰 BUY: {instId} using current price={actual_buy_price:.6f} "
-                            f"instead of limit={limit_price:.6f} (current <= limit)"
-                        )
+            if current_price and current_price > 0:
+                if simulation_mode and current_price > limit_price:
+                    logger.warning(
+                        f"🧪 [SIM] BUY SKIP: {instId} current={current_price:.6f} "
+                        f"> limit={limit_price:.6f}"
+                    )
+                    with lock:
+                        if instId in pending_buys:
+                            del pending_buys[instId]
+                    return
+                # Use current price if it's <= limit_price, otherwise use limit_price
+                actual_buy_price = min(current_price, limit_price)
+                if actual_buy_price < limit_price:
+                    logger.warning(
+                        f"💰 BUY: {instId} using current price={actual_buy_price:.6f} "
+                        f"instead of limit={limit_price:.6f} (current <= limit)"
+                    )
 
         size = trading_amount_usdt / actual_buy_price
 
@@ -276,7 +288,9 @@ def process_stable_buy_signal(
     stable_strategy: Optional[object],
     lock: threading.Lock,
     check_and_cancel_unfilled_order_func,
-    current_prices: Optional[dict] = None,  # Optional current prices dict to get actual market price
+    current_prices: Optional[
+        dict
+    ] = None,  # Optional current prices dict to get actual market price
 ):
     """Process stable strategy buy signal in separate thread"""
     try:
@@ -297,17 +311,29 @@ def process_stable_buy_signal(
         # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
         # If current price > limit_price, limit order won't fill, so use current price
         actual_buy_price = limit_price
+        current_price = None
         if current_prices is not None:
             with lock:
                 current_price = current_prices.get(instId)
-                if current_price and current_price > 0:
-                    # Use current price if it's <= limit_price, otherwise use limit_price
-                    actual_buy_price = min(current_price, limit_price)
-                    if actual_buy_price < limit_price:
-                        logger.warning(
-                            f"💰 STABLE BUY: {instId} using current price={actual_buy_price:.6f} "
-                            f"instead of limit={limit_price:.6f} (current <= limit)"
-                        )
+            if current_price and current_price > 0:
+                if simulation_mode and current_price > limit_price:
+                    logger.warning(
+                        f"🧪 [SIM] STABLE BUY SKIP: {instId} current={current_price:.6f} "
+                        f"> limit={limit_price:.6f}"
+                    )
+                    with lock:
+                        if instId in stable_pending_buys:
+                            del stable_pending_buys[instId]
+                    if stable_strategy:
+                        stable_strategy.clear_signal(instId)
+                    return
+                # Use current price if it's <= limit_price, otherwise use limit_price
+                actual_buy_price = min(current_price, limit_price)
+                if actual_buy_price < limit_price:
+                    logger.warning(
+                        f"💰 STABLE BUY: {instId} using current price={actual_buy_price:.6f} "
+                        f"instead of limit={limit_price:.6f} (current <= limit)"
+                    )
 
         size = trading_amount_usdt / actual_buy_price
 
@@ -534,7 +560,9 @@ def process_batch_buy_signal(
     check_and_cancel_unfilled_order_func,
     thread_pool=None,  # Optional thread pool for scheduling next batch
     process_batch_buy_signal_func=None,  # Optional callback to trigger next batch
-    current_prices: Optional[dict] = None,  # Optional current prices dict to get actual market price
+    current_prices: Optional[
+        dict
+    ] = None,  # Optional current prices dict to get actual market price
 ):
     """Process batch strategy buy signal - handles multiple batches with delays"""
     try:
@@ -566,17 +594,29 @@ def process_batch_buy_signal(
         # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
         # If current price > limit_price, limit order won't fill, so use current price
         actual_buy_price = batch_limit_price
+        current_price = None
         if current_prices is not None:
             with lock:
                 current_price = current_prices.get(instId)
-                if current_price and current_price > 0:
-                    # Use current price if it's <= limit_price, otherwise use limit_price
-                    actual_buy_price = min(current_price, batch_limit_price)
-                    if actual_buy_price < batch_limit_price:
-                        logger.warning(
-                            f"💰 BATCH BUY: {instId} using current price={actual_buy_price:.6f} "
-                            f"instead of limit={batch_limit_price:.6f} (current <= limit)"
-                        )
+            if current_price and current_price > 0:
+                if simulation_mode and current_price > batch_limit_price:
+                    logger.warning(
+                        f"🧪 [SIM] BATCH BUY SKIP: {instId} current={current_price:.6f} "
+                        f"> limit={batch_limit_price:.6f}"
+                    )
+                    with lock:
+                        if instId in batch_pending_buys:
+                            del batch_pending_buys[instId]
+                    if batch_strategy:
+                        batch_strategy.reset_crypto(instId)
+                    return
+                # Use current price if it's <= limit_price, otherwise use limit_price
+                actual_buy_price = min(current_price, batch_limit_price)
+                if actual_buy_price < batch_limit_price:
+                    logger.warning(
+                        f"💰 BATCH BUY: {instId} using current price={actual_buy_price:.6f} "
+                        f"instead of limit={batch_limit_price:.6f} (current <= limit)"
+                    )
 
         size = amount_usdt / actual_buy_price
 
@@ -644,12 +684,12 @@ def process_batch_buy_signal(
                             )
                     else:
                         # ✅ FIX: Auto-schedule next batch using thread pool (bounded)
-                        # Schedule next batch check after 10 seconds (batch delay)
+                        # Schedule next batch check after 30 seconds (batch delay)
                         # This avoids creating unbounded threads for sleep operations
                         def schedule_next_batch_check():
                             import time
 
-                            time.sleep(10)  # Wait for batch delay
+                            time.sleep(30)  # Wait for batch delay
                             if batch_strategy and batch_strategy.is_batch_active(
                                 instId
                             ):
