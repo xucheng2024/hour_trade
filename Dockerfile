@@ -18,8 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Set Python path to include src directory
-ENV PYTHONPATH=/app/src:$PYTHONPATH
+# Set Python path to include src directory and root
+ENV PYTHONPATH=/app:/app/src:$PYTHONPATH
 
 # Default command (can be overridden in Railway)
 CMD ["python", "websocket_limit_trading.py"]

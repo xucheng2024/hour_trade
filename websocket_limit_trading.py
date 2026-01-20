@@ -25,17 +25,22 @@ from okx.MarketData import MarketAPI
 from okx.PublicData import PublicAPI
 from okx.Trade import TradeAPI
 
+# ✅ FIX: Initialize basic logger early for import error handling
+# Full logger setup happens later, but we need a basic one here
+_temp_logger = logging.getLogger(__name__)
+_temp_logger.setLevel(logging.WARNING)
+
 # Add src directory to path to import blacklist_manager
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 try:
     from crypto_remote.blacklist_manager import BlacklistManager
 except ImportError as e:
-    logger.warning(
+    _temp_logger.warning(
         f"⚠️ Failed to import BlacklistManager: {e}. Blacklist checks will be disabled."
     )
     BlacklistManager = None
 except Exception as e:
-    logger.error(
+    _temp_logger.error(
         f"❌ Error importing BlacklistManager: {e}. Blacklist checks will be disabled."
     )
     BlacklistManager = None
@@ -129,6 +134,11 @@ logging.basicConfig(
     handlers=handlers,
 )
 logger = logging.getLogger(__name__)
+# ✅ FIX: logger is already configured by basicConfig above, but ensure it uses the handlers
+logger.handlers = handlers
+logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+# Remove the temporary logger reference (same object, just cleaned up)
+del _temp_logger
 
 # Import extracted modules (after logger is initialized)
 # Import core utilities first (they don't depend on numpy/pandas)
