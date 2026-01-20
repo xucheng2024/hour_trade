@@ -33,11 +33,18 @@ try:
 except ImportError:
     BlacklistManager = None
 
-# Import momentum-volume strategy
+# Import stable buy strategy
 try:
-    from core.momentum_volume_strategy import MomentumVolumeStrategy
+    from core.stable_buy_strategy import StableBuyStrategy
 except ImportError:
-    MomentumVolumeStrategy = None
+    StableBuyStrategy = None
+
+# Import batch buy strategy
+try:
+    from core.batch_buy_strategy import BatchBuyStrategy
+except ImportError:
+    BatchBuyStrategy = None
+
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -67,7 +74,8 @@ TRADING_AMOUNT_USDT = int(
     os.getenv("TRADING_AMOUNT_USDT", "100")
 )  # Amount per trade in USDT
 STRATEGY_NAME = "hourly_limit_ws"
-MOMENTUM_STRATEGY_NAME = "momentum_volume_exhaustion"
+STABLE_STRATEGY_NAME = "stable_buy_ws"
+BATCH_STRATEGY_NAME = "batch_buy_ws"
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
 
 # Strategy Parameters - Environment configurable
@@ -123,9 +131,6 @@ try:
         check_blacklist_before_buy as _check_blacklist_before_buy,
     )
     from core.trading_utils import extract_base_currency as _extract_base_currency
-    from core.trading_utils import (
-        initialize_momentum_strategy_history as _initialize_momentum_strategy_history,
-    )
     from core.trading_utils import load_crypto_limits as _load_crypto_limits
     from core.trading_utils import play_sound as _play_sound
     from core.trading_utils import (
@@ -139,7 +144,6 @@ except ImportError as e:
     _play_sound = None
     _check_blacklist_before_buy = None
     _remove_crypto_from_system = None
-    _initialize_momentum_strategy_history = None
 
 # Import other modules (may depend on numpy/pandas)
 try:
@@ -157,16 +161,20 @@ except ImportError as e:
     _get_trade_api = None
 
 try:
+    from core.order_processing import buy_batch_order as _buy_batch_order
     from core.order_processing import buy_limit_order as _buy_limit_order
-    from core.order_processing import buy_momentum_order as _buy_momentum_order
+    from core.order_processing import buy_stable_order as _buy_stable_order
+    from core.order_processing import sell_batch_order as _sell_batch_order
     from core.order_processing import sell_market_order as _sell_market_order
-    from core.order_processing import sell_momentum_order as _sell_momentum_order
+    from core.order_processing import sell_stable_order as _sell_stable_order
 except ImportError as e:
     logger.warning(f"Failed to import order_processing: {e}")
     _buy_limit_order = None
-    _buy_momentum_order = None
+    _buy_stable_order = None
+    _buy_batch_order = None
     _sell_market_order = None
-    _sell_momentum_order = None
+    _sell_stable_order = None
+    _sell_batch_order = None
 
 try:
     from core.order_sync import OrderSyncManager
@@ -189,20 +197,28 @@ except ImportError as e:
     PriceManager = None
 
 try:
+    from core.signal_processing import (
+        process_batch_buy_signal as _process_batch_buy_signal,
+    )
+    from core.signal_processing import (
+        process_batch_sell_signal as _process_batch_sell_signal,
+    )
     from core.signal_processing import process_buy_signal as _process_buy_signal
-    from core.signal_processing import (
-        process_momentum_buy_signal as _process_momentum_buy_signal,
-    )
-    from core.signal_processing import (
-        process_momentum_sell_signal as _process_momentum_sell_signal,
-    )
     from core.signal_processing import process_sell_signal as _process_sell_signal
+    from core.signal_processing import (
+        process_stable_buy_signal as _process_stable_buy_signal,
+    )
+    from core.signal_processing import (
+        process_stable_sell_signal as _process_stable_sell_signal,
+    )
 except ImportError as e:
     logger.warning(f"Failed to import signal_processing: {e}")
     _process_buy_signal = None
     _process_sell_signal = None
-    _process_momentum_buy_signal = None
-    _process_momentum_sell_signal = None
+    _process_stable_buy_signal = None
+    _process_stable_sell_signal = None
+    _process_batch_buy_signal = None
+    _process_batch_sell_signal = None
 
 try:
     from core.websocket_connection import candle_open as _candle_open
@@ -237,14 +253,34 @@ pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
-# Momentum strategy active orders (separate tracking)
-momentum_active_orders: Dict[str, Dict] = (
+# Stable strategy active orders
+stable_active_orders: Dict[str, Dict] = (
     {}
-)  # instId -> {ordIds: [str], buy_prices: [float], buy_sizes: [float], next_hour_close_times: [datetime], ...}
-# ✅ FIX: Throttle intra-hour buy signal checks to prevent CPU overload
-last_intra_hour_check: Dict[str, datetime] = {}  # instId -> last check time
-momentum_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
+)  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
+stable_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 lock = threading.Lock()
+
+# Initialize stable buy strategy
+stable_strategy: Optional[StableBuyStrategy] = None
+if StableBuyStrategy is not None:
+    stable_strategy = StableBuyStrategy()
+    logger.warning("✅ Stable Buy strategy initialized")
+else:
+    logger.warning("⚠️ Stable Buy strategy not available")
+
+# Batch strategy active orders
+batch_active_orders: Dict[str, Dict] = (
+    {}
+)  # instId -> {ordIds: [], buy_price, buy_time, next_hour_close_time, total_size, ...}
+batch_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
+
+# Initialize batch buy strategy
+batch_strategy: Optional[BatchBuyStrategy] = None
+if BatchBuyStrategy is not None:
+    batch_strategy = BatchBuyStrategy()
+    logger.warning("✅ Batch Buy strategy initialized")
+else:
+    logger.warning("⚠️ Batch Buy strategy not available")
 
 # Thread pool for buy/sell operations (limit concurrent threads)
 # Default max_workers=10, configurable via THREAD_POOL_MAX_WORKERS env var
@@ -252,26 +288,6 @@ thread_pool_max_workers = int(os.getenv("THREAD_POOL_MAX_WORKERS", "10"))
 thread_pool = ThreadPoolExecutor(
     max_workers=thread_pool_max_workers, thread_name_prefix="trade"
 )
-
-# Initialize momentum-volume strategy
-momentum_strategy: Optional[MomentumVolumeStrategy] = None
-if MomentumVolumeStrategy is not None:
-    momentum_strategy = MomentumVolumeStrategy()
-    logger.warning("✅ Momentum-Volume Exhaustion strategy initialized")
-else:
-    logger.warning("⚠️ Momentum-Volume strategy not available")
-
-
-def initialize_momentum_strategy_history():
-    """Initialize momentum strategy with historical 1H candle data"""
-    if _initialize_momentum_strategy_history:
-        _initialize_momentum_strategy_history(
-            momentum_strategy, crypto_limits, get_market_api
-        )
-    else:
-        logger.error(
-            "initialize_momentum_strategy_history not available - module import failed"
-        )
 
 
 # WebSocket connections for unsubscribe (using dict refs for module compatibility)
@@ -483,7 +499,7 @@ if PriceManager is not None:
         logger.warning(f"⚠️ Failed to initialize PriceManager: {e}")
         price_manager = None
 
-# Order sync manager will be initialized after process_sell_signal and process_momentum_sell_signal are defined
+# Order sync manager will be initialized after process_sell_signal is defined
 order_sync_manager: Optional[object] = None
 
 
@@ -589,10 +605,18 @@ def on_ticker_message(ws, msg_string):
             reference_price_fetch_attempts,
             pending_buys,
             active_orders,
+            stable_active_orders,
+            stable_pending_buys,
+            stable_strategy,
+            batch_active_orders,
+            batch_pending_buys,
+            batch_strategy,
             lock,
             fetch_current_hour_open_price,
             calculate_limit_price,
             process_buy_signal,
+            process_stable_buy_signal,
+            process_batch_buy_signal,
             check_2h_gain_filter,  # Pass 2h gain filter function
             thread_pool,  # Pass thread pool for async processing
         )
@@ -613,35 +637,17 @@ def check_and_cancel_unfilled_order_after_timeout(
             SIMULATION_MODE,
             get_db_connection,
             active_orders,
-            momentum_active_orders,
+            stable_active_orders,
+            batch_active_orders,
+            batch_strategy,
+            batch_pending_buys,
+            BATCH_STRATEGY_NAME,
             lock,
         )
     else:
         logger.error(
             "check_and_cancel_unfilled_order_after_timeout not available - module import failed"
         )
-
-
-def buy_momentum_order(
-    instId: str, buy_price: float, buy_pct: float, tradeAPI: TradeAPI, conn
-) -> Optional[str]:
-    """Place momentum strategy buy order and record in database"""
-    if _buy_momentum_order:
-        return _buy_momentum_order(
-            instId,
-            buy_price,
-            buy_pct,
-            tradeAPI,
-            conn,
-            MOMENTUM_STRATEGY_NAME,
-            TRADING_AMOUNT_USDT,
-            SIMULATION_MODE,
-            format_number,
-            check_blacklist_before_buy,
-            play_sound,
-        )
-    logger.error("buy_momentum_order not available - module import failed")
-    return None
 
 
 def process_buy_signal(instId: str, limit_price: float):
@@ -666,30 +672,6 @@ def process_buy_signal(instId: str, limit_price: float):
         logger.error("process_buy_signal not available - module import failed")
 
 
-def process_momentum_buy_signal(instId: str, buy_price: float, buy_pct: float):
-    """Process momentum strategy buy signal in separate thread"""
-    if _process_momentum_buy_signal:
-        _process_momentum_buy_signal(
-            instId,
-            buy_price,
-            buy_pct,
-            MOMENTUM_STRATEGY_NAME,
-            TRADING_AMOUNT_USDT,
-            SIMULATION_MODE,
-            get_trade_api,
-            get_db_connection,
-            buy_momentum_order,
-            check_blacklist_before_buy,
-            momentum_active_orders,
-            momentum_pending_buys,
-            momentum_strategy,
-            lock,
-            check_and_cancel_unfilled_order_after_timeout,
-        )
-    else:
-        logger.error("process_momentum_buy_signal not available - module import failed")
-
-
 def on_candle_message(ws, msg_string):
     """Handle candle WebSocket messages"""
     if _on_candle_message:
@@ -700,16 +682,13 @@ def on_candle_message(ws, msg_string):
             reference_prices,
             reference_price_fetch_attempts,
             last_1h_candle_time,
-            last_intra_hour_check,
             active_orders,
-            momentum_active_orders,
-            momentum_pending_buys,
-            momentum_strategy,
+            stable_active_orders,
+            batch_active_orders,
             lock,
             process_sell_signal,
-            process_momentum_buy_signal,
-            process_momentum_sell_signal,
-            INTRA_HOUR_CHECK_THROTTLE_SECONDS,
+            process_stable_sell_signal,
+            process_batch_sell_signal,
             thread_pool,  # Pass thread pool for async processing
         )
     else:
@@ -733,38 +712,80 @@ def process_sell_signal(instId: str):
         logger.error("process_sell_signal not available - module import failed")
 
 
-def process_momentum_sell_signal(instId: str):
-    """Process momentum strategy sell signal at next hour close (idempotent)"""
-    if _process_momentum_sell_signal:
-        _process_momentum_sell_signal(
+def process_stable_buy_signal(instId: str, limit_price: float):
+    """Process stable strategy buy signal"""
+    if _process_stable_buy_signal:
+        _process_stable_buy_signal(
             instId,
-            MOMENTUM_STRATEGY_NAME,
+            limit_price,
+            STABLE_STRATEGY_NAME,
+            TRADING_AMOUNT_USDT,
             SIMULATION_MODE,
             get_trade_api,
             get_db_connection,
-            sell_momentum_order,
-            momentum_active_orders,
-            momentum_strategy,
+            buy_stable_order,
+            check_blacklist_before_buy,
+            stable_active_orders,
+            stable_pending_buys,
+            stable_strategy,
+            lock,
+            check_and_cancel_unfilled_order_after_timeout,
+        )
+    else:
+        logger.error("process_stable_buy_signal not available - module import failed")
+
+
+def process_stable_sell_signal(instId: str):
+    """Process stable strategy sell signal at next hour close (idempotent)"""
+    if _process_stable_sell_signal:
+        _process_stable_sell_signal(
+            instId,
+            STABLE_STRATEGY_NAME,
+            SIMULATION_MODE,
+            get_trade_api,
+            get_db_connection,
+            sell_stable_order,
+            stable_active_orders,
+            stable_strategy,
             lock,
         )
     else:
-        logger.error(
-            "process_momentum_sell_signal not available - module import failed"
+        logger.error("process_stable_sell_signal not available - module import failed")
+
+
+def buy_stable_order(
+    instId: str, limit_price: float, size: float, tradeAPI: TradeAPI, conn
+) -> Optional[str]:
+    """Place stable strategy buy order and record in database"""
+    if _buy_stable_order:
+        return _buy_stable_order(
+            instId,
+            limit_price,
+            size,
+            tradeAPI,
+            conn,
+            STABLE_STRATEGY_NAME,
+            SIMULATION_MODE,
+            format_number,
+            check_blacklist_before_buy,
+            play_sound,
         )
+    logger.error("buy_stable_order not available - module import failed")
+    return None
 
 
-def sell_momentum_order(
+def sell_stable_order(
     instId: str, ordId: str, size: float, tradeAPI: TradeAPI, conn
 ) -> bool:
-    """Place momentum strategy market sell order"""
-    if _sell_momentum_order:
-        return _sell_momentum_order(
+    """Place stable strategy market sell order"""
+    if _sell_stable_order:
+        return _sell_stable_order(
             instId,
             ordId,
             size,
             tradeAPI,
             conn,
-            MOMENTUM_STRATEGY_NAME,
+            STABLE_STRATEGY_NAME,
             SIMULATION_MODE,
             format_number,
             play_sound,
@@ -772,24 +793,122 @@ def sell_momentum_order(
             current_prices,
             lock,
         )
-    logger.error("sell_momentum_order not available - module import failed")
+    logger.error("sell_stable_order not available - module import failed")
     return False
 
 
-# Initialize order sync manager after process_sell_signal and process_momentum_sell_signal are defined
+def buy_batch_order(
+    instId: str,
+    limit_price: float,
+    size: float,
+    batch_index: int,
+    tradeAPI: TradeAPI,
+    conn,
+) -> Optional[str]:
+    """Place batch strategy buy order and record in database"""
+    if _buy_batch_order:
+        return _buy_batch_order(
+            instId,
+            limit_price,
+            size,
+            batch_index,
+            tradeAPI,
+            conn,
+            BATCH_STRATEGY_NAME,
+            SIMULATION_MODE,
+            format_number,
+            check_blacklist_before_buy,
+            play_sound,
+        )
+    logger.error("buy_batch_order not available - module import failed")
+    return None
+
+
+def sell_batch_order(
+    instId: str, ordId: str, size: float, tradeAPI: TradeAPI, conn
+) -> bool:
+    """Place batch strategy market sell order"""
+    if _sell_batch_order:
+        return _sell_batch_order(
+            instId,
+            ordId,
+            size,
+            tradeAPI,
+            conn,
+            BATCH_STRATEGY_NAME,
+            SIMULATION_MODE,
+            format_number,
+            play_sound,
+            get_market_api,
+            current_prices,
+            lock,
+        )
+    logger.error("sell_batch_order not available - module import failed")
+    return False
+
+
+def process_batch_buy_signal(instId: str, limit_price: float):
+    """Process batch strategy buy signal"""
+    if _process_batch_buy_signal:
+        _process_batch_buy_signal(
+            instId,
+            limit_price,
+            BATCH_STRATEGY_NAME,
+            batch_strategy,
+            SIMULATION_MODE,
+            get_trade_api,
+            get_db_connection,
+            buy_batch_order,
+            check_blacklist_before_buy,
+            batch_active_orders,
+            batch_pending_buys,
+            lock,
+            check_and_cancel_unfilled_order_after_timeout,
+            thread_pool,  # ✅ FIX: Pass thread pool to avoid unbounded thread creation
+            process_batch_buy_signal,  # ✅ FIX: Pass self-reference for recursive batch triggering
+        )
+    else:
+        logger.error("process_batch_buy_signal not available - module import failed")
+
+
+def process_batch_sell_signal(instId: str):
+    """Process batch strategy sell signal at next hour close (idempotent)"""
+    if _process_batch_sell_signal:
+        _process_batch_sell_signal(
+            instId,
+            BATCH_STRATEGY_NAME,
+            SIMULATION_MODE,
+            get_trade_api,
+            get_db_connection,
+            sell_batch_order,
+            batch_active_orders,
+            batch_pending_buys,
+            batch_strategy,
+            lock,
+        )
+    else:
+        logger.error("process_batch_sell_signal not available - module import failed")
+
+
+# Initialize order sync manager after process_sell_signal is defined
 if OrderSyncManager is not None and order_sync_manager is None:
     try:
         order_sync_manager = OrderSyncManager(
             strategy_name=STRATEGY_NAME,
-            momentum_strategy_name=MOMENTUM_STRATEGY_NAME,
+            stable_strategy_name=STABLE_STRATEGY_NAME,
+            batch_strategy_name=BATCH_STRATEGY_NAME,
             get_db_connection=get_db_connection,
             get_trade_api=get_trade_api,
             active_orders=active_orders,
-            momentum_active_orders=momentum_active_orders,
-            momentum_strategy=momentum_strategy,
+            stable_active_orders=stable_active_orders,
+            batch_active_orders=batch_active_orders,
+            stable_strategy=stable_strategy,
+            batch_strategy=batch_strategy,
             lock=lock,
             process_sell_signal=process_sell_signal,
-            process_momentum_sell_signal=process_momentum_sell_signal,
+            process_stable_sell_signal=process_stable_sell_signal,
+            process_batch_sell_signal=process_batch_sell_signal,
+            simulation_mode=SIMULATION_MODE,
         )
         logger.info("✅ OrderSyncManager initialized")
     except Exception as e:
@@ -962,36 +1081,6 @@ def check_sell_timeout():
                                     f"past sell_time={next_hour_close.strftime('%H:%M:%S')}, triggering sell"
                                 )
 
-                    # Check momentum strategy orders from memory
-                    # ✅ OPTIMIZED: Use orders dict instead of parallel lists
-                    for instId, order_info in list(momentum_active_orders.items()):
-                        orders_dict = order_info.get("orders", {})
-                        # Check if any order is ready to sell (past sell time)
-                        has_ready_orders = False
-                        for ordId, order_data in orders_dict.items():
-                            order_sell_time = order_data.get("next_hour_close_time")
-                            if order_sell_time and now >= order_sell_time:
-                                has_ready_orders = True
-                                logger.warning(
-                                    f"⏰ SELL CHECK ({current_minute}min): {instId} (momentum) "
-                                    f"ordId={ordId} past sell_time={order_sell_time.strftime('%H:%M:%S')}"
-                                )
-                                break
-                            elif not order_sell_time:
-                                # Fallback: if no sell time, assume ready
-                                has_ready_orders = True
-                                break
-
-                        if has_ready_orders and not order_info.get(
-                            "sell_triggered", False
-                        ):
-                            orders_to_sell.append((instId, "momentum"))
-                            order_info["sell_triggered"] = True
-                            order_info["last_sell_attempt_time"] = now
-                            logger.warning(
-                                f"⏰ SELL CHECK ({current_minute}min): {instId} (momentum) triggering sell"
-                            )
-
             # Trigger sells outside of lock using thread pool
             for instId, strategy_type in orders_to_sell:
                 logger.warning(
@@ -1000,8 +1089,8 @@ def check_sell_timeout():
                 )
                 if strategy_type == "original":
                     thread_pool.submit(process_sell_signal, instId)
-                elif strategy_type == "momentum":
-                    thread_pool.submit(process_momentum_sell_signal, instId)
+                elif strategy_type == "stable":
+                    thread_pool.submit(process_stable_sell_signal, instId)
         except Exception as e:
             logger.error(f"Error in check_sell_timeout: {e}")
             time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)  # Wait on error
@@ -1032,10 +1121,6 @@ def main():
         return
 
     logger.warning(f"Loaded {len(crypto_limits)} cryptos with limits")
-
-    # Initialize momentum strategy with historical data
-    # This avoids waiting 11 hours after program startup
-    initialize_momentum_strategy_history()
 
     # Initialize reference prices (current hour's open prices)
     initialize_reference_prices()
@@ -1098,7 +1183,8 @@ def main():
                 logger.info(
                     f"Status: {len(current_prices)} prices, "
                     f"{len(reference_prices)} reference prices, "
-                    f"{len(active_orders)} active orders"
+                    f"{len(active_orders)} original orders, "
+                    f"{len(stable_active_orders)} stable orders"
                 )
 
             # Monitor thread count in main loop

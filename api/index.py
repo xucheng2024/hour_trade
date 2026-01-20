@@ -17,7 +17,8 @@ import psycopg2.extras
 
 # Configuration
 STRATEGY_NAME = "hourly_limit_ws"
-MOMENTUM_STRATEGY_NAME = "momentum_volume_exhaustion"
+STABLE_STRATEGY_NAME = "stable_buy_ws"
+BATCH_STRATEGY_NAME = "batch_buy_ws"
 CACHE_TTL = 15
 _cache = {"data": None, "timestamp": 0}
 
@@ -48,11 +49,11 @@ def get_trading_records():
         SELECT instId, ordId, create_time, state,
                price, size, sell_time, side, sell_price, flag
         FROM orders
-        WHERE flag IN (%s, %s)
+        WHERE flag IN (%s, %s, %s)
         ORDER BY create_time DESC
         LIMIT 500
     """,
-        (STRATEGY_NAME, MOMENTUM_STRATEGY_NAME),
+        (STRATEGY_NAME, STABLE_STRATEGY_NAME, BATCH_STRATEGY_NAME),
     )
 
     rows = cur.fetchall()
@@ -73,7 +74,14 @@ def get_trading_records():
                     "buy_amount": 0.0,
                     "sell_amount": 0.0,
                 },
-                MOMENTUM_STRATEGY_NAME: {
+                STABLE_STRATEGY_NAME: {
+                    "trades": [],
+                    "profit": 0.0,
+                    "profit_pct": 0.0,
+                    "buy_amount": 0.0,
+                    "sell_amount": 0.0,
+                },
+                BATCH_STRATEGY_NAME: {
                     "trades": [],
                     "profit": 0.0,
                     "profit_pct": 0.0,
@@ -192,8 +200,12 @@ class handler(BaseHTTPRequestHandler):
                 original_profit = sum(
                     d["strategies"][STRATEGY_NAME]["profit"] for d in cryptos.values()
                 )
-                momentum_profit = sum(
-                    d["strategies"][MOMENTUM_STRATEGY_NAME]["profit"]
+                stable_profit = sum(
+                    d["strategies"][STABLE_STRATEGY_NAME]["profit"]
+                    for d in cryptos.values()
+                )
+                batch_profit = sum(
+                    d["strategies"][BATCH_STRATEGY_NAME]["profit"]
                     for d in cryptos.values()
                 )
 
@@ -211,14 +223,17 @@ class handler(BaseHTTPRequestHandler):
                                     for d in cryptos.values()
                                 ),
                             },
-                            MOMENTUM_STRATEGY_NAME: {
-                                "profit": momentum_profit,
+                            STABLE_STRATEGY_NAME: {
+                                "profit": stable_profit,
                                 "trades": sum(
-                                    len(
-                                        d["strategies"][MOMENTUM_STRATEGY_NAME][
-                                            "trades"
-                                        ]
-                                    )
+                                    len(d["strategies"][STABLE_STRATEGY_NAME]["trades"])
+                                    for d in cryptos.values()
+                                ),
+                            },
+                            BATCH_STRATEGY_NAME: {
+                                "profit": batch_profit,
+                                "trades": sum(
+                                    len(d["strategies"][BATCH_STRATEGY_NAME]["trades"])
                                     for d in cryptos.values()
                                 ),
                             },

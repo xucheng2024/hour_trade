@@ -25,10 +25,18 @@ def on_ticker_message(
     reference_price_fetch_attempts: dict,
     pending_buys: dict,
     active_orders: dict,
+    stable_active_orders: dict,
+    stable_pending_buys: dict,
+    stable_strategy: Optional[object],
+    batch_active_orders: dict,
+    batch_pending_buys: dict,
+    batch_strategy: Optional[object],
     lock: threading.Lock,
     fetch_current_hour_open_price_func,
     calculate_limit_price_func,
     process_buy_signal_func,
+    process_stable_buy_signal_func,
+    process_batch_buy_signal_func,
     check_2h_gain_filter_func,  # Function to check 2h gain filter
     thread_pool=None,  # Optional thread pool for async processing
 ):
@@ -69,9 +77,51 @@ def on_ticker_message(
                                     f"on ticker update (coin is active)"
                                 )
 
-                            # Skip if already in pending_buys or active_orders
-                            if instId in pending_buys or instId in active_orders:
-                                continue
+                            # Skip original strategy if already in pending_buys or active_orders
+                            skip_original = (
+                                instId in pending_buys or instId in active_orders
+                            )
+
+                        # Update stable strategy price history (always update, even if already have orders)
+                        # This runs independently of original strategy, outside main lock to avoid deadlock
+                        # stable_strategy has its own RLock, so calling it is safe
+                        if stable_strategy is not None:
+                            stable_strategy.update_price(instId, last_price)
+                            # Check if stable strategy has pending signal that's now ready
+                            limit_price_stable = stable_strategy.check_stability(instId)
+                            if limit_price_stable:
+                                # Check stable strategy state (need lock for thread-safe check)
+                                with lock:
+                                    if (
+                                        instId in stable_pending_buys
+                                        and instId not in stable_active_orders
+                                    ):
+                                        should_trigger_stable = True
+                                    else:
+                                        should_trigger_stable = False
+
+                                if should_trigger_stable:
+                                    # Price is stable, trigger buy
+                                    logger.warning(
+                                        f"✅ STABLE BUY READY: {instId}, "
+                                        f"limit={limit_price_stable:.6f}"
+                                    )
+                                    if thread_pool:
+                                        thread_pool.submit(
+                                            process_stable_buy_signal_func,
+                                            instId,
+                                            limit_price_stable,
+                                        )
+                                    else:
+                                        threading.Thread(
+                                            target=process_stable_buy_signal_func,
+                                            args=(instId, limit_price_stable),
+                                            daemon=True,
+                                        ).start()
+
+                        # Skip original strategy processing if already active
+                        if skip_original:
+                            continue
 
                         # Get reference price and limit_percent outside lock
                         with lock:
@@ -122,6 +172,80 @@ def on_ticker_message(
                         limit_price = calculate_limit_price_func(
                             ref_price, limit_percent, instId
                         )
+
+                        # Check stable strategy buy signal independently (before original strategy check)
+                        # This allows stable strategy to register even when original strategy is active
+                        if stable_strategy is not None and last_price <= limit_price:
+                            # Check if not already registered or active for stable strategy
+                            with lock:
+                                instId_not_in_stable = (
+                                    instId not in stable_pending_buys
+                                    and instId not in stable_active_orders
+                                )
+
+                            if instId_not_in_stable:
+                                # Check 2h gain filter for stable strategy too
+                                should_skip_buy_stable, gain_pct_stable = (
+                                    check_2h_gain_filter_func(instId, ref_price)
+                                )
+                                if not should_skip_buy_stable:
+                                    # Register stable buy signal (will wait for stability)
+                                    # register_buy_signal uses its own RLock, safe to call outside main lock
+                                    if stable_strategy.register_buy_signal(
+                                        instId, limit_price
+                                    ):
+                                        with lock:
+                                            stable_pending_buys[instId] = True
+                                        logger.warning(
+                                            f"📝 STABLE BUY SIGNAL REGISTERED: {instId}, "
+                                            f"limit={limit_price:.6f}, waiting for stability"
+                                        )
+
+                        # Check batch strategy buy signal independently (before original strategy check)
+                        # This allows batch strategy to register even when other strategies are active
+                        if batch_strategy is not None and last_price <= limit_price:
+                            # Check if not already registered or active for batch strategy
+                            with lock:
+                                instId_not_in_batch = (
+                                    instId not in batch_pending_buys
+                                    and instId not in batch_active_orders
+                                )
+
+                            if instId_not_in_batch:
+                                # Check 2h gain filter for batch strategy too
+                                should_skip_buy_batch, gain_pct_batch = (
+                                    check_2h_gain_filter_func(instId, ref_price)
+                                )
+                                if not should_skip_buy_batch:
+                                    # Register batch buy signal (will trigger first batch immediately)
+                                    # register_buy_signal uses its own RLock, safe to call outside main lock
+                                    if batch_strategy.register_buy_signal(
+                                        instId, limit_price
+                                    ):
+                                        with lock:
+                                            batch_pending_buys[instId] = True
+                                        logger.warning(
+                                            f"📝 BATCH BUY SIGNAL REGISTERED: {instId}, "
+                                            f"limit={limit_price:.6f}, batches=30/30/40 USDT"
+                                        )
+                                        # Trigger first batch immediately
+                                        # ✅ FIX: Removed manual thread scheduling to avoid thread storm
+                                        # Batch strategy's get_next_batch() already checks time delays
+                                        # Subsequent batches will be triggered automatically when time is ready
+                                        if thread_pool:
+                                            thread_pool.submit(
+                                                process_batch_buy_signal_func,
+                                                instId,
+                                                limit_price,
+                                            )
+                                        else:
+                                            import threading
+
+                                            threading.Thread(
+                                                target=process_batch_buy_signal_func,
+                                                args=(instId, limit_price),
+                                                daemon=True,
+                                            ).start()
 
                         if last_price <= limit_price:
                             # ✅ NEW: Check 2-hour gain filter before buying
@@ -192,16 +316,13 @@ def on_candle_message(
     reference_prices: dict,
     reference_price_fetch_attempts: dict,
     last_1h_candle_time: dict,
-    last_intra_hour_check: dict,
     active_orders: dict,
-    momentum_active_orders: dict,
-    momentum_pending_buys: dict,
-    momentum_strategy: Optional[object],
+    stable_active_orders: dict,
+    batch_active_orders: dict,
     lock: threading.Lock,
     process_sell_signal_func,
-    process_momentum_buy_signal_func,
-    process_momentum_sell_signal_func,
-    INTRA_HOUR_CHECK_THROTTLE_SECONDS: int,
+    process_stable_sell_signal_func,
+    process_batch_sell_signal_func,
     thread_pool=None,  # Optional thread pool for async processing
 ):
     """Handle candle WebSocket messages"""
@@ -260,91 +381,6 @@ def on_candle_message(
                         with lock:
                             last_1h_candle_time[instId] = now
 
-                        if momentum_strategy is not None and instId in crypto_limits:
-                            # Mark first candle confirmed to allow buy signals
-                            momentum_strategy.mark_first_candle_confirmed(instId)
-                            candle_volume = (
-                                float(candle_data[5]) if len(candle_data) > 5 else 0.0
-                            )
-                            close_price = (
-                                float(candle_data[4])
-                                if len(candle_data) > 4
-                                else open_price
-                            )
-                            volume_ccy = (
-                                float(candle_data[6])
-                                if len(candle_data) > 6
-                                else candle_volume
-                            )
-                            volume_to_use = (
-                                volume_ccy if volume_ccy > 0 else candle_volume
-                            )
-                            if volume_to_use > 0:
-                                momentum_strategy.update_price_volume(
-                                    instId, close_price, volume_to_use, open_price
-                                )
-
-                                if (
-                                    momentum_strategy is not None
-                                    and instId in crypto_limits
-                                ):
-                                    should_buy, buy_pct = (
-                                        momentum_strategy.check_buy_signal(
-                                            instId, close_price
-                                        )
-                                    )
-                                    if should_buy and buy_pct:
-                                        with lock:
-                                            if instId in momentum_pending_buys:
-                                                logger.debug(
-                                                    f"⏭️ {instId} Momentum buy already pending, skipping"
-                                                )
-                                            elif instId in momentum_active_orders:
-                                                logger.debug(
-                                                    f"⏭️ {instId} Momentum order already active, skipping"
-                                                )
-                                            else:
-                                                position = (
-                                                    momentum_strategy.get_position_info(
-                                                        instId
-                                                    )
-                                                )
-                                                if (
-                                                    position
-                                                    and position.get(
-                                                        "total_buy_pct", 0.0
-                                                    )
-                                                    >= 0.70
-                                                ):
-                                                    logger.debug(
-                                                        f"⏸️ {instId} Already at max position: "
-                                                        f"{position.get('total_buy_pct', 0.0):.1%}"
-                                                    )
-                                                else:
-                                                    momentum_pending_buys[instId] = True
-                                                    logger.warning(
-                                                        f"🎯 MOMENTUM BUY SIGNAL (confirmed 1H candle): {instId}, "
-                                                        f"close_price={close_price:.6f}, buy_pct={buy_pct:.1%}"
-                                                    )
-                                                    # ✅ OPTIMIZED: Use thread pool if available
-                                                    if thread_pool:
-                                                        thread_pool.submit(
-                                                            process_momentum_buy_signal_func,
-                                                            instId,
-                                                            close_price,
-                                                            buy_pct,
-                                                        )
-                                                    else:
-                                                        threading.Thread(
-                                                            target=process_momentum_buy_signal_func,
-                                                            args=(
-                                                                instId,
-                                                                close_price,
-                                                                buy_pct,
-                                                            ),
-                                                            daemon=True,
-                                                        ).start()
-
                         with lock:
                             now = datetime.now()
 
@@ -393,48 +429,28 @@ def on_candle_message(
                                             daemon=True,
                                         ).start()
 
-                            # Check momentum strategy orders
-                            if instId in momentum_active_orders:
-                                order_info = momentum_active_orders[instId]
-                                orders_dict = order_info.get("orders", {})
+                            # Check stable strategy orders
+                            if instId in stable_active_orders:
+                                order_info = stable_active_orders[instId]
+                                next_hour_close = order_info.get("next_hour_close_time")
 
-                                # High: Check next_hour_close_time for each momentum order
-                                # Only trigger sell if at least one order is ready
-                                ready_to_sell = False
-                                missing_sell_time = False
-
-                                for ordId, order_data in orders_dict.items():
-                                    order_sell_time = order_data.get(
-                                        "next_hour_close_time"
-                                    )
-                                    if not order_sell_time:
-                                        missing_sell_time = True
-                                        logger.warning(
-                                            f"🚫 {instId} Momentum order {ordId} missing next_hour_close_time, "
-                                            f"blocking sell to prevent premature sale"
-                                        )
-                                    elif now >= order_sell_time:
-                                        ready_to_sell = True
-                                        break
-
-                                if missing_sell_time and not ready_to_sell:
-                                    # Block if any order is missing sell_time and none are ready
+                                if not next_hour_close:
                                     logger.warning(
-                                        f"🚫 {instId} Momentum orders have missing next_hour_close_time, "
-                                        f"blocking sell"
+                                        f"🚫 {instId} KLINE CONFIRMED but missing next_hour_close_time (stable), "
+                                        f"blocking sell to prevent premature sale"
                                     )
-                                elif not ready_to_sell:
-                                    # All orders have sell_time but none are ready yet
+                                elif now < next_hour_close:
                                     logger.debug(
-                                        f"⏸️ {instId} Momentum KLINE CONFIRMED but no orders ready to sell yet"
+                                        f"⏸️ {instId} KLINE CONFIRMED but not ready to sell yet (stable): "
+                                        f"now={now.strftime('%H:%M:%S')}, "
+                                        f"sell_time={next_hour_close.strftime('%H:%M:%S')}"
                                     )
                                 elif order_info.get("sell_triggered", False):
                                     logger.debug(
-                                        f"⚠️ Momentum sell already triggered for {instId}, "
-                                        f"skipping duplicate candle confirm"
+                                        f"⚠️ Stable sell already triggered for {instId}, skipping duplicate candle confirm"
                                     )
                                 else:
-                                    momentum_active_orders[instId][
+                                    stable_active_orders[instId][
                                         "sell_triggered"
                                     ] = True
                                     close_price = (
@@ -444,80 +460,18 @@ def on_candle_message(
                                     )
                                     logger.warning(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
-                                        f"close_price={close_price:.6f}, trigger SELL (momentum)"
+                                        f"close_price={close_price:.6f}, trigger SELL (stable)"
                                     )
-                                    # ✅ OPTIMIZED: Use thread pool if available
                                     if thread_pool:
                                         thread_pool.submit(
-                                            process_momentum_sell_signal_func, instId
+                                            process_stable_sell_signal_func, instId
                                         )
                                     else:
                                         threading.Thread(
-                                            target=process_momentum_sell_signal_func,
+                                            target=process_stable_sell_signal_func,
                                             args=(instId,),
                                             daemon=True,
                                         ).start()
 
-                    if (
-                        confirm != "1"
-                        and momentum_strategy is not None
-                        and instId in crypto_limits
-                    ):
-                        now = datetime.now()
-                        last_check = last_intra_hour_check.get(instId)
-                        if (
-                            last_check is None
-                            or (now - last_check).total_seconds()
-                            >= INTRA_HOUR_CHECK_THROTTLE_SECONDS
-                        ):
-                            last_intra_hour_check[instId] = now
-
-                            current_close_price = (
-                                float(candle_data[4])
-                                if len(candle_data) > 4
-                                else open_price
-                            )
-
-                            should_buy, buy_pct = momentum_strategy.check_buy_signal(
-                                instId, current_close_price
-                            )
-                            if should_buy and buy_pct:
-                                with lock:
-                                    if instId in momentum_pending_buys:
-                                        logger.debug(
-                                            f"⏭️ {instId} Momentum buy already pending (intra-hour), skipping"
-                                        )
-                                    elif instId in momentum_active_orders:
-                                        logger.debug(
-                                            f"⏭️ {instId} Momentum order already active (intra-hour), skipping"
-                                        )
-                                    else:
-                                        position = momentum_strategy.get_position_info(
-                                            instId
-                                        )
-                                        if (
-                                            position
-                                            and position.get("total_buy_pct", 0.0)
-                                            >= 0.70
-                                        ):
-                                            logger.debug(
-                                                f"⏸️ {instId} Already at max position (intra-hour): "
-                                                f"{position.get('total_buy_pct', 0.0):.1%}"
-                                            )
-                                        else:
-                                            momentum_pending_buys[instId] = True
-                                            logger.warning(
-                                                f"🎯 MOMENTUM BUY SIGNAL (intra-hour): {instId}, "
-                                                f"current_price={current_close_price:.6f}, buy_pct={buy_pct:.1%}"
-                                            )
-                                            threading.Thread(
-                                                target=process_momentum_buy_signal_func,
-                                                args=(
-                                                    instId,
-                                                    current_close_price,
-                                                    buy_pct,
-                                                ),
-                                                daemon=True,
-                                            ).start()
     except Exception as e:
         logger.error(f"Candle message error: {msg_string}, {e}")

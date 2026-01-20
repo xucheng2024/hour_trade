@@ -77,12 +77,12 @@
                 <div class="summary-value" id="original-profit">-</div>
             </div>
             <div class="summary-item">
-                <div class="summary-label">Momentum Strategy</div>
-                <div class="summary-value" id="momentum-profit">-</div>
+                <div class="summary-label">Stable Strategy</div>
+                <div class="summary-value" id="stable-profit">-</div>
             </div>
             <div class="summary-item">
-                <div class="summary-label">Strategy Comparison</div>
-                <div class="summary-value" id="strategy-comparison" style="font-size: 14px;">-</div>
+                <div class="summary-label">Batch Strategy</div>
+                <div class="summary-value" id="batch-profit">-</div>
             </div>
         </div>
         <div id="crypto-list" class="loading">Loading data...</div>
@@ -125,7 +125,8 @@
             // Update strategy-specific profits
             if (data.strategies) {
                 const originalProfit = data.strategies['hourly_limit_ws']?.profit || 0;
-                const momentumProfit = data.strategies['momentum_volume_exhaustion']?.profit || 0;
+                const stableProfit = data.strategies['stable_buy_ws']?.profit || 0;
+                const batchProfit = data.strategies['batch_buy_ws']?.profit || 0;
                 
                 const originalEl = document.getElementById('original-profit');
                 originalEl.textContent = originalProfit.toFixed(2) + ' USDT';
@@ -133,25 +134,17 @@
                     (originalProfit > 0 ? 'profit-positive' : 
                      originalProfit < 0 ? 'profit-negative' : '');
                 
-                const momentumEl = document.getElementById('momentum-profit');
-                momentumEl.textContent = momentumProfit.toFixed(2) + ' USDT';
-                momentumEl.className = 'summary-value ' + 
-                    (momentumProfit > 0 ? 'profit-positive' : 
-                     momentumProfit < 0 ? 'profit-negative' : '');
+                const stableEl = document.getElementById('stable-profit');
+                stableEl.textContent = stableProfit.toFixed(2) + ' USDT';
+                stableEl.className = 'summary-value ' + 
+                    (stableProfit > 0 ? 'profit-positive' : 
+                     stableProfit < 0 ? 'profit-negative' : '');
                 
-                // Strategy comparison
-                const comparisonEl = document.getElementById('strategy-comparison');
-                const diff = momentumProfit - originalProfit;
-                if (diff > 0) {
-                    comparisonEl.textContent = 'Momentum +' + diff.toFixed(2) + ' USDT';
-                    comparisonEl.className = 'summary-value profit-positive';
-                } else if (diff < 0) {
-                    comparisonEl.textContent = 'Original +' + Math.abs(diff).toFixed(2) + ' USDT';
-                    comparisonEl.className = 'summary-value profit-negative';
-                } else {
-                    comparisonEl.textContent = 'Equal';
-                    comparisonEl.className = 'summary-value';
-                }
+                const batchEl = document.getElementById('batch-profit');
+                batchEl.textContent = batchProfit.toFixed(2) + ' USDT';
+                batchEl.className = 'summary-value ' + 
+                    (batchProfit > 0 ? 'profit-positive' : 
+                     batchProfit < 0 ? 'profit-negative' : '');
             }
             
             // Render crypto list
@@ -169,9 +162,11 @@
                 
                 // Get strategy-specific profits
                 const originalProfit = cryptoData.strategies?.['hourly_limit_ws']?.profit || 0;
-                const momentumProfit = cryptoData.strategies?.['momentum_volume_exhaustion']?.profit || 0;
+                const stableProfit = cryptoData.strategies?.['stable_buy_ws']?.profit || 0;
+                const batchProfit = cryptoData.strategies?.['batch_buy_ws']?.profit || 0;
                 const originalTrades = cryptoData.strategies?.['hourly_limit_ws']?.trades?.length || 0;
-                const momentumTrades = cryptoData.strategies?.['momentum_volume_exhaustion']?.trades?.length || 0;
+                const stableTrades = cryptoData.strategies?.['stable_buy_ws']?.trades?.length || 0;
+                const batchTrades = cryptoData.strategies?.['batch_buy_ws']?.trades?.length || 0;
                 
                 html += `
                     <div class="crypto-section">
@@ -183,7 +178,8 @@
                                 </div>
                                 <div style="font-size: 12px; color: #718096;">
                                     Original: ${originalProfit.toFixed(2)} (${originalTrades}) | 
-                                    Momentum: ${momentumProfit.toFixed(2)} (${momentumTrades})
+                                    Stable: ${stableProfit.toFixed(2)} (${stableTrades}) | 
+                                    Batch: ${batchProfit.toFixed(2)} (${batchTrades})
                                 </div>
                             </div>
                         </div>
@@ -222,10 +218,18 @@
                     const buyPrice = formatPrice(trade.price);
                     const sellPrice = trade.sell_price > 0 ? formatPrice(trade.sell_price) : '-';
                     const statusClass = trade.state === 'sold out' ? 'status-sold' : 'status-active';
-                    const strategyName = trade.strategy === 'momentum_volume_exhaustion' ? 
-                                        'Momentum' : 'Original';
-                    const strategyClass = trade.strategy === 'momentum_volume_exhaustion' ? 
-                                        'momentum' : 'original';
+                    let strategyName = 'Original';
+                    let strategyBgColor = '#fef3c7';
+                    let strategyTextColor = '#92400e';
+                    if (trade.strategy === 'stable_buy_ws') {
+                        strategyName = 'Stable';
+                        strategyBgColor = '#dbeafe';
+                        strategyTextColor = '#1e40af';
+                    } else if (trade.strategy === 'batch_buy_ws') {
+                        strategyName = 'Batch';
+                        strategyBgColor = '#e9d5ff';
+                        strategyTextColor = '#6b21a8';
+                    }
                     
                     // Calculate profit percentage
                     let profitPct = '-';
@@ -244,7 +248,7 @@
                         <tr class="${rowClass}">
                             <td class="text">${buyTimeStr}</td>
                             <td class="text">${sellTimeStr}</td>
-                            <td class="text"><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${trade.strategy === 'momentum_volume_exhaustion' ? '#dbeafe' : '#fef3c7'}; color: ${trade.strategy === 'momentum_volume_exhaustion' ? '#1e40af' : '#92400e'};">${strategyName}</span></td>
+                            <td class="text"><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${strategyBgColor}; color: ${strategyTextColor};">${strategyName}</span></td>
                             <td class="num">${buyPrice}</td>
                             <td class="num">${sellPrice}</td>
                             <td class="num">${trade.size.toFixed(6)}</td>

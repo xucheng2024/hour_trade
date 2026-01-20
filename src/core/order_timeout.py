@@ -9,6 +9,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +25,20 @@ def check_and_cancel_unfilled_order_after_timeout(
     simulation_mode: bool,
     get_db_connection_func,
     active_orders: dict,
-    momentum_active_orders: dict,
+    stable_active_orders: dict,
+    batch_active_orders: dict,
+    batch_strategy: Optional[object],
+    batch_pending_buys: dict,
+    batch_strategy_name: str,
     lock,
 ):
     """Check order status after timeout, cancel if not filled"""
-    if simulation_mode or ordId.startswith("HLW-SIM-") or ordId.startswith("MVE-SIM-"):
+    if (
+        simulation_mode
+        or ordId.startswith("HLW-SIM-")
+        or ordId.startswith("STB-SIM-")
+        or ordId.startswith("BAT-SIM-")
+    ):
         return
 
     try:
@@ -36,17 +46,17 @@ def check_and_cancel_unfilled_order_after_timeout(
 
         with lock:
             order_exists = False
-            if strategy_name == "hourly_limit_ws":
-                if (
-                    instId in active_orders
-                    and active_orders[instId].get("ordId") == ordId
-                ):
-                    order_exists = True
-            elif strategy_name == "momentum_volume_exhaustion":
-                if instId in momentum_active_orders:
-                    # ✅ OPTIMIZED: Check orders dict instead of ordIds list
-                    if ordId in momentum_active_orders[instId].get("orders", {}):
-                        order_exists = True
+            if instId in active_orders and active_orders[instId].get("ordId") == ordId:
+                order_exists = True
+            elif (
+                instId in stable_active_orders
+                and stable_active_orders[instId].get("ordId") == ordId
+            ):
+                order_exists = True
+            elif instId in batch_active_orders and ordId in batch_active_orders[
+                instId
+            ].get("ordIds", []):
+                order_exists = True
 
             if not order_exists:
                 return
@@ -136,37 +146,53 @@ def check_and_cancel_unfilled_order_after_timeout(
                         )
 
                     with lock:
-                        if strategy_name == "hourly_limit_ws":
-                            if instId in active_orders:
-                                active_orders[instId]["filled_size"] = filled_size
-                                active_orders[instId]["fill_price"] = (
-                                    float(fill_px) if fill_px else 0.0
-                                )
-                                active_orders[instId][
-                                    "next_hour_close_time"
-                                ] = next_hour
-                                active_orders[instId]["fill_time"] = fill_time
-                                logger.warning(
-                                    f"{strategy_name} Updated active_order for partial fill: {instId}, "
-                                    f"filled_size={filled_size}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
-                                )
-                        elif strategy_name == "momentum_volume_exhaustion":
-                            if instId in momentum_active_orders:
-                                # ✅ OPTIMIZED: Use orders dict instead of parallel lists
-                                if ordId in momentum_active_orders[instId].get(
-                                    "orders", {}
-                                ):
-                                    momentum_active_orders[instId]["orders"][ordId][
-                                        "buy_size"
-                                    ] = filled_size
-                                    momentum_active_orders[instId]["orders"][ordId][
-                                        "next_hour_close_time"
-                                    ] = next_hour
-                                    logger.warning(
-                                        f"{strategy_name} Updated momentum_active_order for partial fill: {instId}, "
-                                        f"ordId={ordId}, filled_size={filled_size}, "
-                                        f"next_hour_close={next_hour.strftime('%H:%M:%S')}"
-                                    )
+                        if (
+                            instId in active_orders
+                            and active_orders[instId].get("ordId") == ordId
+                        ):
+                            active_orders[instId]["filled_size"] = filled_size
+                            active_orders[instId]["fill_price"] = (
+                                float(fill_px) if fill_px else 0.0
+                            )
+                            active_orders[instId]["next_hour_close_time"] = next_hour
+                            active_orders[instId]["fill_time"] = fill_time
+                            logger.warning(
+                                f"{strategy_name} Updated active_order for partial fill: {instId}, "
+                                f"filled_size={filled_size}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                            )
+                        elif (
+                            instId in stable_active_orders
+                            and stable_active_orders[instId].get("ordId") == ordId
+                        ):
+                            stable_active_orders[instId]["filled_size"] = filled_size
+                            stable_active_orders[instId]["fill_price"] = (
+                                float(fill_px) if fill_px else 0.0
+                            )
+                            stable_active_orders[instId][
+                                "next_hour_close_time"
+                            ] = next_hour
+                            stable_active_orders[instId]["fill_time"] = fill_time
+                            logger.warning(
+                                f"{strategy_name} Updated stable_active_order for partial fill: {instId}, "
+                                f"filled_size={filled_size}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                            )
+                        elif (
+                            instId in batch_active_orders
+                            and ordId in batch_active_orders[instId].get("ordIds", [])
+                        ):
+                            # For batch orders, update the specific batch
+                            batch_active_orders[instId]["filled_size"] = (
+                                batch_active_orders[instId].get("filled_size", 0.0)
+                                + filled_size
+                            )
+                            batch_active_orders[instId][
+                                "next_hour_close_time"
+                            ] = next_hour
+                            batch_active_orders[instId]["fill_time"] = fill_time
+                            logger.warning(
+                                f"{strategy_name} Updated batch_active_order for partial fill: {instId}, "
+                                f"filled_size={filled_size}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                            )
                     return
 
                 if not is_fully_filled:
@@ -188,22 +214,70 @@ def check_and_cancel_unfilled_order_after_timeout(
                         conn.close()
 
                     with lock:
-                        if strategy_name == "hourly_limit_ws":
-                            if instId in active_orders:
-                                del active_orders[instId]
-                        elif strategy_name == "momentum_volume_exhaustion":
-                            if instId in momentum_active_orders:
-                                # ✅ FIXED: Use orders dict instead of legacy lists
-                                if ordId in momentum_active_orders[instId].get(
-                                    "orders", {}
-                                ):
-                                    del momentum_active_orders[instId]["orders"][ordId]
-                                    logger.warning(
-                                        f"{strategy_name} Removed canceled momentum order: {instId}, ordId={ordId}"
+                        if (
+                            instId in active_orders
+                            and active_orders[instId].get("ordId") == ordId
+                        ):
+                            del active_orders[instId]
+                        elif (
+                            instId in stable_active_orders
+                            and stable_active_orders[instId].get("ordId") == ordId
+                        ):
+                            del stable_active_orders[instId]
+                        elif (
+                            instId in batch_active_orders
+                            and ordId in batch_active_orders[instId].get("ordIds", [])
+                        ):
+                            # Remove ordId from batch list
+                            batch_active_orders[instId]["ordIds"].remove(ordId)
+                            # Update total_size if available
+                            if "total_size" in batch_active_orders[instId]:
+                                # Try to get actual size from DB to subtract
+                                try:
+                                    conn = get_db_connection_func()
+                                    cur = conn.cursor()
+                                    cur.execute(
+                                        "SELECT size FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
+                                        (instId, ordId, batch_strategy_name),
                                     )
-                                # Check if no more orders left
-                                if not momentum_active_orders[instId].get("orders", {}):
-                                    del momentum_active_orders[instId]
+                                    row = cur.fetchone()
+                                    if row and row[0]:
+                                        canceled_size = float(row[0])
+                                        batch_active_orders[instId]["total_size"] = max(
+                                            0.0,
+                                            batch_active_orders[instId]["total_size"]
+                                            - canceled_size,
+                                        )
+                                    cur.close()
+                                    conn.close()
+                                except Exception as e:
+                                    logger.warning(
+                                        f"⚠️ Could not get canceled order size for {instId}, ordId={ordId}: {e}"
+                                    )
+
+                            if not batch_active_orders[instId].get("ordIds"):
+                                # All batches canceled or completed, reset state
+                                del batch_active_orders[instId]
+                                if batch_strategy:
+                                    batch_strategy.reset_crypto(instId)
+                                if instId in batch_pending_buys:
+                                    del batch_pending_buys[instId]
+                                    logger.warning(
+                                        f"🔄 Reset batch strategy state for {instId} after order cancellation"
+                                    )
+                            else:
+                                # Some batches still active, but this one was canceled
+                                # Reset batch strategy to allow retry for this batch
+                                if batch_strategy:
+                                    # Find which batch index this was and reset it
+                                    # We can't easily determine the batch index, so reset the whole crypto
+                                    # This allows a new batch signal to be registered
+                                    batch_strategy.reset_crypto(instId)
+                                if instId in batch_pending_buys:
+                                    del batch_pending_buys[instId]
+                                    logger.warning(
+                                        f"🔄 Reset batch strategy state for {instId} after partial batch cancellation"
+                                    )
                 else:
                     logger.warning(
                         f"{strategy_name} Order filled within 1 minute: {instId}, ordId={ordId}, "
@@ -262,33 +336,58 @@ def check_and_cancel_unfilled_order_after_timeout(
                         conn.commit()
 
                         with lock:
-                            if strategy_name == "hourly_limit_ws":
-                                if instId in active_orders:
-                                    active_orders[instId]["filled_size"] = filled_size
-                                    active_orders[instId]["fill_price"] = (
-                                        float(fill_px) if fill_px else 0.0
-                                    )
-                                    active_orders[instId][
-                                        "next_hour_close_time"
-                                    ] = next_hour
-                                    active_orders[instId]["fill_time"] = fill_time
-                                    logger.warning(
-                                        f"{strategy_name} Updated active_order for fill: {instId}, "
-                                        f"next_hour_close={next_hour.strftime('%H:%M:%S')}"
-                                    )
-                            elif strategy_name == "momentum_volume_exhaustion":
-                                if instId in momentum_active_orders:
-                                    # ✅ OPTIMIZED: Simple dict update instead of complex index management
-                                    if ordId in momentum_active_orders[instId].get(
-                                        "orders", {}
-                                    ):
-                                        momentum_active_orders[instId]["orders"][ordId][
-                                            "next_hour_close_time"
-                                        ] = next_hour
-                                        logger.warning(
-                                            f"{strategy_name} Updated momentum_active_order for fill: {instId}, "
-                                            f"ordId={ordId}, next_hour_close={next_hour.strftime('%H:%M:%S')}"
-                                        )
+                            if (
+                                instId in active_orders
+                                and active_orders[instId].get("ordId") == ordId
+                            ):
+                                active_orders[instId]["filled_size"] = filled_size
+                                active_orders[instId]["fill_price"] = (
+                                    float(fill_px) if fill_px else 0.0
+                                )
+                                active_orders[instId][
+                                    "next_hour_close_time"
+                                ] = next_hour
+                                active_orders[instId]["fill_time"] = fill_time
+                                logger.warning(
+                                    f"{strategy_name} Updated active_order for fill: {instId}, "
+                                    f"next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                )
+                            elif (
+                                instId in stable_active_orders
+                                and stable_active_orders[instId].get("ordId") == ordId
+                            ):
+                                stable_active_orders[instId][
+                                    "filled_size"
+                                ] = filled_size
+                                stable_active_orders[instId]["fill_price"] = (
+                                    float(fill_px) if fill_px else 0.0
+                                )
+                                stable_active_orders[instId][
+                                    "next_hour_close_time"
+                                ] = next_hour
+                                stable_active_orders[instId]["fill_time"] = fill_time
+                                logger.warning(
+                                    f"{strategy_name} Updated stable_active_order for fill: {instId}, "
+                                    f"next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                )
+                            elif (
+                                instId in batch_active_orders
+                                and ordId
+                                in batch_active_orders[instId].get("ordIds", [])
+                            ):
+                                # For batch orders, update the specific batch
+                                batch_active_orders[instId]["filled_size"] = (
+                                    batch_active_orders[instId].get("filled_size", 0.0)
+                                    + filled_size
+                                )
+                                batch_active_orders[instId][
+                                    "next_hour_close_time"
+                                ] = next_hour
+                                batch_active_orders[instId]["fill_time"] = fill_time
+                                logger.warning(
+                                    f"{strategy_name} Updated batch_active_order for fill: {instId}, "
+                                    f"next_hour_close={next_hour.strftime('%H:%M:%S')}"
+                                )
 
                         cur.close()
                     finally:

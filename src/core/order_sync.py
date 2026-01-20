@@ -27,42 +27,56 @@ class OrderSyncManager:
     def __init__(
         self,
         strategy_name: str,
-        momentum_strategy_name: str,
+        stable_strategy_name: str,
+        batch_strategy_name: str,
         get_db_connection: Callable,
         get_trade_api: Callable,
         active_orders: Dict,
-        momentum_active_orders: Dict,
-        momentum_strategy: Optional[object],
+        stable_active_orders: Dict,
+        batch_active_orders: Dict,
+        stable_strategy: Optional[object],
+        batch_strategy: Optional[object],
         lock: threading.Lock,
         process_sell_signal: Callable,
-        process_momentum_sell_signal: Callable,
+        process_stable_sell_signal: Callable,
+        process_batch_sell_signal: Callable,
+        simulation_mode: bool = False,
     ):
         """Initialize OrderSyncManager
 
         Args:
             strategy_name: Strategy name for original orders
-            momentum_strategy_name: Strategy name for momentum orders
+            stable_strategy_name: Strategy name for stable orders
+            batch_strategy_name: Strategy name for batch orders
             get_db_connection: Function to get database connection
             get_trade_api: Function to get TradeAPI instance
             active_orders: Dict of active orders (original strategy)
-            momentum_active_orders: Dict of active orders (momentum strategy)
-            momentum_strategy: Momentum strategy instance (optional)
+            stable_active_orders: Dict of active orders (stable strategy)
+            batch_active_orders: Dict of active orders (batch strategy)
+            stable_strategy: Stable strategy instance (optional)
+            batch_strategy: Batch strategy instance (optional)
             lock: Thread lock for thread-safe operations
             process_sell_signal: Function to process sell signal (original)
-            process_momentum_sell_signal: Function to process sell signal (momentum)
+            process_stable_sell_signal: Function to process sell signal (stable)
+            process_batch_sell_signal: Function to process sell signal (batch)
         """
         import os
 
         self.strategy_name = strategy_name
-        self.momentum_strategy_name = momentum_strategy_name
+        self.stable_strategy_name = stable_strategy_name
+        self.batch_strategy_name = batch_strategy_name
         self.get_db_connection = get_db_connection
         self.get_trade_api = get_trade_api
         self.active_orders = active_orders
-        self.momentum_active_orders = momentum_active_orders
-        self.momentum_strategy = momentum_strategy
+        self.stable_active_orders = stable_active_orders
+        self.batch_active_orders = batch_active_orders
+        self.stable_strategy = stable_strategy
+        self.batch_strategy = batch_strategy
         self.lock = lock
         self.process_sell_signal = process_sell_signal
-        self.process_momentum_sell_signal = process_momentum_sell_signal
+        self.process_stable_sell_signal = process_stable_sell_signal
+        self.process_batch_sell_signal = process_batch_sell_signal
+        self.simulation_mode = simulation_mode
         self.last_deep_recovery_time: Optional[datetime] = None
         self.deep_recovery_running: bool = False
         self.deep_recovery_interval_seconds = int(
@@ -132,66 +146,6 @@ class OrderSyncManager:
                                     del self.active_orders[instId]
                 except Exception as e:
                     logger.debug(f"Error checking original orders: {e}")
-
-            # Check momentum strategy orders
-            with self.lock:
-                momentum_orders_to_check = list(self.momentum_active_orders.items())
-
-            for instId, order_info in momentum_orders_to_check:
-                # ✅ OPTIMIZED: Use orders dict instead of ordIds list
-                orders_dict = order_info.get("orders", {})
-                ordIds = list(orders_dict.keys())
-                if not ordIds:
-                    continue
-
-                try:
-                    cur.execute(
-                        """
-                        SELECT ordId, state FROM orders
-                        WHERE instId = %s AND ordId = ANY(%s) AND flag = %s
-                        """,
-                        (instId, ordIds, self.momentum_strategy_name),
-                    )
-                    rows = cur.fetchall()
-
-                    # Build a map of ordId -> state
-                    db_states = {row[0]: row[1] if row[1] else "" for row in rows}
-
-                    # Find orders that are sold out
-                    ordIds_to_remove = [
-                        ordId for ordId in ordIds if db_states.get(ordId) == "sold out"
-                    ]
-
-                    # Remove sold orders from memory
-                    if ordIds_to_remove:
-                        with self.lock:
-                            if instId in self.momentum_active_orders:
-                                # ✅ OPTIMIZED: Simple dict deletion instead of complex index management
-                                for ordId in ordIds_to_remove:
-                                    if ordId in self.momentum_active_orders[instId].get(
-                                        "orders", {}
-                                    ):
-                                        del self.momentum_active_orders[instId][
-                                            "orders"
-                                        ][ordId]
-                                        logger.warning(
-                                            f"🔄 SYNC: {instId} (momentum) ordId={ordId} already sold in DB, "
-                                            f"removing from momentum_active_orders"
-                                        )
-
-                                # If no more orders, remove the entry
-                                if not self.momentum_active_orders[instId].get(
-                                    "orders", {}
-                                ):
-                                    del self.momentum_active_orders[instId]
-                                    if self.momentum_strategy is not None:
-                                        self.momentum_strategy.reset_position(instId)
-                                    logger.warning(
-                                        f"🔄 SYNC: {instId} (momentum) all orders sold, "
-                                        f"removed from momentum_active_orders"
-                                    )
-                except Exception as e:
-                    logger.debug(f"Error checking momentum orders {instId}: {e}")
 
             cur.close()
             conn.close()
@@ -304,7 +258,11 @@ class OrderSyncManager:
                 fill_time = None
                 next_hour = None
 
-                if api is not None and api_call_count < max_api_calls_per_cycle:
+                if (
+                    not self.simulation_mode
+                    and api is not None
+                    and api_call_count < max_api_calls_per_cycle
+                ):
                     try:
                         result = api.get_order(instId=instId, ordId=ordId)
                         api_call_count += 1
@@ -383,8 +341,7 @@ class OrderSyncManager:
                         target=self.process_sell_signal, args=(instId,), daemon=True
                     ).start()
 
-            # Recover momentum strategy orders
-            # Use same optimized cutoff (configurable hours, limit)
+            # Recover stable strategy orders
             cur.execute(
                 """
                 SELECT instId, ordId, create_time, state, size
@@ -396,12 +353,14 @@ class OrderSyncManager:
                 ORDER BY create_time DESC
                 LIMIT %s
                 """,
-                (self.momentum_strategy_name, cutoff_time, recovery_limit),
+                (self.stable_strategy_name, cutoff_time, recovery_limit),
             )
             rows = cur.fetchall()
 
-            # Group by instId for momentum (can have multiple orders)
-            momentum_orders_by_inst = {}
+            # Reset API call count for stable strategy recovery
+            # (reuse the same rate limiting from original strategy recovery)
+            stable_api_call_count = api_call_count
+
             for row in rows:
                 instId = row[0]
                 ordId = row[1]
@@ -409,169 +368,249 @@ class OrderSyncManager:
                 db_state = row[3]
                 db_size = row[4]
 
-                if instId not in momentum_orders_by_inst:
-                    momentum_orders_by_inst[instId] = []
+                with self.lock:
+                    if instId in self.stable_active_orders:
+                        continue
 
-                momentum_orders_by_inst[instId].append(
+                # Get fillTime from OKX API (same logic as original strategy)
+                fill_time = None
+                next_hour = None
+
+                if (
+                    not self.simulation_mode
+                    and api is not None
+                    and stable_api_call_count < max_api_calls_per_cycle
+                ):
+                    try:
+                        result = api.get_order(instId=instId, ordId=ordId)
+                        stable_api_call_count += 1
+                        if stable_api_call_count < max_api_calls_per_cycle:
+                            time.sleep(api_call_delay)
+
+                        if result and result.get("data") and len(result["data"]) > 0:
+                            order_data = result["data"][0]
+                            fill_time_ms = order_data.get("fillTime", "")
+                            if fill_time_ms and fill_time_ms != "":
+                                try:
+                                    fill_time = datetime.fromtimestamp(
+                                        int(fill_time_ms) / 1000
+                                    )
+                                    logger.info(
+                                        f"✅ RECOVER: Using OKX fillTime for stable {instId}, ordId={ordId}: "
+                                        f"{fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                    )
+                                except (ValueError, TypeError) as e:
+                                    logger.warning(
+                                        f"⚠️ RECOVER: Invalid fillTime from OKX for stable {instId}: {fill_time_ms}, "
+                                        f"falling back to create_time: {e}"
+                                    )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ RECOVER: Failed to get order from OKX for stable {instId}, "
+                            f"ordId={ordId}: {e}, falling back to create_time"
+                        )
+                elif stable_api_call_count >= max_api_calls_per_cycle:
+                    logger.debug(
+                        f"⏸️ RECOVER: API rate limit reached ({max_api_calls_per_cycle} calls), "
+                        f"using create_time for remaining stable orders"
+                    )
+
+                # Fallback to create_time if fillTime not available
+                if fill_time is None:
+                    fill_time = datetime.fromtimestamp(create_time_ms / 1000)
+                    logger.info(
+                        f"📝 RECOVER: Using create_time as fallback for stable {instId}, ordId={ordId} "
+                        f"(API unavailable or rate limited)"
+                    )
+
+                # Calculate next_hour_close_time from fill_time
+                # ✅ FIX: Always sell at next hour's 55 minutes
+                # Calculate next hour's 55 minutes
+                next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                # Always add 1 hour to ensure we sell at next hour's close
+                next_hour = next_hour + timedelta(hours=1)
+
+                # Only recover if past sell time
+                if now >= next_hour:
+                    logger.warning(
+                        f"🔄 RECOVER: Found stable order not in memory: {instId}, "
+                        f"ordId={ordId}, state={db_state}, fill_time={fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                        f"recovering to stable_active_orders"
+                    )
+
+                    with self.lock:
+                        self.stable_active_orders[instId] = {
+                            "ordId": ordId,
+                            "next_hour_close_time": next_hour,
+                            "sell_triggered": False,
+                            "fill_time": fill_time,
+                            "last_sell_attempt_time": None,
+                        }
+
+                    # Trigger sell immediately
+                    logger.warning(
+                        f"⏰ RECOVER SELL: {instId} (stable), "
+                        f"triggering sell for recovered order"
+                    )
+                    import threading
+
+                    threading.Thread(
+                        target=self.process_stable_sell_signal,
+                        args=(instId,),
+                        daemon=True,
+                    ).start()
+
+            # Recover batch strategy orders
+            cur.execute(
+                """
+                SELECT instId, ordId, create_time, state, size
+                FROM orders
+                WHERE flag = %s
+                  AND state IN ('filled', 'partially_filled')
+                  AND (sell_price IS NULL OR sell_price = '')
+                  AND create_time > %s
+                ORDER BY create_time DESC
+                LIMIT %s
+                """,
+                (self.batch_strategy_name, cutoff_time, recovery_limit),
+            )
+            rows = cur.fetchall()
+
+            # Group batch orders by instId
+            batch_orders_by_inst = {}
+            for row in rows:
+                instId = row[0]
+                ordId = row[1]
+                create_time_ms = row[2]
+                db_state = row[3]
+                db_size = row[4]
+
+                if instId not in batch_orders_by_inst:
+                    batch_orders_by_inst[instId] = []
+                batch_orders_by_inst[instId].append(
                     {
                         "ordId": ordId,
-                        "create_time": datetime.fromtimestamp(create_time_ms / 1000),
                         "create_time_ms": create_time_ms,
-                        "state": db_state,
-                        "size": db_size,
+                        "db_state": db_state,
+                        "db_size": db_size,
                     }
                 )
 
-            # Process momentum orders
-            for instId, orders in momentum_orders_by_inst.items():
+            # Reset API call count for batch strategy recovery
+            batch_api_call_count = stable_api_call_count
+
+            for instId, orders in batch_orders_by_inst.items():
                 with self.lock:
-                    existing_ordIds = set()
-                    if instId in self.momentum_active_orders:
-                        # ✅ OPTIMIZED: Use orders dict instead of ordIds list
-                        existing_ordIds = set(
-                            self.momentum_active_orders[instId].get("orders", {}).keys()
+                    if instId in self.batch_active_orders:
+                        continue
+
+                # Get fillTime from all orders and use the latest one
+                # This ensures next_hour_close_time is correct even if later batches fill much later
+                # ✅ OPTIMIZED: Only call API for first order per instId to avoid rate limits
+                # Batch orders are usually filled close together, so one API call is sufficient
+                latest_fill_time = None
+                latest_create_time_ms = None
+                ordIds = []
+                total_size = 0.0
+
+                # Collect all order info first
+                for order_info in orders:
+                    ordId = order_info["ordId"]
+                    create_time_ms = order_info["create_time_ms"]
+                    db_size = order_info["db_size"]
+                    ordIds.append(ordId)
+                    total_size += float(db_size) if db_size else 0.0
+
+                    # Track latest create_time as fallback
+                    if (
+                        latest_create_time_ms is None
+                        or create_time_ms > latest_create_time_ms
+                    ):
+                        latest_create_time_ms = create_time_ms
+
+                # Try to get fillTime from OKX API for first order only (batches fill close together)
+                if (
+                    not self.simulation_mode
+                    and api is not None
+                    and batch_api_call_count < max_api_calls_per_cycle
+                    and orders
+                ):
+                    first_order = orders[0]
+                    first_ordId = first_order["ordId"]
+                    try:
+                        result = api.get_order(instId=instId, ordId=first_ordId)
+                        batch_api_call_count += 1
+                        if batch_api_call_count < max_api_calls_per_cycle:
+                            time.sleep(api_call_delay)
+
+                        if result and result.get("data") and len(result["data"]) > 0:
+                            order_data = result["data"][0]
+                            fill_time_ms = order_data.get("fillTime", "")
+                            if fill_time_ms and fill_time_ms != "":
+                                try:
+                                    latest_fill_time = datetime.fromtimestamp(
+                                        int(fill_time_ms) / 1000
+                                    )
+                                    logger.info(
+                                        f"✅ RECOVER: Using OKX fillTime for batch {instId} (from first order {first_ordId}): "
+                                        f"{latest_fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                    )
+                                except (ValueError, TypeError) as e:
+                                    logger.warning(
+                                        f"⚠️ RECOVER: Invalid fillTime from OKX for batch {instId}, ordId={first_ordId}: {fill_time_ms}, "
+                                        f"falling back to create_time: {e}"
+                                    )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ RECOVER: Failed to get order from OKX for batch {instId}, "
+                            f"ordId={first_ordId}: {e}, falling back to create_time"
                         )
 
-                # Filter to only process missing ordIds
-                missing_orders = [
-                    o for o in orders if o["ordId"] not in existing_ordIds
-                ]
-                if not missing_orders:
-                    continue
-
-                # Get fillTime from OKX API for each order
-                orders_with_fill_time = []
-                api_call_count = 0
-                max_api_calls_per_cycle = int(os.getenv("RECOVERY_MAX_API_CALLS", "20"))
-                api_call_delay = float(os.getenv("RECOVERY_API_CALL_DELAY", "0.1"))
-
-                for order in missing_orders:
-                    ordId = order["ordId"]
-                    fill_time = None
-
-                    if api is not None and api_call_count < max_api_calls_per_cycle:
-                        try:
-                            result = api.get_order(instId=instId, ordId=ordId)
-                            api_call_count += 1
-                            if api_call_count < max_api_calls_per_cycle:
-                                time.sleep(api_call_delay)
-
-                            if (
-                                result
-                                and result.get("data")
-                                and len(result["data"]) > 0
-                            ):
-                                order_data = result["data"][0]
-                                fill_time_ms = order_data.get("fillTime", "")
-                                if fill_time_ms and fill_time_ms != "":
-                                    try:
-                                        fill_time = datetime.fromtimestamp(
-                                            int(fill_time_ms) / 1000
-                                        )
-                                        logger.debug(
-                                            f"✅ RECOVER: Using OKX fillTime for momentum {instId}, "
-                                            f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                                        )
-                                    except (ValueError, TypeError):
-                                        pass
-                        except Exception as e:
-                            logger.debug(
-                                f"⚠️ RECOVER: Failed to get order from OKX for momentum {instId}, "
-                                f"ordId={ordId}: {e}, falling back to create_time"
-                            )
-                    elif api_call_count >= max_api_calls_per_cycle:
-                        logger.debug(
-                            f"⏸️ RECOVER: API rate limit reached for momentum {instId}, "
-                            f"using create_time for remaining orders"
-                        )
-
-                    if fill_time is None:
-                        fill_time = order["create_time"]
-                        logger.info(
-                            f"📝 RECOVER: Using create_time as fallback for momentum {instId}, "
-                            f"ordId={ordId}: {fill_time.strftime('%Y-%m-%d %H:%M:%S')} "
-                            f"(API unavailable or rate limited)"
-                        )
-
-                    # ✅ FIX: Always sell at next hour's 55 minutes
-                    # Calculate next hour's 55 minutes
-                    next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                    # Always add 1 hour to ensure we sell at next hour's close
-                    next_hour = next_hour + timedelta(hours=1)
-
-                    orders_with_fill_time.append(
-                        {
-                            "ordId": ordId,
-                            "fill_time": fill_time,
-                            "next_hour_close_time": next_hour,
-                            "size": order["size"],
-                        }
+                # Fallback to latest create_time if fillTime not available
+                if latest_fill_time is None:
+                    latest_fill_time = datetime.fromtimestamp(
+                        latest_create_time_ms / 1000
+                    )
+                    logger.info(
+                        f"📝 RECOVER: Using create_time as fallback for batch {instId} "
+                        f"(API unavailable or rate limited)"
                     )
 
-                # Group orders by next_hour_close_time
-                orders_by_hour = {}
-                for order_info in orders_with_fill_time:
-                    next_hour_key = order_info["next_hour_close_time"]
-                    if next_hour_key not in orders_by_hour:
-                        orders_by_hour[next_hour_key] = []
-                    orders_by_hour[next_hour_key].append(order_info)
+                # Calculate next_hour_close_time from latest fill_time
+                next_hour = latest_fill_time.replace(minute=55, second=0, microsecond=0)
+                next_hour = next_hour + timedelta(hours=1)
 
-                # Recover each group separately (only if past sell time)
-                for next_hour, hour_orders in orders_by_hour.items():
-                    if now >= next_hour:
-                        logger.warning(
-                            f"🔄 RECOVER: Found momentum orders not in memory: {instId}, "
-                            f"count={len(hour_orders)}, next_hour={next_hour.strftime('%Y-%m-%d %H:%M:%S')}, "
-                            f"recovering to momentum_active_orders"
-                        )
+                # Only recover if past sell time
+                if now >= next_hour:
+                    logger.warning(
+                        f"🔄 RECOVER: Found batch orders not in memory: {instId}, "
+                        f"ordIds={ordIds}, fill_time={latest_fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                        f"recovering to batch_active_orders"
+                    )
 
-                        with self.lock:
-                            if instId in self.momentum_active_orders:
-                                existing = self.momentum_active_orders[instId]
-                                # ✅ OPTIMIZED: Use orders dict instead of parallel lists
-                                if "orders" not in existing:
-                                    existing["orders"] = {}
-                                for o in hour_orders:
-                                    existing["orders"][o["ordId"]] = {
-                                        "buy_price": 0.0,  # Not available from recovery
-                                        "buy_size": float(o["size"]),
-                                        "buy_time": o["fill_time"],
-                                        "next_hour_close_time": o[
-                                            "next_hour_close_time"
-                                        ],
-                                    }
-                            else:
-                                # ✅ OPTIMIZED: Use orders dict structure
-                                self.momentum_active_orders[instId] = {
-                                    "orders": {
-                                        o["ordId"]: {
-                                            "buy_price": 0.0,  # Not available from recovery
-                                            "buy_size": float(o["size"]),
-                                            "buy_time": o["fill_time"],
-                                            "next_hour_close_time": o[
-                                                "next_hour_close_time"
-                                            ],
-                                        }
-                                        for o in hour_orders
-                                    },
-                                    "sell_triggered": False,
-                                    "last_sell_attempt_time": None,
-                                }
+                    # Restore to batch_active_orders
+                    with self.lock:
+                        self.batch_active_orders[instId] = {
+                            "ordIds": ordIds,
+                            "next_hour_close_time": next_hour,
+                            "sell_triggered": False,
+                            "fill_time": latest_fill_time,
+                            "last_sell_attempt_time": None,
+                            "total_size": total_size,
+                        }
 
-                        # Trigger sell immediately
-                        logger.warning(
-                            f"⏰ RECOVER SELL: {instId} (momentum), "
-                            f"triggering sell for recovered orders"
-                        )
-                        # Note: Thread pool should be passed from main, but for now use threading
-                        # This is in recovery code which runs infrequently, so threading.Thread is acceptable
-                        import threading as threading_module
+                    # Trigger sell immediately
+                    logger.warning(
+                        f"⏰ RECOVER SELL: {instId} (batch), "
+                        f"triggering sell for recovered orders"
+                    )
+                    import threading
 
-                        threading_module.Thread(
-                            target=self.process_momentum_sell_signal,
-                            args=(instId,),
-                            daemon=True,
-                        ).start()
+                    threading.Thread(
+                        target=self.process_batch_sell_signal,
+                        args=(instId,),
+                        daemon=True,
+                    ).start()
 
             cur.close()
             conn.close()
@@ -649,7 +688,11 @@ class OrderSyncManager:
                 fill_time = None
                 next_hour = None
 
-                if api is not None and api_call_count < max_api_calls_per_cycle:
+                if (
+                    not self.simulation_mode
+                    and api is not None
+                    and api_call_count < max_api_calls_per_cycle
+                ):
                     try:
                         result = api.get_order(instId=instId, ordId=ordId)
                         api_call_count += 1
@@ -686,14 +729,14 @@ class OrderSyncManager:
                 # Only recover if past sell time
                 if now >= next_hour:
                     logger.warning(
-                        f"🔄 DEEP RECOVER: Found stuck order: {instId}, "
+                        f"🔄 DEEP RECOVER: Found stuck stable order: {instId}, "
                         f"ordId={ordId}, state={db_state}, fill_time={fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
-                        f"recovering to active_orders"
+                        f"recovering to stable_active_orders"
                     )
 
-                    # Restore to active_orders
+                    # Restore to stable_active_orders
                     with self.lock:
-                        self.active_orders[instId] = {
+                        self.stable_active_orders[instId] = {
                             "ordId": ordId,
                             "next_hour_close_time": next_hour,
                             "sell_triggered": False,
@@ -703,17 +746,19 @@ class OrderSyncManager:
 
                     # Trigger sell immediately
                     logger.warning(
-                        f"⏰ DEEP RECOVER SELL: {instId} (original), "
+                        f"⏰ DEEP RECOVER SELL: {instId} (stable), "
                         f"triggering sell for recovered order"
                     )
                     import threading
 
                     threading.Thread(
-                        target=self.process_sell_signal, args=(instId,), daemon=True
+                        target=self.process_stable_sell_signal,
+                        args=(instId,),
+                        daemon=True,
                     ).start()
                     recovered_count += 1
 
-            # Recover momentum strategy orders
+            # Recover stable strategy orders
             cur.execute(
                 """
                 SELECT instId, ordId, create_time, state, size
@@ -725,18 +770,17 @@ class OrderSyncManager:
                 ORDER BY create_time DESC
                 LIMIT %s
                 """,
-                (self.momentum_strategy_name, cutoff_time, deep_recovery_limit),
+                (self.stable_strategy_name, cutoff_time, deep_recovery_limit),
             )
             rows = cur.fetchall()
 
             if len(rows) >= deep_recovery_limit:
                 logger.warning(
-                    f"⚠️ DEEP RECOVER: Hit {deep_recovery_limit} limit for momentum strategy, "
+                    f"⚠️ DEEP RECOVER: Hit {deep_recovery_limit} limit for stable strategy, "
                     f"there may be more stuck orders"
                 )
 
-            # Group by instId for momentum (can have multiple orders)
-            momentum_orders_by_inst = {}
+            api_call_count = 0
             for row in rows:
                 instId = row[0]
                 ordId = row[1]
@@ -744,154 +788,222 @@ class OrderSyncManager:
                 db_state = row[3]
                 db_size = row[4]
 
-                if instId not in momentum_orders_by_inst:
-                    momentum_orders_by_inst[instId] = []
+                with self.lock:
+                    if instId in self.stable_active_orders:
+                        continue
 
-                momentum_orders_by_inst[instId].append(
+                # Get fillTime from OKX API (same logic as original strategy)
+                fill_time = None
+                next_hour = None
+
+                if (
+                    not self.simulation_mode
+                    and api is not None
+                    and api_call_count < max_api_calls_per_cycle
+                ):
+                    try:
+                        result = api.get_order(instId=instId, ordId=ordId)
+                        api_call_count += 1
+                        if api_call_count < max_api_calls_per_cycle:
+                            time.sleep(api_call_delay)
+
+                        if result and result.get("data") and len(result["data"]) > 0:
+                            order_data = result["data"][0]
+                            fill_time_ms = order_data.get("fillTime", "")
+                            if fill_time_ms and fill_time_ms != "":
+                                try:
+                                    fill_time = datetime.fromtimestamp(
+                                        int(fill_time_ms) / 1000
+                                    )
+                                    logger.info(
+                                        f"✅ DEEP RECOVER: Using OKX fillTime for stable {instId}, ordId={ordId}: "
+                                        f"{fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                    )
+                                except (ValueError, TypeError) as e:
+                                    logger.warning(
+                                        f"⚠️ DEEP RECOVER: Invalid fillTime from OKX for stable {instId}: {fill_time_ms}, "
+                                        f"falling back to create_time: {e}"
+                                    )
+                    except Exception as e:
+                        logger.debug(
+                            f"⚠️ DEEP RECOVER: Failed to get order from OKX for stable {instId}, "
+                            f"ordId={ordId}: {e}, falling back to create_time"
+                        )
+
+                # Fallback to create_time if fillTime not available
+                if fill_time is None:
+                    fill_time = datetime.fromtimestamp(create_time_ms / 1000)
+
+                # Calculate next_hour_close_time from fill_time
+                # ✅ FIX: Always sell at next hour's 55 minutes
+                # Calculate next hour's 55 minutes
+                next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                # Always add 1 hour to ensure we sell at next hour's close
+                next_hour = next_hour + timedelta(hours=1)
+
+                # Only recover if past sell time
+                if now >= next_hour:
+                    logger.warning(
+                        f"🔄 DEEP RECOVER: Found stuck stable order: {instId}, "
+                        f"ordId={ordId}, state={db_state}, fill_time={fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                        f"recovering to stable_active_orders"
+                    )
+
+                    with self.lock:
+                        self.stable_active_orders[instId] = {
+                            "ordId": ordId,
+                            "next_hour_close_time": next_hour,
+                            "sell_triggered": False,
+                            "fill_time": fill_time,
+                            "last_sell_attempt_time": None,
+                        }
+
+                    import threading
+
+                    threading.Thread(
+                        target=self.process_stable_sell_signal,
+                        args=(instId,),
+                        daemon=True,
+                    ).start()
+                    recovered_count += 1
+
+            # Recover batch strategy orders
+            cur.execute(
+                """
+                SELECT instId, ordId, create_time, state, size
+                FROM orders
+                WHERE flag = %s
+                  AND state IN ('filled', 'partially_filled')
+                  AND (sell_price IS NULL OR sell_price = '')
+                  AND create_time > %s
+                ORDER BY create_time DESC
+                LIMIT %s
+                """,
+                (self.batch_strategy_name, cutoff_time, deep_recovery_limit),
+            )
+            rows = cur.fetchall()
+
+            if len(rows) >= deep_recovery_limit:
+                logger.warning(
+                    f"⚠️ DEEP RECOVER: Hit {deep_recovery_limit} limit for batch strategy, "
+                    f"there may be more stuck orders"
+                )
+
+            # Group batch orders by instId
+            batch_orders_by_inst = {}
+            for row in rows:
+                instId = row[0]
+                ordId = row[1]
+                create_time_ms = row[2]
+                db_state = row[3]
+                db_size = row[4]
+
+                if instId not in batch_orders_by_inst:
+                    batch_orders_by_inst[instId] = []
+                batch_orders_by_inst[instId].append(
                     {
                         "ordId": ordId,
-                        "create_time": datetime.fromtimestamp(create_time_ms / 1000),
                         "create_time_ms": create_time_ms,
-                        "state": db_state,
-                        "size": db_size,
+                        "db_state": db_state,
+                        "db_size": db_size,
                     }
                 )
 
-            # Process momentum orders
             api_call_count = 0
-            for instId, orders in momentum_orders_by_inst.items():
+            for instId, orders in batch_orders_by_inst.items():
                 with self.lock:
-                    existing_ordIds = set()
-                    if instId in self.momentum_active_orders:
-                        # ✅ FIXED: Use orders dict instead of ordIds list
-                        existing_ordIds = set(
-                            self.momentum_active_orders[instId].get("orders", {}).keys()
+                    if instId in self.batch_active_orders:
+                        continue
+
+                # Get fillTime from all orders and use the latest one
+                # ✅ OPTIMIZED: Only call API for first order per instId to avoid rate limits
+                # Batch orders are usually filled close together, so one API call is sufficient
+                latest_fill_time = None
+                latest_create_time_ms = None
+                ordIds = []
+                total_size = 0.0
+
+                # Collect all order info first
+                for order_info in orders:
+                    ordId = order_info["ordId"]
+                    create_time_ms = order_info["create_time_ms"]
+                    db_size = order_info["db_size"]
+                    ordIds.append(ordId)
+                    total_size += float(db_size) if db_size else 0.0
+
+                    # Track latest create_time as fallback
+                    if (
+                        latest_create_time_ms is None
+                        or create_time_ms > latest_create_time_ms
+                    ):
+                        latest_create_time_ms = create_time_ms
+
+                # Try to get fillTime from OKX API for first order only (batches fill close together)
+                if (
+                    api is not None
+                    and api_call_count < max_api_calls_per_cycle
+                    and orders
+                ):
+                    first_order = orders[0]
+                    first_ordId = first_order["ordId"]
+                    try:
+                        result = api.get_order(instId=instId, ordId=first_ordId)
+                        api_call_count += 1
+                        if api_call_count < max_api_calls_per_cycle:
+                            time.sleep(api_call_delay)
+
+                        if result and result.get("data") and len(result["data"]) > 0:
+                            order_data = result["data"][0]
+                            fill_time_ms = order_data.get("fillTime", "")
+                            if fill_time_ms and fill_time_ms != "":
+                                try:
+                                    latest_fill_time = datetime.fromtimestamp(
+                                        int(fill_time_ms) / 1000
+                                    )
+                                except (ValueError, TypeError):
+                                    pass
+                    except Exception as e:
+                        logger.debug(
+                            f"⚠️ DEEP RECOVER: Failed to get order from OKX for batch {instId}, "
+                            f"ordId={first_ordId}: {e}, falling back to create_time"
                         )
 
-                # Filter to only process missing ordIds
-                missing_orders = [
-                    o for o in orders if o["ordId"] not in existing_ordIds
-                ]
-                if not missing_orders:
-                    continue
-
-                # Get fillTime from OKX API for each order
-                orders_with_fill_time = []
-
-                for order in missing_orders:
-                    ordId = order["ordId"]
-                    fill_time = None
-
-                    if api is not None and api_call_count < max_api_calls_per_cycle:
-                        try:
-                            result = api.get_order(instId=instId, ordId=ordId)
-                            api_call_count += 1
-                            if api_call_count < max_api_calls_per_cycle:
-                                time.sleep(api_call_delay)
-
-                            if (
-                                result
-                                and result.get("data")
-                                and len(result["data"]) > 0
-                            ):
-                                order_data = result["data"][0]
-                                fill_time_ms = order_data.get("fillTime", "")
-                                if fill_time_ms and fill_time_ms != "":
-                                    try:
-                                        fill_time = datetime.fromtimestamp(
-                                            int(fill_time_ms) / 1000
-                                        )
-                                    except (ValueError, TypeError):
-                                        pass
-                        except Exception as e:
-                            logger.debug(
-                                f"⚠️ DEEP RECOVER: Failed to get order from OKX for momentum {instId}, "
-                                f"ordId={ordId}: {e}, falling back to create_time"
-                            )
-
-                    if fill_time is None:
-                        fill_time = order["create_time"]
-
-                    # ✅ FIX: Always sell at next hour's 55 minutes
-                    # Calculate next hour's 55 minutes
-                    next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
-                    # Always add 1 hour to ensure we sell at next hour's close
-                    next_hour = next_hour + timedelta(hours=1)
-
-                    orders_with_fill_time.append(
-                        {
-                            "ordId": ordId,
-                            "fill_time": fill_time,
-                            "next_hour_close_time": next_hour,
-                            "size": order["size"],
-                        }
+                # Fallback to latest create_time if fillTime not available
+                if latest_fill_time is None:
+                    latest_fill_time = datetime.fromtimestamp(
+                        latest_create_time_ms / 1000
                     )
 
-                # Group orders by next_hour_close_time
-                orders_by_hour = {}
-                for order_info in orders_with_fill_time:
-                    next_hour_key = order_info["next_hour_close_time"]
-                    if next_hour_key not in orders_by_hour:
-                        orders_by_hour[next_hour_key] = []
-                    orders_by_hour[next_hour_key].append(order_info)
+                # Calculate next_hour_close_time from latest fill_time
+                next_hour = latest_fill_time.replace(minute=55, second=0, microsecond=0)
+                next_hour = next_hour + timedelta(hours=1)
 
-                # Recover each group separately (only if past sell time)
-                for next_hour, hour_orders in orders_by_hour.items():
-                    if now >= next_hour:
-                        logger.warning(
-                            f"🔄 DEEP RECOVER: Found stuck momentum orders: {instId}, "
-                            f"count={len(hour_orders)}, next_hour={next_hour.strftime('%Y-%m-%d %H:%M:%S')}, "
-                            f"recovering to momentum_active_orders"
-                        )
+                # Only recover if past sell time
+                if now >= next_hour:
+                    logger.warning(
+                        f"🔄 DEEP RECOVER: Found stuck batch orders: {instId}, "
+                        f"ordIds={ordIds}, fill_time={latest_fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                        f"recovering to batch_active_orders"
+                    )
 
-                        with self.lock:
-                            if instId in self.momentum_active_orders:
-                                existing = self.momentum_active_orders[instId]
-                                # ✅ OPTIMIZED: Use orders dict instead of parallel lists
-                                if "orders" not in existing:
-                                    existing["orders"] = {}
-                                for o in hour_orders:
-                                    existing["orders"][o["ordId"]] = {
-                                        "buy_price": 0.0,  # Not available from recovery
-                                        "buy_size": float(o["size"]),
-                                        "buy_time": o["fill_time"],
-                                        "next_hour_close_time": o[
-                                            "next_hour_close_time"
-                                        ],
-                                    }
-                            else:
-                                # ✅ OPTIMIZED: Use orders dict structure
-                                self.momentum_active_orders[instId] = {
-                                    "orders": {
-                                        o["ordId"]: {
-                                            "buy_price": 0.0,  # Not available from recovery
-                                            "buy_size": float(o["size"]),
-                                            "buy_time": o["fill_time"],
-                                            "next_hour_close_time": o[
-                                                "next_hour_close_time"
-                                            ],
-                                        }
-                                        for o in hour_orders
-                                    },
-                                    "sell_triggered": False,
-                                    "last_sell_attempt_time": None,
-                                }
+                    with self.lock:
+                        self.batch_active_orders[instId] = {
+                            "ordIds": ordIds,
+                            "next_hour_close_time": next_hour,
+                            "sell_triggered": False,
+                            "fill_time": latest_fill_time,
+                            "last_sell_attempt_time": None,
+                            "total_size": total_size,
+                        }
 
-                        # Trigger sell immediately
-                        logger.warning(
-                            f"⏰ DEEP RECOVER SELL: {instId} (momentum), "
-                            f"triggering sell for recovered orders"
-                        )
-                        # Note: Thread pool should be passed from main, but for now use threading
-                        # This is in recovery code which runs infrequently, so threading.Thread is acceptable
-                        import threading as threading_module
+                    import threading
 
-                        threading_module.Thread(
-                            target=self.process_momentum_sell_signal,
-                            args=(instId,),
-                            daemon=True,
-                        ).start()
-                        recovered_count += len(hour_orders)
+                    threading.Thread(
+                        target=self.process_batch_sell_signal,
+                        args=(instId,),
+                        daemon=True,
+                    ).start()
+                    recovered_count += 1
 
             cur.close()
             conn.close()
