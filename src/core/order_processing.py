@@ -9,11 +9,141 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Tuple
 
 from okx.Trade import TradeAPI
 
 logger = logging.getLogger(__name__)
+
+
+def _get_sell_price_with_fallback(
+    instId: str,
+    order_id: str,
+    tradeAPI: TradeAPI,
+    get_market_api_func,
+    current_prices: dict,
+    lock,
+    requested_size: Optional[float] = None,
+) -> Tuple[float, str, list, bool]:
+    """Get sell price with fallback chain: avgPx/fillPx -> current_prices -> ticker
+
+    Args:
+        requested_size: The original order size to verify full fill (optional)
+
+    Returns:
+        Tuple of (sell_price, price_source, failure_chain, is_confirmed_filled)
+        - sell_price: The retrieved price (0.0 if all failed)
+        - price_source: Source of the price (avgPx/fillPx/current_prices/ticker/unknown)
+        - failure_chain: List of failure reasons for debugging
+        - is_confirmed_filled: True if order is FULLY filled, False otherwise
+    """
+    sell_price = 0.0
+    price_source = "unknown"
+    failure_chain = []
+    is_confirmed_filled = False
+
+    try:
+        # Step 1: Try get_order API (prefer avgPx, then fillPx)
+        # ✅ CRITICAL: Only use price if order is FULLY filled
+        order_result = tradeAPI.get_order(instId=instId, ordId=order_id)
+        if order_result.get("code") == "0" and order_result.get("data"):
+            order_info = order_result["data"][0]
+            avg_px = order_info.get("avgPx", "")
+            fill_px = order_info.get("fillPx", "")
+            acc_fill_sz = order_info.get("accFillSz", "0")
+            acc_fill_sz_float = float(acc_fill_sz) if acc_fill_sz else 0.0
+            order_state = order_info.get("state", "")
+            sz = order_info.get("sz", "0")
+            sz_float = float(sz) if sz else 0.0
+
+            # ✅ Check if order is FULLY filled (not just partially)
+            if acc_fill_sz_float > 0:
+                # Verify full fill: either state is 'filled' or accFillSz equals requested size
+                is_fully_filled = False
+                if order_state == "filled":
+                    is_fully_filled = True
+                elif (
+                    requested_size
+                    and abs(acc_fill_sz_float - requested_size) < 0.000001
+                ):
+                    # accFillSz matches requested size (with float tolerance)
+                    is_fully_filled = True
+                elif sz_float > 0 and abs(acc_fill_sz_float - sz_float) < 0.000001:
+                    # accFillSz matches order size (with float tolerance)
+                    is_fully_filled = True
+                elif order_state == "partially_filled":
+                    # Explicitly partially filled, not fully filled
+                    is_fully_filled = False
+                    failure_chain.append(
+                        f"get_order: partially filled (accFillSz={acc_fill_sz_float}, "
+                        f"requested={requested_size}, state={order_state})"
+                    )
+                else:
+                    # Unknown state, be conservative and assume not fully filled
+                    is_fully_filled = False
+                    failure_chain.append(
+                        f"get_order: uncertain fill status (accFillSz={acc_fill_sz_float}, "
+                        f"state={order_state}, requested={requested_size})"
+                    )
+
+                if is_fully_filled:
+                    # ✅ Order is FULLY filled, use actual fill price
+                    is_confirmed_filled = True
+                    if avg_px and avg_px != "":
+                        sell_price = float(avg_px)
+                        price_source = "avgPx"
+                    elif fill_px and fill_px != "":
+                        sell_price = float(fill_px)
+                        price_source = "fillPx"
+                    else:
+                        failure_chain.append(
+                            "get_order: fully filled but no avgPx/fillPx"
+                        )
+            else:
+                # ✅ Order not filled yet, do NOT use fallback prices
+                failure_chain.append("get_order: accFillSz=0 (order not filled)")
+        else:
+            failure_chain.append("get_order: API failed or no data")
+    except Exception as e:
+        failure_chain.append(f"get_order: exception={str(e)}")
+
+    # ✅ CRITICAL: Only use fallback prices if order is FULLY filled
+    # If get_order failed or not fully filled, do NOT use current_prices/ticker
+    # This prevents marking order as "sold out" when it's not actually fully filled
+    if not is_confirmed_filled:
+        return 0.0, "unknown", failure_chain, False
+
+    # Step 2: Fallback to current_prices (only if order is confirmed filled)
+    if sell_price <= 0:
+        with lock:
+            sell_price = current_prices.get(instId, 0.0)
+        if sell_price > 0:
+            price_source = "current_prices"
+        else:
+            failure_chain.append("current_prices: not found or 0")
+
+    # Step 3: Final fallback to get_ticker API (only if order is confirmed filled)
+    if sell_price <= 0:
+        try:
+            market_api = get_market_api_func()
+            ticker_result = market_api.get_ticker(instId=instId)
+            if ticker_result.get("code") == "0" and ticker_result.get("data"):
+                ticker_data = ticker_result["data"]
+                if ticker_data and len(ticker_data) > 0:
+                    last_price = ticker_data[0].get("last", 0)
+                    if last_price and float(last_price) > 0:
+                        sell_price = float(last_price)
+                        price_source = "ticker"
+                    else:
+                        failure_chain.append("ticker: last=0 or invalid")
+                else:
+                    failure_chain.append("ticker: no data")
+            else:
+                failure_chain.append("ticker: API failed")
+        except Exception as e2:
+            failure_chain.append(f"ticker: exception={str(e2)}")
+
+    return sell_price, price_source, failure_chain, is_confirmed_filled
 
 
 def buy_limit_order(
@@ -210,7 +340,7 @@ def buy_limit_order(
         cur.close()
 
 
-def sell_market_order(
+def _execute_market_sell(
     instId: str,
     ordId: str,
     size: float,
@@ -223,9 +353,12 @@ def sell_market_order(
     get_market_api_func,
     current_prices: dict,
     lock,
+    log_prefix: str = "SELL",
 ) -> bool:
-    """Place market sell order and record in database"""
-    size = format_number_func(size, instId)
+    """Common logic for executing market sell orders (used by all strategies)"""
+    # ✅ FIX Issue 1: Keep size_float for arithmetic, only format string for order payload
+    size_float = float(size)
+    size_str = format_number_func(size_float, instId)
 
     if simulation_mode:
         with lock:
@@ -242,109 +375,307 @@ def sell_market_order(
             except Exception as e:
                 logger.warning(f"⚠️ Could not get current price for {instId}: {e}")
 
-        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
+        sell_amount_usdt = float(sell_price) * size_float if sell_price > 0 else 0
         logger.warning(
-            f"💰 [SIM] SELL: {instId}, price={sell_price:.6f}, "
-            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
+            f"💰 [SIM] {log_prefix}: {instId}, price={sell_price:.6f}, "
+            f"size={size_str}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
         )
     else:
         max_attempts = 3
         failed_flag = 0
         sell_price = 0.0
+        order_id = None  # ✅ Store order_id to avoid duplicate orders on retry
+
+        # ✅ FIX: Check DB for existing sell_order_id linked to this specific buy ordId
+        # This ensures we only reuse sell orders that belong to this exact buy order
+        cur_check = conn.cursor()
+        try:
+            # ✅ FIX: Verify sell_order_id column exists (runtime check, fails fast if missing)
+            # Schema migration should be done via init_database.py, not in hot path
+            try:
+                cur_check.execute(
+                    """
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_schema = 'public' 
+                      AND table_name = 'orders' 
+                      AND column_name = 'sell_order_id'
+                    """
+                )
+                column_exists = cur_check.fetchone() is not None
+                if not column_exists:
+                    logger.error(
+                        f"❌ CRITICAL: sell_order_id column is missing from orders table! "
+                        f"Please run 'python init_database.py' to add the column. "
+                        f"Sell order linkage will not work for {instId}, ordId={ordId}"
+                    )
+                    # Continue without linkage rather than failing completely
+            except Exception as e:
+                logger.error(
+                    f"❌ CRITICAL: Could not verify sell_order_id column existence: {e}. "
+                    f"Sell order linkage may not work for {instId}, ordId={ordId}"
+                )
+                # Continue without linkage rather than failing completely
+
+            # Check for existing sell_order_id for this specific buy order
+            try:
+                cur_check.execute(
+                    "SELECT sell_order_id FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
+                    (instId, ordId, strategy_name),
+                )
+                row = cur_check.fetchone()
+                if row and row[0]:
+                    existing_sell_order_id = row[0]
+                    # Verify the sell order still exists and check its state
+                    try:
+                        order_result = tradeAPI.get_order(
+                            instId=instId, ordId=existing_sell_order_id
+                        )
+                        if order_result.get("code") == "0" and order_result.get("data"):
+                            order_info = order_result["data"][0]
+                            sell_order_state = order_info.get("state", "")
+                            if sell_order_state in ["live", "partially_filled"]:
+                                logger.warning(
+                                    f"🔄 {log_prefix}: Found existing active sell order_id={existing_sell_order_id} "
+                                    f"for buy ordId={ordId}, will poll instead of placing new order"
+                                )
+                                order_id = existing_sell_order_id
+                            elif sell_order_state == "filled":
+                                # ✅ FIX: If sell order is already filled, finalize the DB row instead of placing new order
+                                logger.warning(
+                                    f"✅ {log_prefix}: Found existing filled sell order_id={existing_sell_order_id} "
+                                    f"for buy ordId={ordId}, finalizing DB record instead of placing new order"
+                                )
+                                # Get sell price from the filled order
+                                (
+                                    sell_price,
+                                    price_source,
+                                    failure_chain,
+                                    is_confirmed_filled,
+                                ) = _get_sell_price_with_fallback(
+                                    instId,
+                                    existing_sell_order_id,
+                                    tradeAPI,
+                                    get_market_api_func,
+                                    current_prices,
+                                    lock,
+                                    requested_size=size_float,
+                                )
+
+                                if is_confirmed_filled and sell_price > 0:
+                                    # Update database to mark as sold out
+                                    sell_price_str = format_number_func(
+                                        sell_price, instId
+                                    )
+                                    cur_check.execute(
+                                        "UPDATE orders SET state = %s, sell_price = %s "
+                                        "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                        (
+                                            "sold out",
+                                            sell_price_str,
+                                            instId,
+                                            ordId,
+                                            strategy_name,
+                                        ),
+                                    )
+                                    conn.commit()
+
+                                    sell_amount_usdt = (
+                                        float(sell_price) * size_float
+                                        if sell_price > 0
+                                        else 0
+                                    )
+                                    logger.warning(
+                                        f"✅ {log_prefix} FINALIZED: {instId}, price={sell_price_str} "
+                                        f"(from {price_source}), size={size_str}, amount={sell_amount_usdt:.2f} USDT, "
+                                        f"buy_ordId={ordId}, sell_ordId={existing_sell_order_id}"
+                                    )
+                                    play_sound_func("sell")
+                                    return True
+                                else:
+                                    # ✅ FIX: If filled but price missing, keep linkage and retry later instead of placing new order
+                                    logger.warning(
+                                        f"⚠️ {log_prefix}: Existing filled sell order {existing_sell_order_id} "
+                                        f"but could not get sell_price yet. Chain: {' -> '.join(failure_chain)}. "
+                                        f"Keeping linkage and will retry price fetch later to avoid double-sell."
+                                    )
+                                    # Keep the linkage - do NOT clear it or place new order
+                                    # Return False to allow retry on next call
+                                    return False
+                            else:
+                                # Sell order is canceled or unknown state, clear it from DB
+                                logger.warning(
+                                    f"⚠️ {log_prefix}: Existing sell order {existing_sell_order_id} "
+                                    f"has state={sell_order_state}, clearing linkage"
+                                )
+                                cur_check.execute(
+                                    "UPDATE orders SET sell_order_id = NULL WHERE instId = %s AND ordId = %s AND flag = %s",
+                                    (instId, ordId, strategy_name),
+                                )
+                                conn.commit()
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ Could not verify existing sell order {existing_sell_order_id}: {e}. "
+                            f"Will retry verification on next attempt instead of clearing linkage or placing new order."
+                        )
+                        # ✅ FIX: Short-circuit current call when get_order verification fails
+                        # Keep linkage and return False to retry later without placing new sell
+                        # This prevents duplicate sells on transient API failures
+                        return False
+            except Exception as e:
+                # If column doesn't exist, this will fail - log and continue
+                if "sell_order_id" in str(e).lower() or "column" in str(e).lower():
+                    logger.error(
+                        f"❌ CRITICAL: sell_order_id column access failed: {e}. "
+                        f"Please run 'python init_database.py' to add the column."
+                    )
+                else:
+                    logger.debug(
+                        f"⚠️ Could not check for existing sell_order_id in DB: {e}"
+                    )
+        finally:
+            cur_check.close()
 
         for attempt in range(max_attempts):
             try:
-                result = tradeAPI.place_order(
-                    instId=instId,
-                    tdMode="cash",
-                    side="sell",
-                    ordType="market",
-                    sz=str(size),
-                    tgtCcy="base_ccy",
-                )
+                # ✅ CRITICAL: Only place order on first attempt, then poll same order_id
+                if order_id is None:
+                    result = tradeAPI.place_order(
+                        instId=instId,
+                        tdMode="cash",
+                        side="sell",
+                        ordType="market",
+                        sz=size_str,
+                        tgtCcy="base_ccy",
+                    )
 
-                if result.get("code") == "0":
-                    order_data = result.get("data", [{}])[0]
-                    order_id = order_data.get("ordId", "N/A")
+                    if result.get("code") == "0":
+                        order_data = result.get("data", [{}])[0]
+                        order_id = order_data.get("ordId")
 
-                    time.sleep(0.5)
-                    try:
-                        order_result = tradeAPI.get_order(instId=instId, ordId=order_id)
-                        if order_result.get("code") == "0" and order_result.get("data"):
-                            order_info = order_result["data"][0]
-                            fill_px = order_info.get("fillPx", "")
-                            acc_fill_sz = order_info.get("accFillSz", "0")
+                        # ✅ FIX: Treat missing ordId as failure and allow retry
+                        if not order_id or order_id == "N/A" or order_id == "":
+                            logger.error(
+                                f"❌ {strategy_name} sell market returned code=0 but missing ordId: {instId}, "
+                                f"response={result}, treating as failure and will retry"
+                            )
+                            failed_flag = 1
+                            if attempt < max_attempts - 1:
+                                time.sleep(1)
+                            continue
 
+                        # ✅ FIX: Store sell_order_id in DB linked to this specific buy ordId
+                        cur_save = conn.cursor()
+                        try:
+                            cur_save.execute(
+                                "UPDATE orders SET sell_order_id = %s WHERE instId = %s AND ordId = %s AND flag = %s",
+                                (order_id, instId, ordId, strategy_name),
+                            )
+                            conn.commit()
+                        except Exception as e:
+                            # Log error loudly if column is missing
                             if (
-                                fill_px
-                                and fill_px != ""
-                                and acc_fill_sz
-                                and float(acc_fill_sz) > 0
+                                "sell_order_id" in str(e).lower()
+                                or "column" in str(e).lower()
                             ):
-                                sell_price = float(fill_px)
-                                logger.warning(
-                                    f"💰 SELL ORDER: {instId}, "
-                                    f"fill price={sell_price:.6f}, "
-                                    f"size={size}, ordId={order_id}"
+                                logger.error(
+                                    f"❌ CRITICAL: Could not save sell_order_id to DB (column missing?): {e}. "
+                                    f"Please run 'python init_database.py' to add the column."
                                 )
                             else:
-                                with lock:
-                                    sell_price = current_prices.get(instId, 0.0)
                                 logger.warning(
-                                    f"💰 SELL ORDER: {instId}, "
-                                    f"using current price={sell_price:.6f}, "
-                                    f"ordId={order_id}"
+                                    f"⚠️ Could not save sell_order_id to DB: {e}"
                                 )
-                        else:
-                            with lock:
-                                sell_price = current_prices.get(instId, 0.0)
-                            logger.warning(
-                                f"💰 SELL ORDER: {instId}, "
-                                f"using current price={sell_price:.6f}, "
-                                f"ordId={order_id}"
-                            )
-                    except Exception as e:
-                        with lock:
-                            sell_price = current_prices.get(instId, 0.0)
-                        logger.warning(
-                            f"💰 SELL ORDER: {instId}, "
-                            f"using current price={sell_price:.6f}, "
-                            f"error: {e}, ordId={order_id}"
-                        )
+                        finally:
+                            cur_save.close()
 
-                    failed_flag = 0
-                    break
-                else:
-                    error_msg = result.get("msg", "Unknown error")
-                    logger.error(
-                        f"{strategy_name} sell market failed: {instId}, "
-                        f"code={result.get('code')}, msg={error_msg}"
+                        logger.warning(
+                            f"📤 {log_prefix} ORDER PLACED: {instId}, sell_ordId={order_id}, "
+                            f"buy_ordId={ordId}, size={size_str}, attempt={attempt + 1}/{max_attempts}"
+                        )
+                    else:
+                        error_msg = result.get("msg", "Unknown error")
+                        logger.error(
+                            f"{strategy_name} sell market failed: {instId}, "
+                            f"code={result.get('code')}, msg={error_msg}"
+                        )
+                        failed_flag = 1
+                        if attempt < max_attempts - 1:
+                            time.sleep(1)
+                        continue
+
+                # ✅ Poll the same order_id (don't place new order on retry)
+                if order_id:
+                    time.sleep(0.5 if attempt == 0 else 2)  # Shorter wait first time
+                    sell_price, price_source, failure_chain, is_confirmed_filled = (
+                        _get_sell_price_with_fallback(
+                            instId,
+                            order_id,
+                            tradeAPI,
+                            get_market_api_func,
+                            current_prices,
+                            lock,
+                            requested_size=size_float,
+                        )
                     )
-                    failed_flag = 1
+
+                    if is_confirmed_filled and sell_price > 0:
+                        logger.warning(
+                            f"💰 {log_prefix} ORDER: {instId}, "
+                            f"price={sell_price:.6f} (from {price_source}), "
+                            f"ordId={order_id}, fully filled"
+                        )
+                        failed_flag = 0
+                        break
+                    elif not is_confirmed_filled:
+                        logger.warning(
+                            f"⏳ {log_prefix} ORDER: {instId}, ordId={order_id}, "
+                            f"order not fully filled yet, will retry polling (attempt {attempt + 1}/{max_attempts})"
+                        )
+                        if attempt < max_attempts - 1:
+                            failed_flag = 1
+                        else:
+                            logger.error(
+                                f"❌ {log_prefix} ORDER: {instId}, ordId={order_id}, "
+                                f"order not fully filled after {max_attempts} attempts, "
+                                f"NOT updating to sold out (data consistency)"
+                            )
+                            return False
+                    else:
+                        logger.error(
+                            f"❌ {log_prefix} ORDER: {instId}, ordId={order_id}, strategy={strategy_name}, "
+                            f"FAILED to get sell_price. Chain: {' -> '.join(failure_chain)}"
+                        )
+                        failed_flag = 1
 
                 if failed_flag > 0 and attempt < max_attempts - 1:
-                    time.sleep(1)
+                    time.sleep(2)  # Wait before retry
             except Exception as e:
                 logger.error(f"{strategy_name} sell market error: {instId}, {e}")
                 failed_flag = 1
                 if attempt < max_attempts - 1:
-                    time.sleep(1)
+                    time.sleep(2)
 
         if failed_flag > 0:
             logger.error(
-                f"❌ {strategy_name} SELL FAILED: {instId}, ordId={ordId}, "
+                f"❌ {strategy_name} {log_prefix} FAILED: {instId}, ordId={ordId}, "
                 f"all {max_attempts} attempts failed"
             )
             return False
 
     # Update database
+    # ✅ CRITICAL: Only update to sold out if we have confirmed filled price
     cur = conn.cursor()
     try:
-        sell_price_str = (
-            format_number_func(sell_price, instId) if sell_price > 0 else ""
-        )
-        # Keep original sell_time (planned sell time), don't update to actual sell time
-        # This preserves the intended sell time for reporting/analysis
+        if sell_price <= 0:
+            logger.error(
+                f"❌ {strategy_name} {log_prefix}: {instId}, ordId={ordId}, "
+                f"WARNING: sell_price is {sell_price} after all attempts! "
+                f"NOT updating to sold out to maintain data consistency. "
+                f"Check logs above for failure chain details."
+            )
+            return False
+
+        sell_price_str = format_number_func(sell_price, instId)
 
         cur.execute(
             "UPDATE orders SET state = %s, sell_price = %s "
@@ -362,24 +693,58 @@ def sell_market_order(
 
         if rows_updated == 0:
             logger.error(
-                f"❌ {strategy_name} SELL DB UPDATE FAILED: {instId}, "
+                f"❌ {strategy_name} {log_prefix} DB UPDATE FAILED: {instId}, "
                 f"ordId={ordId}, no rows updated"
             )
             return False
 
-        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
+        sell_amount_usdt = float(sell_price) * size_float if sell_price > 0 else 0
         logger.warning(
-            f"✅ SELL SAVED: {instId}, price={sell_price_str}, "
-            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
+            f"✅ {log_prefix} SAVED: {instId}, price={sell_price_str}, "
+            f"size={size_str}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
         )
         play_sound_func("sell")
         return True
     except Exception as e:
-        logger.error(f"{strategy_name} sell market DB error: {instId}, {ordId}, {e}")
+        logger.error(
+            f"{strategy_name} sell market DB error: {instId}, ordId={ordId}, {e}"
+        )
         conn.rollback()
         return False
     finally:
         cur.close()
+
+
+def sell_market_order(
+    instId: str,
+    ordId: str,
+    size: float,
+    tradeAPI: TradeAPI,
+    conn,
+    strategy_name: str,
+    simulation_mode: bool,
+    format_number_func,
+    play_sound_func,
+    get_market_api_func,
+    current_prices: dict,
+    lock,
+) -> bool:
+    """Place market sell order and record in database"""
+    return _execute_market_sell(
+        instId,
+        ordId,
+        size,
+        tradeAPI,
+        conn,
+        strategy_name,
+        simulation_mode,
+        format_number_func,
+        play_sound_func,
+        get_market_api_func,
+        current_prices,
+        lock,
+        log_prefix="SELL",
+    )
 
 
 def buy_stable_order(
@@ -584,159 +949,21 @@ def sell_stable_order(
     lock,
 ) -> bool:
     """Place stable strategy market sell order"""
-    size = format_number_func(size, instId)
-
-    if simulation_mode:
-        with lock:
-            sell_price = current_prices.get(instId, 0.0)
-
-        if sell_price <= 0:
-            try:
-                market_api = get_market_api_func()
-                ticker_result = market_api.get_ticker(instId=instId)
-                if ticker_result.get("code") == "0" and ticker_result.get("data"):
-                    ticker_data = ticker_result["data"]
-                    if ticker_data and len(ticker_data) > 0:
-                        sell_price = float(ticker_data[0].get("last", 0))
-            except Exception as e:
-                logger.warning(f"⚠️ Could not get current price for {instId}: {e}")
-
-        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
-        logger.warning(
-            f"💰 [SIM] STABLE SELL: {instId}, price={sell_price:.6f}, "
-            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
-        )
-    else:
-        max_attempts = 3
-        failed_flag = 0
-        sell_price = 0.0
-
-        for attempt in range(max_attempts):
-            try:
-                result = tradeAPI.place_order(
-                    instId=instId,
-                    tdMode="cash",
-                    side="sell",
-                    ordType="market",
-                    sz=str(size),
-                    tgtCcy="base_ccy",
-                )
-
-                if result.get("code") == "0":
-                    order_data = result.get("data", [{}])[0]
-                    order_id = order_data.get("ordId", "N/A")
-
-                    time.sleep(0.5)
-                    try:
-                        order_result = tradeAPI.get_order(instId=instId, ordId=order_id)
-                        if order_result.get("code") == "0" and order_result.get("data"):
-                            order_info = order_result["data"][0]
-                            fill_px = order_info.get("fillPx", "")
-                            acc_fill_sz = order_info.get("accFillSz", "0")
-
-                            if (
-                                fill_px
-                                and fill_px != ""
-                                and acc_fill_sz
-                                and float(acc_fill_sz) > 0
-                            ):
-                                sell_price = float(fill_px)
-                                logger.warning(
-                                    f"💰 STABLE SELL ORDER: {instId}, "
-                                    f"fill price={sell_price:.6f}, "
-                                    f"size={size}, ordId={order_id}"
-                                )
-                            else:
-                                with lock:
-                                    sell_price = current_prices.get(instId, 0.0)
-                                logger.warning(
-                                    f"💰 STABLE SELL ORDER: {instId}, "
-                                    f"using current price={sell_price:.6f}, "
-                                    f"ordId={order_id}"
-                                )
-                        else:
-                            with lock:
-                                sell_price = current_prices.get(instId, 0.0)
-                            logger.warning(
-                                f"💰 STABLE SELL ORDER: {instId}, "
-                                f"using current price={sell_price:.6f}, "
-                                f"ordId={order_id}"
-                            )
-                    except Exception as e:
-                        with lock:
-                            sell_price = current_prices.get(instId, 0.0)
-                        logger.warning(
-                            f"💰 STABLE SELL ORDER: {instId}, "
-                            f"using current price={sell_price:.6f}, "
-                            f"error: {e}, ordId={order_id}"
-                        )
-
-                    failed_flag = 0
-                    break
-                else:
-                    error_msg = result.get("msg", "Unknown error")
-                    logger.error(
-                        f"{strategy_name} sell market failed: {instId}, "
-                        f"code={result.get('code')}, msg={error_msg}"
-                    )
-                    failed_flag = 1
-
-                if failed_flag > 0 and attempt < max_attempts - 1:
-                    time.sleep(1)
-            except Exception as e:
-                logger.error(f"{strategy_name} sell market error: {instId}, {e}")
-                failed_flag = 1
-                if attempt < max_attempts - 1:
-                    time.sleep(1)
-
-        if failed_flag > 0:
-            logger.error(
-                f"❌ {strategy_name} SELL FAILED: {instId}, ordId={ordId}, "
-                f"all {max_attempts} attempts failed"
-            )
-            return False
-
-    # Update database
-    cur = conn.cursor()
-    try:
-        sell_price_str = (
-            format_number_func(sell_price, instId) if sell_price > 0 else ""
-        )
-
-        cur.execute(
-            "UPDATE orders SET state = %s, sell_price = %s "
-            "WHERE instId = %s AND ordId = %s AND flag = %s",
-            (
-                "sold out",
-                sell_price_str,
-                instId,
-                ordId,
-                strategy_name,
-            ),
-        )
-        rows_updated = cur.rowcount
-        conn.commit()
-
-        if rows_updated == 0:
-            logger.error(
-                f"❌ {strategy_name} SELL DB UPDATE FAILED: {instId}, "
-                f"ordId={ordId}, no rows updated"
-            )
-            return False
-
-        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
-        logger.warning(
-            f"✅ STABLE SELL SAVED: {instId}, price={sell_price_str}, "
-            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
-        )
-        play_sound_func("sell")
-        return True
-    except Exception as e:
-        logger.error(f"{strategy_name} sell market DB error: {instId}, {ordId}, {e}")
-        conn.rollback()
-        return False
-    finally:
-        cur.close()
+    return _execute_market_sell(
+        instId,
+        ordId,
+        size,
+        tradeAPI,
+        conn,
+        strategy_name,
+        simulation_mode,
+        format_number_func,
+        play_sound_func,
+        get_market_api_func,
+        current_prices,
+        lock,
+        log_prefix="STABLE SELL",
+    )
 
 
 def buy_batch_order(
@@ -940,158 +1167,18 @@ def sell_batch_order(
     lock,
 ) -> bool:
     """Place batch strategy market sell order"""
-    size = format_number_func(size, instId)
-
-    if simulation_mode:
-        with lock:
-            sell_price = current_prices.get(instId, 0.0)
-
-        if sell_price <= 0:
-            try:
-                market_api = get_market_api_func()
-                ticker_result = market_api.get_ticker(instId=instId)
-                if ticker_result.get("code") == "0" and ticker_result.get("data"):
-                    ticker_data = ticker_result["data"]
-                    if ticker_data and len(ticker_data) > 0:
-                        sell_price = float(ticker_data[0].get("last", 0))
-            except Exception as e:
-                logger.warning(f"⚠️ Could not get current price for {instId}: {e}")
-
-        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
-        logger.warning(
-            f"💰 [SIM] BATCH SELL: {instId}, price={sell_price:.6f}, "
-            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
-        )
-    else:
-        max_attempts = 3
-        failed_flag = 0
-        sell_price = 0.0
-
-        for attempt in range(max_attempts):
-            try:
-                result = tradeAPI.place_order(
-                    instId=instId,
-                    tdMode="cash",
-                    side="sell",
-                    ordType="market",
-                    sz=str(size),
-                    tgtCcy="base_ccy",
-                )
-
-                if result.get("code") == "0":
-                    order_data = result.get("data", [{}])[0]
-                    order_id = order_data.get("ordId", "N/A")
-
-                    time.sleep(0.5)
-                    try:
-                        order_result = tradeAPI.get_order(instId=instId, ordId=order_id)
-                        if order_result.get("code") == "0" and order_result.get("data"):
-                            order_info = order_result["data"][0]
-                            fill_px = order_info.get("fillPx", "")
-                            acc_fill_sz = order_info.get("accFillSz", "0")
-
-                            if (
-                                fill_px
-                                and fill_px != ""
-                                and acc_fill_sz
-                                and float(acc_fill_sz) > 0
-                            ):
-                                sell_price = float(fill_px)
-                                logger.warning(
-                                    f"💰 BATCH SELL ORDER: {instId}, "
-                                    f"fill price={sell_price:.6f}, "
-                                    f"size={size}, ordId={order_id}"
-                                )
-                            else:
-                                with lock:
-                                    sell_price = current_prices.get(instId, 0.0)
-                                logger.warning(
-                                    f"💰 BATCH SELL ORDER: {instId}, "
-                                    f"using current price={sell_price:.6f}, "
-                                    f"ordId={order_id}"
-                                )
-                        else:
-                            with lock:
-                                sell_price = current_prices.get(instId, 0.0)
-                            logger.warning(
-                                f"💰 BATCH SELL ORDER: {instId}, "
-                                f"using current price={sell_price:.6f}, "
-                                f"ordId={order_id}"
-                            )
-                    except Exception as e:
-                        with lock:
-                            sell_price = current_prices.get(instId, 0.0)
-                        logger.warning(
-                            f"💰 BATCH SELL ORDER: {instId}, "
-                            f"using current price={sell_price:.6f}, "
-                            f"error: {e}, ordId={order_id}"
-                        )
-
-                    failed_flag = 0
-                    break
-                else:
-                    error_msg = result.get("msg", "Unknown error")
-                    logger.error(
-                        f"{strategy_name} batch sell market failed: {instId}, "
-                        f"code={result.get('code')}, msg={error_msg}"
-                    )
-                    failed_flag = 1
-
-                if failed_flag > 0 and attempt < max_attempts - 1:
-                    time.sleep(1)
-            except Exception as e:
-                logger.error(f"{strategy_name} batch sell market error: {instId}, {e}")
-                failed_flag = 1
-                if attempt < max_attempts - 1:
-                    time.sleep(1)
-
-        if failed_flag > 0:
-            logger.error(
-                f"❌ {strategy_name} BATCH SELL FAILED: {instId}, ordId={ordId}, "
-                f"all {max_attempts} attempts failed"
-            )
-            return False
-
-    # Update database
-    cur = conn.cursor()
-    try:
-        sell_price_str = (
-            format_number_func(sell_price, instId) if sell_price > 0 else ""
-        )
-
-        cur.execute(
-            "UPDATE orders SET state = %s, sell_price = %s "
-            "WHERE instId = %s AND ordId = %s AND flag = %s",
-            (
-                "sold out",
-                sell_price_str,
-                instId,
-                ordId,
-                strategy_name,
-            ),
-        )
-        rows_updated = cur.rowcount
-        conn.commit()
-
-        if rows_updated == 0:
-            logger.error(
-                f"❌ {strategy_name} BATCH SELL DB UPDATE FAILED: {instId}, "
-                f"ordId={ordId}, no rows updated"
-            )
-            return False
-
-        sell_amount_usdt = float(sell_price) * float(size) if sell_price > 0 else 0
-        logger.warning(
-            f"✅ BATCH SELL SAVED: {instId}, price={sell_price_str}, "
-            f"size={size}, amount={sell_amount_usdt:.2f} USDT, ordId={ordId}"
-        )
-        play_sound_func("sell")
-        return True
-    except Exception as e:
-        logger.error(
-            f"{strategy_name} batch sell market DB error: {instId}, {ordId}, {e}"
-        )
-        conn.rollback()
-        return False
-    finally:
-        cur.close()
+    return _execute_market_sell(
+        instId,
+        ordId,
+        size,
+        tradeAPI,
+        conn,
+        strategy_name,
+        simulation_mode,
+        format_number_func,
+        play_sound_func,
+        get_market_api_func,
+        current_prices,
+        lock,
+        log_prefix="BATCH SELL",
+    )

@@ -225,6 +225,8 @@ def process_sell_signal(
                                 del active_orders[instId]
                     return
 
+                # ✅ FIX Issue 2: For partially_filled orders, verify actual filled size via API
+                # The DB size should already be updated by timeout handler, but double-check via API
                 try:
                     size = float(db_size)
                     if size <= 0:
@@ -232,6 +234,53 @@ def process_sell_signal(
                             f"{strategy_name} Invalid size for selling: {instId}, {ordId}, size={db_size}"
                         )
                         return
+
+                    # ✅ FIX Issue 2: If partially_filled, verify actual filled size matches DB
+                    if db_state == "partially_filled" and not simulation_mode:
+                        try:
+                            order_result = api.get_order(instId=instId, ordId=ordId)
+                            if order_result.get("code") == "0" and order_result.get(
+                                "data"
+                            ):
+                                order_info = order_result["data"][0]
+                                acc_fill_sz = order_info.get("accFillSz", "0")
+                                actual_filled_size = (
+                                    float(acc_fill_sz) if acc_fill_sz else 0.0
+                                )
+
+                                if (
+                                    actual_filled_size > 0
+                                    and abs(actual_filled_size - size) > 0.000001
+                                ):
+                                    logger.warning(
+                                        f"⚠️ {strategy_name} Size mismatch for {instId}, ordId={ordId}: "
+                                        f"DB size={size}, API accFillSz={actual_filled_size}, using API value"
+                                    )
+                                    size = actual_filled_size
+                                    # Update DB with correct size
+                                    cur_update = conn.cursor()
+                                    try:
+                                        cur_update.execute(
+                                            "UPDATE orders SET size = %s WHERE instId = %s AND ordId = %s AND flag = %s",
+                                            (
+                                                str(actual_filled_size),
+                                                instId,
+                                                ordId,
+                                                strategy_name,
+                                            ),
+                                        )
+                                        conn.commit()
+                                        cur_update.close()
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"⚠️ Could not update DB size: {e}"
+                                        )
+                                        cur_update.close()
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ {strategy_name} Could not verify filled size via API for {instId}, ordId={ordId}: {e}, "
+                                f"using DB size={size}"
+                            )
                 except (ValueError, TypeError) as e:
                     logger.error(
                         f"{strategy_name} Cannot convert size to float: {instId}, {ordId}, "
@@ -494,6 +543,8 @@ def process_stable_sell_signal(
                                 del stable_active_orders[instId]
                     return
 
+                # ✅ FIX Issue 2: For partially_filled orders, verify actual filled size via API
+                # The DB size should already be updated by timeout handler, but double-check via API
                 try:
                     size = float(db_size)
                     if size <= 0:
@@ -501,6 +552,53 @@ def process_stable_sell_signal(
                             f"{strategy_name} Invalid size for selling: {instId}, {ordId}, size={db_size}"
                         )
                         return
+
+                    # ✅ FIX Issue 2: If partially_filled, verify actual filled size matches DB
+                    if db_state == "partially_filled" and not simulation_mode:
+                        try:
+                            order_result = api.get_order(instId=instId, ordId=ordId)
+                            if order_result.get("code") == "0" and order_result.get(
+                                "data"
+                            ):
+                                order_info = order_result["data"][0]
+                                acc_fill_sz = order_info.get("accFillSz", "0")
+                                actual_filled_size = (
+                                    float(acc_fill_sz) if acc_fill_sz else 0.0
+                                )
+
+                                if (
+                                    actual_filled_size > 0
+                                    and abs(actual_filled_size - size) > 0.000001
+                                ):
+                                    logger.warning(
+                                        f"⚠️ {strategy_name} Size mismatch for {instId}, ordId={ordId}: "
+                                        f"DB size={size}, API accFillSz={actual_filled_size}, using API value"
+                                    )
+                                    size = actual_filled_size
+                                    # Update DB with correct size
+                                    cur_update = conn.cursor()
+                                    try:
+                                        cur_update.execute(
+                                            "UPDATE orders SET size = %s WHERE instId = %s AND ordId = %s AND flag = %s",
+                                            (
+                                                str(actual_filled_size),
+                                                instId,
+                                                ordId,
+                                                strategy_name,
+                                            ),
+                                        )
+                                        conn.commit()
+                                        cur_update.close()
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"⚠️ Could not update DB size: {e}"
+                                        )
+                                        cur_update.close()
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ {strategy_name} Could not verify filled size via API for {instId}, ordId={ordId}: {e}, "
+                                f"using DB size={size}"
+                            )
                 except (ValueError, TypeError) as e:
                     logger.error(
                         f"{strategy_name} Cannot convert size to float: {instId}, {ordId}, "
@@ -738,21 +836,19 @@ def process_batch_sell_signal(
     simulation_mode: bool,
     get_trade_api_func,
     get_db_connection_func,
-    sell_batch_order_func,
+    sell_market_order_func,
     batch_active_orders: dict,
     batch_pending_buys: dict,
     batch_strategy: Optional[object],
     lock: threading.Lock,
 ):
-    """Process batch strategy sell signal - sells all batches"""
+    """Process batch strategy sell signal - sells each batch order separately"""
     try:
         ordIds = []
-        total_size = 0.0
         with lock:
             if instId in batch_active_orders:
                 order_info = batch_active_orders[instId].copy()
                 ordIds = order_info.get("ordIds", [])
-                total_size = order_info.get("total_size", 0.0)
             else:
                 logger.debug(
                     f"{strategy_name} Order not in batch_active_orders: {instId}, will try to recover from DB"
@@ -771,7 +867,7 @@ def process_batch_sell_signal(
                 try:
                     cur.execute(
                         """
-                        SELECT ordId, size FROM orders
+                        SELECT ordId FROM orders
                         WHERE instId = %s AND flag = %s
                           AND state IN ('filled', 'partially_filled')
                           AND (sell_price IS NULL OR sell_price = '')
@@ -780,9 +876,7 @@ def process_batch_sell_signal(
                         (instId, strategy_name),
                     )
                     rows = cur.fetchall()
-                    for row in rows:
-                        ordIds.append(row[0])
-                        total_size += float(row[1]) if row[1] else 0.0
+                    ordIds = [row[0] for row in rows]
                 finally:
                     cur.close()
 
@@ -799,71 +893,133 @@ def process_batch_sell_signal(
                         del batch_pending_buys[instId]
                 return
 
-            # ✅ FIX: Get actual filled sizes from DB to avoid oversell risk
-            # Orders can be partially filled or canceled, so we need actual filled sizes
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    """
-                    SELECT SUM(CAST(size AS FLOAT)) as total_filled_size
-                    FROM orders
-                    WHERE instId = %s AND flag = %s
-                      AND ordId = ANY(%s)
-                      AND state IN ('filled', 'partially_filled')
-                      AND (sell_price IS NULL OR sell_price = '')
-                    """,
-                    (instId, strategy_name, ordIds),
-                )
-                row = cur.fetchone()
-                if row and row[0]:
-                    actual_total_size = float(row[0])
-                    logger.warning(
-                        f"📊 BATCH SELL: {instId}, using actual filled size={actual_total_size:.6f} "
-                        f"(memory total={total_size:.6f})"
-                    )
-                    total_size = actual_total_size
-                else:
-                    logger.warning(
-                        f"⚠️ BATCH SELL: {instId}, no filled orders found in DB, using memory total={total_size:.6f}"
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"⚠️ BATCH SELL: {instId}, error getting actual sizes from DB: {e}, using memory total={total_size:.6f}"
-                )
-            finally:
-                cur.close()
+            # ✅ FIX: Sell each batch order separately (like normal sell)
+            successful_sells = 0
+            failed_sells = 0
 
-            if total_size <= 0:
-                logger.error(
-                    f"❌ {strategy_name} BATCH SELL: {instId}, invalid total_size={total_size}, skipping sell"
-                )
-                with lock:
-                    if instId in batch_active_orders:
-                        del batch_active_orders[instId]
-                    if batch_strategy:
-                        batch_strategy.reset_crypto(instId)
-                    if instId in batch_pending_buys:
-                        del batch_pending_buys[instId]
-                return
-
-            # Sell all batches using actual filled size from DB
-            sell_success = sell_batch_order_func(
-                instId, ordIds[0], total_size, api, conn
-            )
-
-            if sell_success:
-                # Mark all batches as sold in DB
+            for ordId in ordIds:
                 cur = conn.cursor()
                 try:
-                    for ordId in ordIds:
-                        cur.execute(
-                            "UPDATE orders SET state = %s WHERE instId = %s AND ordId = %s AND flag = %s",
-                            ("sold out", instId, ordId, strategy_name),
+                    # Check order state and size
+                    cur.execute(
+                        "SELECT state, size FROM orders WHERE instId = %s "
+                        "AND ordId = %s AND flag = %s",
+                        (instId, ordId, strategy_name),
+                    )
+                    row = cur.fetchone()
+
+                    if not row:
+                        logger.warning(
+                            f"{strategy_name} Batch order not found: {instId}, {ordId}"
                         )
-                    conn.commit()
+                        failed_sells += 1
+                        continue
+
+                    db_state = row[0] if row[0] else ""
+                    db_size = row[1] if row[1] else "0"
+
+                    if db_state == "sold out":
+                        logger.debug(
+                            f"{strategy_name} Batch order already sold: {instId}, {ordId}"
+                        )
+                        successful_sells += 1
+                        continue
+
+                    if (
+                        db_state not in ["filled", "partially_filled"]
+                        or not db_size
+                        or db_size == "0"
+                    ):
+                        logger.warning(
+                            f"{strategy_name} Batch order not ready to sell: {instId}, {ordId}, "
+                            f"state={db_state}, size={db_size}"
+                        )
+                        failed_sells += 1
+                        continue
+
+                    # ✅ FIX Issue 2: For partially_filled orders, verify actual filled size via API
+                    # The DB size should already be updated by timeout handler, but double-check via API
+                    try:
+                        size = float(db_size)
+                        if size <= 0:
+                            logger.error(
+                                f"{strategy_name} Invalid size for batch sell: {instId}, {ordId}, size={db_size}"
+                            )
+                            failed_sells += 1
+                            continue
+
+                        # ✅ FIX Issue 2: If partially_filled, verify actual filled size matches DB
+                        if db_state == "partially_filled" and not simulation_mode:
+                            try:
+                                order_result = api.get_order(instId=instId, ordId=ordId)
+                                if order_result.get("code") == "0" and order_result.get(
+                                    "data"
+                                ):
+                                    order_info = order_result["data"][0]
+                                    acc_fill_sz = order_info.get("accFillSz", "0")
+                                    actual_filled_size = (
+                                        float(acc_fill_sz) if acc_fill_sz else 0.0
+                                    )
+
+                                    if (
+                                        actual_filled_size > 0
+                                        and abs(actual_filled_size - size) > 0.000001
+                                    ):
+                                        logger.warning(
+                                            f"⚠️ {strategy_name} Batch size mismatch for {instId}, ordId={ordId}: "
+                                            f"DB size={size}, API accFillSz={actual_filled_size}, using API value"
+                                        )
+                                        size = actual_filled_size
+                                        # Update DB with correct size
+                                        cur_update = conn.cursor()
+                                        try:
+                                            cur_update.execute(
+                                                "UPDATE orders SET size = %s WHERE instId = %s AND ordId = %s AND flag = %s",
+                                                (
+                                                    str(actual_filled_size),
+                                                    instId,
+                                                    ordId,
+                                                    strategy_name,
+                                                ),
+                                            )
+                                            conn.commit()
+                                            cur_update.close()
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"⚠️ Could not update DB size: {e}"
+                                            )
+                                            cur_update.close()
+                            except Exception as e:
+                                logger.warning(
+                                    f"⚠️ {strategy_name} Could not verify filled size via API for {instId}, ordId={ordId}: {e}, "
+                                    f"using DB size={size}"
+                                )
+                    except (ValueError, TypeError) as e:
+                        logger.error(
+                            f"{strategy_name} Cannot convert size to float: {instId}, {ordId}, "
+                            f"size={db_size}, error={e}"
+                        )
+                        failed_sells += 1
+                        continue
                 finally:
                     cur.close()
 
+                # Sell this batch order separately
+                sell_success = sell_market_order_func(instId, ordId, size, api, conn)
+
+                if sell_success:
+                    successful_sells += 1
+                    logger.warning(
+                        f"✅ {strategy_name} BATCH SELL: {instId}, ordId={ordId} sold successfully"
+                    )
+                else:
+                    failed_sells += 1
+                    logger.error(
+                        f"❌ {strategy_name} BATCH SELL FAILED: {instId}, ordId={ordId}"
+                    )
+
+            # Clean up if all orders are sold
+            if successful_sells > 0 and failed_sells == 0:
                 with lock:
                     if instId in batch_active_orders:
                         del batch_active_orders[instId]
@@ -872,13 +1028,37 @@ def process_batch_sell_signal(
                     if instId in batch_pending_buys:
                         del batch_pending_buys[instId]
                     logger.warning(
-                        f"{strategy_name} All batches sold and removed: {instId}"
+                        f"{strategy_name} All {successful_sells} batch orders sold: {instId}"
                     )
             else:
-                logger.error(
-                    f"❌ {strategy_name} BATCH SELL FAILED: {instId}, "
-                    f"keeping in batch_active_orders for retry"
-                )
+                # ✅ CRITICAL: Reset sell_triggered to allow retry on next check
+                # This covers: partial failures, all failures, or no orders processed
+                if failed_sells > 0:
+                    logger.warning(
+                        f"{strategy_name} BATCH SELL: {instId}, "
+                        f"successful={successful_sells}, failed={failed_sells}, "
+                        f"keeping in batch_active_orders for retry"
+                    )
+                elif successful_sells == 0 and failed_sells == 0:
+                    logger.warning(
+                        f"{strategy_name} BATCH SELL: {instId}, "
+                        f"no orders processed, keeping in batch_active_orders for retry"
+                    )
+                else:
+                    # successful_sells > 0 and failed_sells > 0 (partial success)
+                    logger.warning(
+                        f"{strategy_name} BATCH SELL: {instId}, "
+                        f"partial success: {successful_sells} sold, {failed_sells} failed, "
+                        f"keeping in batch_active_orders for retry"
+                    )
+
+                with lock:
+                    if instId in batch_active_orders:
+                        batch_active_orders[instId]["sell_triggered"] = False
+                        logger.warning(
+                            f"{strategy_name} Reset sell_triggered for {instId} "
+                            f"to allow retry (successful={successful_sells}, failed={failed_sells})"
+                        )
         finally:
             conn.close()
     except Exception as e:

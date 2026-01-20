@@ -109,6 +109,14 @@ def init_orders_table():
         """
         )
 
+        # Add sell_order_id column if it doesn't exist (for sell order linkage)
+        cursor.execute(
+            """
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS sell_order_id VARCHAR(100)
+        """
+        )
+
         # Create indexes for better performance
         cursor.execute(
             """

@@ -889,7 +889,7 @@ def process_batch_sell_signal(instId: str):
             SIMULATION_MODE,
             get_trade_api,
             get_db_connection,
-            sell_batch_order,
+            sell_market_order,  # ✅ FIX: Use sell_market_order instead of sell_batch_order
             batch_active_orders,
             batch_pending_buys,
             batch_strategy,
