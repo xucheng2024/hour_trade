@@ -27,13 +27,30 @@ def buy_limit_order(
     format_number_func,
     check_blacklist_func,
     play_sound_func,
+    current_prices: Optional[dict] = None,
+    lock: Optional[object] = None,
 ) -> Optional[str]:
     """Place limit buy order and record in database"""
     # Check blacklist before buying
     if check_blacklist_func(instId):
         return None
 
-    buy_price = format_number_func(limit_price, instId)
+    # ✅ FIX: In simulation mode, use current price if it's less than limit price
+    actual_price = limit_price
+    if simulation_mode and current_prices is not None:
+        if lock:
+            with lock:
+                current_price = current_prices.get(instId)
+        else:
+            current_price = current_prices.get(instId)
+        if current_price and current_price > 0 and current_price < limit_price:
+            actual_price = current_price
+            logger.warning(
+                f"💰 [SIM] BUY: {instId} using current price={actual_price:.6f} "
+                f"instead of limit={limit_price:.6f} (current < limit)"
+            )
+
+    buy_price = format_number_func(actual_price, instId)
     size = format_number_func(size, instId)
 
     if simulation_mode:
@@ -63,12 +80,59 @@ def buy_limit_order(
                     ordId = order_data.get("ordId")
 
                     if ordId:
-                        amount_usdt = float(buy_price) * float(size)
-                        logger.warning(
-                            f"🛒 BUY ORDER: {instId}, price={buy_price}, "
-                            f"size={size}, amount={amount_usdt:.2f} USDT, "
-                            f"ordId={ordId}"
-                        )
+                        # ✅ FIX: Immediately check order status to get actual fill price
+                        # If limit order price > market price, it fills immediately at market price
+                        time.sleep(0.5)  # Wait a bit for order to be processed
+                        try:
+                            order_result = tradeAPI.get_order(
+                                instId=instId, ordId=ordId
+                            )
+                            if order_result.get("code") == "0" and order_result.get(
+                                "data"
+                            ):
+                                order_info = order_result["data"][0]
+                                fill_px = order_info.get("fillPx", "")
+                                acc_fill_sz = order_info.get("accFillSz", "0")
+
+                                # If order is filled or partially filled, use actual fill price
+                                if (
+                                    fill_px
+                                    and fill_px != ""
+                                    and acc_fill_sz
+                                    and float(acc_fill_sz) > 0
+                                ):
+                                    actual_fill_price = float(fill_px)
+                                    actual_fill_size = float(acc_fill_sz)
+                                    amount_usdt = actual_fill_price * actual_fill_size
+                                    logger.warning(
+                                        f"🛒 BUY ORDER FILLED: {instId}, "
+                                        f"fill_price={actual_fill_price:.6f} (limit={buy_price}), "
+                                        f"fill_size={actual_fill_size:.6f}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+                                    )
+                                    # Update buy_price to actual fill price for database
+                                    buy_price = format_number_func(
+                                        actual_fill_price, instId
+                                    )
+                                    size = format_number_func(actual_fill_size, instId)
+                                else:
+                                    amount_usdt = float(buy_price) * float(size)
+                                    logger.warning(
+                                        f"🛒 BUY ORDER: {instId}, price={buy_price}, "
+                                        f"size={size}, amount={amount_usdt:.2f} USDT, "
+                                        f"ordId={ordId} (pending)"
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ Could not get immediate order status for {instId}, ordId={ordId}: {e}, "
+                                f"using limit price={buy_price}"
+                            )
+                            amount_usdt = float(buy_price) * float(size)
+                            logger.warning(
+                                f"🛒 BUY ORDER: {instId}, price={buy_price}, "
+                                f"size={size}, amount={amount_usdt:.2f} USDT, "
+                                f"ordId={ordId}"
+                            )
+
                         failed_flag = 0
                         break
                     else:
@@ -326,12 +390,29 @@ def buy_stable_order(
     format_number_func,
     check_blacklist_func,
     play_sound_func,
+    current_prices: Optional[dict] = None,
+    lock: Optional[object] = None,
 ) -> Optional[str]:
     """Place stable strategy buy order and record in database"""
     if check_blacklist_func(instId):
         return None
 
-    buy_price = format_number_func(limit_price, instId)
+    # ✅ FIX: In simulation mode, use current price if it's less than limit price
+    actual_price = limit_price
+    if simulation_mode and current_prices is not None:
+        if lock:
+            with lock:
+                current_price = current_prices.get(instId)
+        else:
+            current_price = current_prices.get(instId)
+        if current_price and current_price > 0 and current_price < limit_price:
+            actual_price = current_price
+            logger.warning(
+                f"💰 [SIM] STABLE BUY: {instId} using current price={actual_price:.6f} "
+                f"instead of limit={limit_price:.6f} (current < limit)"
+            )
+
+    buy_price = format_number_func(actual_price, instId)
     size = format_number_func(size, instId)
 
     if simulation_mode:
@@ -361,12 +442,59 @@ def buy_stable_order(
                     ordId = order_data.get("ordId")
 
                     if ordId:
-                        amount_usdt = float(buy_price) * float(size)
-                        logger.warning(
-                            f"🛒 STABLE BUY ORDER: {instId}, price={buy_price}, "
-                            f"size={size}, amount={amount_usdt:.2f} USDT, "
-                            f"ordId={ordId}"
-                        )
+                        # ✅ FIX: Immediately check order status to get actual fill price
+                        # If limit order price > market price, it fills immediately at market price
+                        time.sleep(0.5)  # Wait a bit for order to be processed
+                        try:
+                            order_result = tradeAPI.get_order(
+                                instId=instId, ordId=ordId
+                            )
+                            if order_result.get("code") == "0" and order_result.get(
+                                "data"
+                            ):
+                                order_info = order_result["data"][0]
+                                fill_px = order_info.get("fillPx", "")
+                                acc_fill_sz = order_info.get("accFillSz", "0")
+
+                                # If order is filled or partially filled, use actual fill price
+                                if (
+                                    fill_px
+                                    and fill_px != ""
+                                    and acc_fill_sz
+                                    and float(acc_fill_sz) > 0
+                                ):
+                                    actual_fill_price = float(fill_px)
+                                    actual_fill_size = float(acc_fill_sz)
+                                    amount_usdt = actual_fill_price * actual_fill_size
+                                    logger.warning(
+                                        f"🛒 STABLE BUY ORDER FILLED: {instId}, "
+                                        f"fill_price={actual_fill_price:.6f} (limit={buy_price}), "
+                                        f"fill_size={actual_fill_size:.6f}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+                                    )
+                                    # Update buy_price to actual fill price for database
+                                    buy_price = format_number_func(
+                                        actual_fill_price, instId
+                                    )
+                                    size = format_number_func(actual_fill_size, instId)
+                                else:
+                                    amount_usdt = float(buy_price) * float(size)
+                                    logger.warning(
+                                        f"🛒 STABLE BUY ORDER: {instId}, price={buy_price}, "
+                                        f"size={size}, amount={amount_usdt:.2f} USDT, "
+                                        f"ordId={ordId} (pending)"
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ Could not get immediate order status for {instId}, ordId={ordId}: {e}, "
+                                f"using limit price={buy_price}"
+                            )
+                            amount_usdt = float(buy_price) * float(size)
+                            logger.warning(
+                                f"🛒 STABLE BUY ORDER: {instId}, price={buy_price}, "
+                                f"size={size}, amount={amount_usdt:.2f} USDT, "
+                                f"ordId={ordId}"
+                            )
+
                         failed_flag = 0
                         break
                     else:
@@ -620,12 +748,29 @@ def buy_batch_order(
     format_number_func,
     check_blacklist_func,
     play_sound_func,
+    current_prices: Optional[dict] = None,
+    lock: Optional[object] = None,
 ) -> Optional[str]:
     """Place batch strategy buy order and record in database"""
     if check_blacklist_func(instId):
         return None
 
-    buy_price = format_number_func(limit_price, instId)
+    # ✅ FIX: In simulation mode, use current price if it's less than limit price
+    actual_price = limit_price
+    if simulation_mode and current_prices is not None:
+        if lock:
+            with lock:
+                current_price = current_prices.get(instId)
+        else:
+            current_price = current_prices.get(instId)
+        if current_price and current_price > 0 and current_price < limit_price:
+            actual_price = current_price
+            logger.warning(
+                f"💰 [SIM] BATCH BUY: {instId} using current price={actual_price:.6f} "
+                f"instead of limit={limit_price:.6f} (current < limit)"
+            )
+
+    buy_price = format_number_func(actual_price, instId)
     size = format_number_func(size, instId)
 
     if simulation_mode:
@@ -655,11 +800,57 @@ def buy_batch_order(
                     ordId = order_data.get("ordId")
 
                     if ordId:
-                        amount_usdt = float(buy_price) * float(size)
-                        logger.warning(
-                            f"🛒 BATCH BUY ORDER: {instId}, batch={batch_index + 1}, price={buy_price}, "
-                            f"size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
-                        )
+                        # ✅ FIX: Immediately check order status to get actual fill price
+                        # If limit order price > market price, it fills immediately at market price
+                        time.sleep(0.5)  # Wait a bit for order to be processed
+                        try:
+                            order_result = tradeAPI.get_order(
+                                instId=instId, ordId=ordId
+                            )
+                            if order_result.get("code") == "0" and order_result.get(
+                                "data"
+                            ):
+                                order_info = order_result["data"][0]
+                                fill_px = order_info.get("fillPx", "")
+                                acc_fill_sz = order_info.get("accFillSz", "0")
+
+                                # If order is filled or partially filled, use actual fill price
+                                if (
+                                    fill_px
+                                    and fill_px != ""
+                                    and acc_fill_sz
+                                    and float(acc_fill_sz) > 0
+                                ):
+                                    actual_fill_price = float(fill_px)
+                                    actual_fill_size = float(acc_fill_sz)
+                                    amount_usdt = actual_fill_price * actual_fill_size
+                                    logger.warning(
+                                        f"🛒 BATCH BUY ORDER FILLED: {instId}, batch={batch_index + 1}, "
+                                        f"fill_price={actual_fill_price:.6f} (limit={buy_price}), "
+                                        f"fill_size={actual_fill_size:.6f}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+                                    )
+                                    # Update buy_price to actual fill price for database
+                                    buy_price = format_number_func(
+                                        actual_fill_price, instId
+                                    )
+                                    size = format_number_func(actual_fill_size, instId)
+                                else:
+                                    amount_usdt = float(buy_price) * float(size)
+                                    logger.warning(
+                                        f"🛒 BATCH BUY ORDER: {instId}, batch={batch_index + 1}, price={buy_price}, "
+                                        f"size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId} (pending)"
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ Could not get immediate order status for {instId}, ordId={ordId}: {e}, "
+                                f"using limit price={buy_price}"
+                            )
+                            amount_usdt = float(buy_price) * float(size)
+                            logger.warning(
+                                f"🛒 BATCH BUY ORDER: {instId}, batch={batch_index + 1}, price={buy_price}, "
+                                f"size={size}, amount={amount_usdt:.2f} USDT, ordId={ordId}"
+                            )
+
                         failed_flag = 0
                         break
                     else:

@@ -564,6 +564,8 @@ def buy_limit_order(
             format_number,
             check_blacklist_before_buy,
             play_sound,
+            current_prices,  # ✅ FIX: Pass current prices for simulation mode
+            lock,  # ✅ FIX: Pass lock for thread-safe access
         )
     logger.error("buy_limit_order not available - module import failed")
     return None
@@ -771,6 +773,8 @@ def buy_stable_order(
             format_number,
             check_blacklist_before_buy,
             play_sound,
+            current_prices,  # ✅ FIX: Pass current prices for simulation mode
+            lock,  # ✅ FIX: Pass lock for thread-safe access
         )
     logger.error("buy_stable_order not available - module import failed")
     return None
@@ -821,6 +825,8 @@ def buy_batch_order(
             format_number,
             check_blacklist_before_buy,
             play_sound,
+            current_prices,  # ✅ FIX: Pass current prices for simulation mode
+            lock,  # ✅ FIX: Pass lock for thread-safe access
         )
     logger.error("buy_batch_order not available - module import failed")
     return None
