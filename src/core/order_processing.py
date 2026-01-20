@@ -276,16 +276,15 @@ def sell_market_order(
         sell_price_str = (
             format_number_func(sell_price, instId) if sell_price > 0 else ""
         )
-        # Update sell_time to actual sell time (current time)
-        actual_sell_time = int(datetime.now().timestamp() * 1000)
+        # Keep original sell_time (planned sell time), don't update to actual sell time
+        # This preserves the intended sell time for reporting/analysis
 
         cur.execute(
-            "UPDATE orders SET state = %s, sell_price = %s, sell_time = %s "
+            "UPDATE orders SET state = %s, sell_price = %s "
             "WHERE instId = %s AND ordId = %s AND flag = %s",
             (
                 "sold out",
                 sell_price_str,
-                actual_sell_time,
                 instId,
                 ordId,
                 strategy_name,
@@ -579,16 +578,15 @@ def sell_momentum_order(
         sell_price_str = (
             format_number_func(sell_price, instId) if sell_price > 0 else ""
         )
-        # Update sell_time to actual sell time (current time)
-        actual_sell_time = int(datetime.now().timestamp() * 1000)
+        # Keep original sell_time (planned sell time), don't update to actual sell time
+        # This preserves the intended sell time for reporting/analysis
 
         cur.execute(
-            "UPDATE orders SET state = %s, sell_price = %s, sell_time = %s "
+            "UPDATE orders SET state = %s, sell_price = %s "
             "WHERE instId = %s AND ordId = %s AND flag = %s",
             (
                 "sold out",
                 sell_price_str,
-                actual_sell_time,
                 instId,
                 ordId,
                 strategy_name,

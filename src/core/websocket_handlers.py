@@ -344,8 +344,27 @@ def on_candle_message(
                                                         ).start()
 
                         with lock:
+                            now = datetime.now()
+
+                            # Check original strategy orders
                             if instId in active_orders:
-                                if active_orders[instId].get("sell_triggered", False):
+                                order_info = active_orders[instId]
+                                next_hour_close = order_info.get("next_hour_close_time")
+
+                                # High: Check next_hour_close_time before selling
+                                # Medium: Block if next_hour_close_time is missing
+                                if not next_hour_close:
+                                    logger.warning(
+                                        f"🚫 {instId} KLINE CONFIRMED but missing next_hour_close_time, "
+                                        f"blocking sell to prevent premature sale"
+                                    )
+                                elif now < next_hour_close:
+                                    logger.debug(
+                                        f"⏸️ {instId} KLINE CONFIRMED but not ready to sell yet: "
+                                        f"now={now.strftime('%H:%M:%S')}, "
+                                        f"sell_time={next_hour_close.strftime('%H:%M:%S')}"
+                                    )
+                                elif order_info.get("sell_triggered", False):
                                     logger.debug(
                                         f"⚠️ Sell already triggered for {instId}, skipping duplicate candle confirm"
                                     )
@@ -372,10 +391,42 @@ def on_candle_message(
                                             daemon=True,
                                         ).start()
 
+                            # Check momentum strategy orders
                             if instId in momentum_active_orders:
-                                if momentum_active_orders[instId].get(
-                                    "sell_triggered", False
-                                ):
+                                order_info = momentum_active_orders[instId]
+                                orders_dict = order_info.get("orders", {})
+
+                                # High: Check next_hour_close_time for each momentum order
+                                # Only trigger sell if at least one order is ready
+                                ready_to_sell = False
+                                missing_sell_time = False
+
+                                for ordId, order_data in orders_dict.items():
+                                    order_sell_time = order_data.get(
+                                        "next_hour_close_time"
+                                    )
+                                    if not order_sell_time:
+                                        missing_sell_time = True
+                                        logger.warning(
+                                            f"🚫 {instId} Momentum order {ordId} missing next_hour_close_time, "
+                                            f"blocking sell to prevent premature sale"
+                                        )
+                                    elif now >= order_sell_time:
+                                        ready_to_sell = True
+                                        break
+
+                                if missing_sell_time and not ready_to_sell:
+                                    # Block if any order is missing sell_time and none are ready
+                                    logger.warning(
+                                        f"🚫 {instId} Momentum orders have missing next_hour_close_time, "
+                                        f"blocking sell"
+                                    )
+                                elif not ready_to_sell:
+                                    # All orders have sell_time but none are ready yet
+                                    logger.debug(
+                                        f"⏸️ {instId} Momentum KLINE CONFIRMED but no orders ready to sell yet"
+                                    )
+                                elif order_info.get("sell_triggered", False):
                                     logger.debug(
                                         f"⚠️ Momentum sell already triggered for {instId}, "
                                         f"skipping duplicate candle confirm"

@@ -52,7 +52,9 @@ class MomentumVolumeStrategy:
         # is_red: True if close < open (red/negative candle)
         self.price_history: Dict[str, deque] = {}
         self.volume_history: Dict[str, deque] = {}
-        self.candle_data: Dict[str, deque] = {}  # Store full candle data (open, close, volume, is_red)
+        self.candle_data: Dict[str, deque] = (
+            {}
+        )  # Store full candle data (open, close, volume, is_red)
 
         # Volatility history for filter (Priority C)
         # Format: instId -> deque of realized_vol (24h rolling)
@@ -85,12 +87,12 @@ class MomentumVolumeStrategy:
         # Priority D: Scoring system parameters
         self.SCORE_WEIGHTS = {
             "momentum": 1.0,  # w1
-            "volume": 1.0,    # w2
-            "drop": 1.0       # w3
+            "volume": 1.0,  # w2
+            "drop": 1.0,  # w3
         }
         self.SCORE_THRESHOLD_FIRST = -2.5  # First buy threshold
-        self.SCORE_THRESHOLD_ADD = -3.2    # Add position threshold
-        self.MIN_HOURS_BETWEEN_BUYS = 2    # Minimum hours between additional buys
+        self.SCORE_THRESHOLD_ADD = -3.2  # Add position threshold
+        self.MIN_HOURS_BETWEEN_BUYS = 2  # Minimum hours between additional buys
 
     def initialize_history(
         self, instId: str, candles: list, logger_instance=None
@@ -117,8 +119,7 @@ class MomentumVolumeStrategy:
 
             if not candles or len(candles) == 0:
                 logger_instance.warning(
-                    f"⚠️ {instId} No historical candles provided "
-                    f"for initialization"
+                    f"⚠️ {instId} No historical candles provided " f"for initialization"
                 )
                 return False
 
@@ -178,8 +179,7 @@ class MomentumVolumeStrategy:
                     return True
                 else:
                     logger_instance.warning(
-                        f"⚠️ {instId} Failed to initialize: "
-                        f"no valid candles"
+                        f"⚠️ {instId} Failed to initialize: " f"no valid candles"
                     )
                     return False
 
@@ -293,7 +293,11 @@ class MomentumVolumeStrategy:
             return False
 
     def update_price_volume(
-        self, instId: str, price: float, volume: float, open_price: Optional[float] = None
+        self,
+        instId: str,
+        price: float,
+        volume: float,
+        open_price: Optional[float] = None,
     ):
         """Update price and volume history for a crypto (1H candle only)
 
@@ -313,9 +317,7 @@ class MomentumVolumeStrategy:
                 self.price_history[instId] = deque(maxlen=M + 1)
                 self.volume_history[instId] = deque(maxlen=M + 1)
                 self.candle_data[instId] = deque(maxlen=M + 1)
-                self.volatility_history[instId] = deque(
-                    maxlen=self.VOL_HISTORY_HOURS
-                )
+                self.volatility_history[instId] = deque(maxlen=self.VOL_HISTORY_HOURS)
 
             # OPTIMIZATION: Only update when volume > 0 (ensures 1H candle data)
             if volume <= 0:
@@ -546,8 +548,8 @@ class MomentumVolumeStrategy:
             long_mean = sum(long_red_vol) / len(long_red_vol)
 
             # Calculate standard deviation
-            long_variance = (
-                sum((v - long_mean) ** 2 for v in long_red_vol) / len(long_red_vol)
+            long_variance = sum((v - long_mean) ** 2 for v in long_red_vol) / len(
+                long_red_vol
             )
             long_std = math.sqrt(long_variance) if long_variance > 0 else 0.0
 
@@ -604,16 +606,26 @@ class MomentumVolumeStrategy:
         """
         with self.lock:
             if instId not in self.volatility_history:
-                return True  # Pass if no history yet
+                logger.debug(
+                    f"🚫 {instId} Volatility filter: No history yet, blocking buy"
+                )
+                return False  # Block if no history yet
 
             vol_history = list(self.volatility_history[instId])
             # Need at least 276 hours of volatility history
             if len(vol_history) < self.VOL_HISTORY_HOURS:
-                return True  # Pass if insufficient history
+                logger.debug(
+                    f"🚫 {instId} Volatility filter: Insufficient history "
+                    f"({len(vol_history)}/{self.VOL_HISTORY_HOURS}), blocking buy"
+                )
+                return False  # Block if insufficient history
 
             current_vol = vol_history[-1] if vol_history else None
             if current_vol is None:
-                return True
+                logger.debug(
+                    f"🚫 {instId} Volatility filter: No current volatility, blocking buy"
+                )
+                return False
 
             # Calculate percentiles
             sorted_vols = sorted(vol_history[:-1])  # Exclude current
@@ -628,10 +640,17 @@ class MomentumVolumeStrategy:
                     f"🚫 {instId} Volatility filter: {current_vol:.6f} not in range "
                     f"[{percentile_60:.6f}, {percentile_90:.6f}]"
                 )
+            else:
+                logger.debug(
+                    f"✅ {instId} Volatility filter: {current_vol:.6f} in range "
+                    f"[{percentile_60:.6f}, {percentile_90:.6f}]"
+                )
 
             return in_range
 
-    def is_in_downtrend(self, instId: str, current_price: Optional[float] = None) -> bool:
+    def is_in_downtrend(
+        self, instId: str, current_price: Optional[float] = None
+    ) -> bool:
         """Check if price is in downtrend (P_t < P_{t-M})
 
         Args:
@@ -657,7 +676,7 @@ class MomentumVolumeStrategy:
                 price_to_compare = current_price
             else:
                 price_to_compare = price_data[-1][1]  # Latest confirmed price
-            
+
             old_price = price_data[0][1]  # Price M periods ago
 
             is_downtrend = price_to_compare < old_price
