@@ -27,22 +27,38 @@ from okx.Trade import TradeAPI
 
 # ✅ FIX: Initialize basic logger early for import error handling
 # Full logger setup happens later, but we need a basic one here
-_temp_logger = logging.getLogger(__name__)
-_temp_logger.setLevel(logging.WARNING)
+try:
+    _temp_logger = logging.getLogger(__name__)
+    _temp_logger.setLevel(logging.WARNING)
+    # Ensure basic handler exists
+    if not _temp_logger.handlers:
+        _temp_logger.addHandler(logging.StreamHandler())
+except Exception:
+    # Fallback: create a minimal logger if logging setup fails
+    _temp_logger = logging.getLogger(__name__)
+    _temp_logger.addHandler(logging.StreamHandler())
 
 # Add src directory to path to import blacklist_manager
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 try:
     from crypto_remote.blacklist_manager import BlacklistManager
 except ImportError as e:
-    _temp_logger.warning(
-        f"⚠️ Failed to import BlacklistManager: {e}. Blacklist checks will be disabled."
-    )
+    try:
+        _temp_logger.warning(
+            f"⚠️ Failed to import BlacklistManager: {e}. Blacklist checks will be disabled."
+        )
+    except Exception:
+        # Ultimate fallback: print to stderr if logger fails
+        print(f"⚠️ Failed to import BlacklistManager: {e}. Blacklist checks will be disabled.", file=sys.stderr)
     BlacklistManager = None
 except Exception as e:
-    _temp_logger.error(
-        f"❌ Error importing BlacklistManager: {e}. Blacklist checks will be disabled."
-    )
+    try:
+        _temp_logger.error(
+            f"❌ Error importing BlacklistManager: {e}. Blacklist checks will be disabled."
+        )
+    except Exception:
+        # Ultimate fallback: print to stderr if logger fails
+        print(f"❌ Error importing BlacklistManager: {e}. Blacklist checks will be disabled.", file=sys.stderr)
     BlacklistManager = None
 
 # Import stable buy strategy
