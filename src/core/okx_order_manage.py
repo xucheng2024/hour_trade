@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import psycopg
-import psycopg.extras
 import requests
 from dotenv import load_dotenv
 from okx.Account import AccountAPI

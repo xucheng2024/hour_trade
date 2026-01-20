@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import psycopg
-import psycopg.extras
 import websocket
 from dotenv import load_dotenv
 from okx.MarketData import MarketAPI

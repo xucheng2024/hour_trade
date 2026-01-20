@@ -85,7 +85,7 @@ class OrderSyncManager:
         self.deep_recovery_execution_times: list = []  # Track execution times
 
     def sync_orders_from_database(self):
-        """Sync active_orders with database state
+        """Sync active_orders, stable_active_orders, and batch_active_orders with database state
         This handles cases where external processes or manual operations
         sold orders but websocket_limit_trading.py memory still thinks they're active
         """
@@ -93,7 +93,7 @@ class OrderSyncManager:
             conn = self.get_db_connection()
             cur = conn.cursor()
 
-            # Check original strategy orders
+            # ✅ FIX: Check original strategy orders
             with self.lock:
                 orders_to_check = list(self.active_orders.items())
 
@@ -146,6 +146,98 @@ class OrderSyncManager:
                                     del self.active_orders[instId]
                 except Exception as e:
                     logger.debug(f"Error checking original orders: {e}")
+
+            # ✅ FIX: Check stable strategy orders
+            with self.lock:
+                stable_orders_to_check = list(self.stable_active_orders.items())
+
+            stable_ordId_to_instId = {}
+            stable_all_ordIds = []
+            for instId, order_info in stable_orders_to_check:
+                ordId = order_info.get("ordId")
+                if not ordId:
+                    continue
+                stable_ordId_to_instId[ordId] = instId
+                stable_all_ordIds.append(ordId)
+
+            if stable_all_ordIds:
+                try:
+                    cur.execute(
+                        """
+                        SELECT instId, ordId, state FROM orders
+                        WHERE ordId = ANY(%s) AND flag = %s
+                        """,
+                        (stable_all_ordIds, self.stable_strategy_name),
+                    )
+                    rows = cur.fetchall()
+
+                    db_states = {
+                        (row[0], row[1]): row[2] if row[2] else "" for row in rows
+                    }
+
+                    stable_orders_to_remove = []
+                    for ordId, instId in stable_ordId_to_instId.items():
+                        state = db_states.get((instId, ordId), "")
+                        if state == "sold out":
+                            stable_orders_to_remove.append((instId, ordId))
+
+                    if stable_orders_to_remove:
+                        with self.lock:
+                            for instId, ordId in stable_orders_to_remove:
+                                if (
+                                    instId in self.stable_active_orders
+                                    and self.stable_active_orders[instId].get("ordId")
+                                    == ordId
+                                ):
+                                    logger.warning(
+                                        f"🔄 SYNC: {instId} (stable) ordId={ordId} already sold in DB, "
+                                        f"removing from stable_active_orders"
+                                    )
+                                    del self.stable_active_orders[instId]
+                except Exception as e:
+                    logger.debug(f"Error checking stable orders: {e}")
+
+            # ✅ FIX: Check batch strategy orders
+            with self.lock:
+                batch_orders_to_check = list(self.batch_active_orders.items())
+
+            batch_instIds_to_check = []
+            for instId, order_info in batch_orders_to_check:
+                ordIds = order_info.get("ordIds", [])
+                if ordIds:
+                    batch_instIds_to_check.append((instId, ordIds))
+
+            if batch_instIds_to_check:
+                try:
+                    # For batch orders, check if any instId has all orders sold out
+                    for instId, ordIds in batch_instIds_to_check:
+                        cur.execute(
+                            """
+                            SELECT ordId, state FROM orders
+                            WHERE ordId = ANY(%s) AND flag = %s AND instId = %s
+                            """,
+                            (ordIds, self.batch_strategy_name, instId),
+                        )
+                        rows = cur.fetchall()
+
+                        # Build map of ordId -> state
+                        db_states = {row[0]: row[1] if row[1] else "" for row in rows}
+
+                        # Check if all orders are sold out
+                        all_sold = all(
+                            db_states.get(ordId, "") == "sold out" for ordId in ordIds
+                        )
+
+                        if all_sold:
+                            with self.lock:
+                                if instId in self.batch_active_orders:
+                                    logger.warning(
+                                        f"🔄 SYNC: {instId} (batch) all orders sold in DB, "
+                                        f"removing from batch_active_orders"
+                                    )
+                                    del self.batch_active_orders[instId]
+                except Exception as e:
+                    logger.debug(f"Error checking batch orders: {e}")
 
             cur.close()
             conn.close()
@@ -504,10 +596,8 @@ class OrderSyncManager:
                     if instId in self.batch_active_orders:
                         continue
 
-                # Get fillTime from all orders and use the latest one
+                # ✅ FIX: Get fillTime from all orders and use the latest one
                 # This ensures next_hour_close_time is correct even if later batches fill much later
-                # ✅ OPTIMIZED: Only call API for first order per instId to avoid rate limits
-                # Batch orders are usually filled close together, so one API call is sufficient
                 latest_fill_time = None
                 latest_create_time_ms = None
                 ordIds = []
@@ -528,42 +618,59 @@ class OrderSyncManager:
                     ):
                         latest_create_time_ms = create_time_ms
 
-                # Try to get fillTime from OKX API for first order only (batches fill close together)
+                # ✅ FIX: Try to get fillTime from OKX API for all orders to find the latest
+                # This ensures we use the actual latest fill time, not just the first order's
                 if (
                     not self.simulation_mode
                     and api is not None
                     and batch_api_call_count < max_api_calls_per_cycle
                     and orders
                 ):
-                    first_order = orders[0]
-                    first_ordId = first_order["ordId"]
-                    try:
-                        result = api.get_order(instId=instId, ordId=first_ordId)
-                        batch_api_call_count += 1
-                        if batch_api_call_count < max_api_calls_per_cycle:
-                            time.sleep(api_call_delay)
+                    # Check all orders to find the latest fillTime
+                    for order_info in orders:
+                        if batch_api_call_count >= max_api_calls_per_cycle:
+                            break
+                        ordId = order_info["ordId"]
+                        try:
+                            result = api.get_order(instId=instId, ordId=ordId)
+                            batch_api_call_count += 1
+                            if batch_api_call_count < max_api_calls_per_cycle:
+                                time.sleep(api_call_delay)
 
-                        if result and result.get("data") and len(result["data"]) > 0:
-                            order_data = result["data"][0]
-                            fill_time_ms = order_data.get("fillTime", "")
-                            if fill_time_ms and fill_time_ms != "":
-                                try:
-                                    latest_fill_time = datetime.fromtimestamp(
-                                        int(fill_time_ms) / 1000
-                                    )
-                                    logger.info(
-                                        f"✅ RECOVER: Using OKX fillTime for batch {instId} (from first order {first_ordId}): "
-                                        f"{latest_fill_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                                    )
-                                except (ValueError, TypeError) as e:
-                                    logger.warning(
-                                        f"⚠️ RECOVER: Invalid fillTime from OKX for batch {instId}, ordId={first_ordId}: {fill_time_ms}, "
-                                        f"falling back to create_time: {e}"
-                                    )
-                    except Exception as e:
-                        logger.warning(
-                            f"⚠️ RECOVER: Failed to get order from OKX for batch {instId}, "
-                            f"ordId={first_ordId}: {e}, falling back to create_time"
+                            if (
+                                result
+                                and result.get("data")
+                                and len(result["data"]) > 0
+                            ):
+                                order_data = result["data"][0]
+                                fill_time_ms = order_data.get("fillTime", "")
+                                if fill_time_ms and fill_time_ms != "":
+                                    try:
+                                        fill_time = datetime.fromtimestamp(
+                                            int(fill_time_ms) / 1000
+                                        )
+                                        # Track the latest fill_time across all orders
+                                        if (
+                                            latest_fill_time is None
+                                            or fill_time > latest_fill_time
+                                        ):
+                                            latest_fill_time = fill_time
+                                    except (ValueError, TypeError) as e:
+                                        logger.warning(
+                                            f"⚠️ RECOVER: Invalid fillTime from OKX for batch {instId}, ordId={ordId}: {fill_time_ms}, "
+                                            f"skipping: {e}"
+                                        )
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ RECOVER: Failed to get order from OKX for batch {instId}, "
+                                f"ordId={ordId}: {e}, skipping"
+                            )
+
+                    if latest_fill_time:
+                        logger.info(
+                            f"✅ RECOVER: Using latest OKX fillTime for batch {instId}: "
+                            f"{latest_fill_time.strftime('%Y-%m-%d %H:%M:%S')} "
+                            f"(checked {min(len(orders), batch_api_call_count)} orders)"
                         )
 
                 # Fallback to latest create_time if fillTime not available
@@ -729,14 +836,14 @@ class OrderSyncManager:
                 # Only recover if past sell time
                 if now >= next_hour:
                     logger.warning(
-                        f"🔄 DEEP RECOVER: Found stuck stable order: {instId}, "
+                        f"🔄 DEEP RECOVER: Found stuck original order: {instId}, "
                         f"ordId={ordId}, state={db_state}, fill_time={fill_time.strftime('%Y-%m-%d %H:%M:%S')}, "
-                        f"recovering to stable_active_orders"
+                        f"recovering to active_orders"
                     )
 
-                    # Restore to stable_active_orders
+                    # ✅ FIX: Restore to active_orders (original strategy), not stable_active_orders
                     with self.lock:
-                        self.stable_active_orders[instId] = {
+                        self.active_orders[instId] = {
                             "ordId": ordId,
                             "next_hour_close_time": next_hour,
                             "sell_triggered": False,
@@ -744,15 +851,15 @@ class OrderSyncManager:
                             "last_sell_attempt_time": None,
                         }
 
-                    # Trigger sell immediately
+                    # ✅ FIX: Trigger original strategy sell signal, not stable
                     logger.warning(
-                        f"⏰ DEEP RECOVER SELL: {instId} (stable), "
+                        f"⏰ DEEP RECOVER SELL: {instId} (original), "
                         f"triggering sell for recovered order"
                     )
                     import threading
 
                     threading.Thread(
-                        target=self.process_stable_sell_signal,
+                        target=self.process_sell_signal,
                         args=(instId,),
                         daemon=True,
                     ).start()
@@ -915,9 +1022,8 @@ class OrderSyncManager:
                     if instId in self.batch_active_orders:
                         continue
 
-                # Get fillTime from all orders and use the latest one
-                # ✅ OPTIMIZED: Only call API for first order per instId to avoid rate limits
-                # Batch orders are usually filled close together, so one API call is sufficient
+                # ✅ FIX: Get fillTime from all orders and use the latest one
+                # This ensures next_hour_close_time is correct even if later batches fill much later
                 latest_fill_time = None
                 latest_create_time_ms = None
                 ordIds = []
@@ -938,34 +1044,55 @@ class OrderSyncManager:
                     ):
                         latest_create_time_ms = create_time_ms
 
-                # Try to get fillTime from OKX API for first order only (batches fill close together)
+                # ✅ FIX: Try to get fillTime from OKX API for all orders to find the latest
+                # This ensures we use the actual latest fill time, not just the first order's
                 if (
                     api is not None
                     and api_call_count < max_api_calls_per_cycle
                     and orders
                 ):
-                    first_order = orders[0]
-                    first_ordId = first_order["ordId"]
-                    try:
-                        result = api.get_order(instId=instId, ordId=first_ordId)
-                        api_call_count += 1
-                        if api_call_count < max_api_calls_per_cycle:
-                            time.sleep(api_call_delay)
+                    # Check all orders to find the latest fillTime
+                    for order_info in orders:
+                        if api_call_count >= max_api_calls_per_cycle:
+                            break
+                        ordId = order_info["ordId"]
+                        try:
+                            result = api.get_order(instId=instId, ordId=ordId)
+                            api_call_count += 1
+                            if api_call_count < max_api_calls_per_cycle:
+                                time.sleep(api_call_delay)
 
-                        if result and result.get("data") and len(result["data"]) > 0:
-                            order_data = result["data"][0]
-                            fill_time_ms = order_data.get("fillTime", "")
-                            if fill_time_ms and fill_time_ms != "":
-                                try:
-                                    latest_fill_time = datetime.fromtimestamp(
-                                        int(fill_time_ms) / 1000
-                                    )
-                                except (ValueError, TypeError):
-                                    pass
-                    except Exception as e:
-                        logger.debug(
-                            f"⚠️ DEEP RECOVER: Failed to get order from OKX for batch {instId}, "
-                            f"ordId={first_ordId}: {e}, falling back to create_time"
+                            if (
+                                result
+                                and result.get("data")
+                                and len(result["data"]) > 0
+                            ):
+                                order_data = result["data"][0]
+                                fill_time_ms = order_data.get("fillTime", "")
+                                if fill_time_ms and fill_time_ms != "":
+                                    try:
+                                        fill_time = datetime.fromtimestamp(
+                                            int(fill_time_ms) / 1000
+                                        )
+                                        # Track the latest fill_time across all orders
+                                        if (
+                                            latest_fill_time is None
+                                            or fill_time > latest_fill_time
+                                        ):
+                                            latest_fill_time = fill_time
+                                    except (ValueError, TypeError):
+                                        pass
+                        except Exception as e:
+                            logger.debug(
+                                f"⚠️ DEEP RECOVER: Failed to get order from OKX for batch {instId}, "
+                                f"ordId={ordId}: {e}, skipping"
+                            )
+
+                    if latest_fill_time:
+                        logger.info(
+                            f"✅ DEEP RECOVER: Using latest OKX fillTime for batch {instId}: "
+                            f"{latest_fill_time.strftime('%Y-%m-%d %H:%M:%S')} "
+                            f"(checked {min(len(orders), api_call_count)} orders)"
                         )
 
                 # Fallback to latest create_time if fillTime not available

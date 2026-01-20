@@ -12,7 +12,6 @@ import numpy as np
 import okx_strategy
 import pandas as pd
 import psycopg
-import psycopg.extras
 import requests
 import websocket
 from dotenv import load_dotenv
