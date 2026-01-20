@@ -658,15 +658,12 @@ class MomentumVolumeStrategy:
             in_range = percentile_60 <= current_vol <= percentile_90
 
             if not in_range:
-                logger.debug(
+                # Log at INFO level when blocked (important for debugging)
+                logger.info(
                     f"🚫 {instId} Volatility filter: {current_vol:.6f} not in range "
                     f"[{percentile_60:.6f}, {percentile_90:.6f}]"
                 )
-            else:
-                logger.debug(
-                    f"✅ {instId} Volatility filter: {current_vol:.6f} in range "
-                    f"[{percentile_60:.6f}, {percentile_90:.6f}]"
-                )
+            # Don't log when passed to reduce log volume
 
             return in_range
 
@@ -777,6 +774,7 @@ class MomentumVolumeStrategy:
         # Check if in downtrend (use current_price for intra-hour checks)
         in_downtrend = self.is_in_downtrend(instId, current_price=current_price)
         if not in_downtrend:
+            # Keep as debug to reduce log volume
             logger.debug(
                 f"⏭️ {instId} Not in downtrend (current_price={current_price:.6f})"
             )
@@ -786,15 +784,17 @@ class MomentumVolumeStrategy:
         # This prevents immediate buys right after history initialization
         with self.lock:
             if not self.first_candle_confirmed.get(instId, False):
-                logger.debug(
+                # Only log at INFO level to reduce Railway log volume
+                logger.info(
                     f"⏸️ {instId} First confirmed 1H candle not received yet, "
-                    f"blocking buy to avoid immediate triggers after history init"
+                    f"blocking buy (waiting for confirm='1' + volatility history)"
                 )
                 return False, None
 
         # Check if buy should be blocked
         should_block = self.should_block_buy(instId)
         if should_block:
+            # Keep as debug to reduce log volume
             logger.debug(f"🚫 {instId} Buy blocked by should_block_buy check")
             return False, None
 
@@ -803,6 +803,7 @@ class MomentumVolumeStrategy:
         volume_stats = self.calculate_volume_stats(instId)
 
         if momentum_stats is None or volume_stats is None:
+            # Keep as debug to reduce log volume
             logger.debug(
                 f"⏭️ {instId} Insufficient stats: "
                 f"momentum={momentum_stats is not None}, "
@@ -864,16 +865,13 @@ class MomentumVolumeStrategy:
         # Priority C: Check volatility filter
         volatility_passed = self._check_volatility_filter(instId)
         if not volatility_passed:
-            logger.debug(
+            # Log at INFO level when blocked (important for debugging)
+            logger.info(
                 f"🚫 {instId} Volatility filter blocked buy signal "
                 f"(current_price={current_price:.6f})"
             )
             return False, None
-        else:
-            logger.debug(
-                f"✅ {instId} Volatility filter passed "
-                f"(current_price={current_price:.6f})"
-            )
+        # Don't log when passed to reduce log volume (only log when blocked)
 
         # Calculate price drop
         price_drop_pct = None
