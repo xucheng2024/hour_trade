@@ -30,10 +30,11 @@ import logging
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import blacklist_manager
+# ✅ FIX: Import BlacklistManager from local utils module instead of external crypto_remote
+# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
-    from crypto_remote.blacklist_manager import BlacklistManager
+    from utils.blacklist_manager import BlacklistManager
 except ImportError:
     # Fallback if import fails
     BlacklistManager = None
