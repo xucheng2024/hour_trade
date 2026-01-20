@@ -321,8 +321,6 @@ def on_candle_message(
     batch_active_orders: dict,
     lock: threading.Lock,
     process_sell_signal_func,
-    process_stable_sell_signal_func,
-    process_batch_sell_signal_func,
     thread_pool=None,  # Optional thread pool for async processing
 ):
     """Handle candle WebSocket messages"""
@@ -462,13 +460,14 @@ def on_candle_message(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
                                         f"close_price={close_price:.6f}, trigger SELL (stable)"
                                     )
+                                    # ✅ FIX: Use process_sell_signal_func for stable orders too (each order is independent)
                                     if thread_pool:
                                         thread_pool.submit(
-                                            process_stable_sell_signal_func, instId
+                                            process_sell_signal_func, instId
                                         )
                                     else:
                                         threading.Thread(
-                                            target=process_stable_sell_signal_func,
+                                            target=process_sell_signal_func,
                                             args=(instId,),
                                             daemon=True,
                                         ).start()
@@ -504,13 +503,14 @@ def on_candle_message(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
                                         f"close_price={close_price:.6f}, trigger SELL (batch)"
                                     )
+                                    # ✅ FIX: Use process_sell_signal_func for batch orders too (each order is independent)
                                     if thread_pool:
                                         thread_pool.submit(
-                                            process_batch_sell_signal_func, instId
+                                            process_sell_signal_func, instId
                                         )
                                     else:
                                         threading.Thread(
-                                            target=process_batch_sell_signal_func,
+                                            target=process_sell_signal_func,
                                             args=(instId,),
                                             daemon=True,
                                         ).start()

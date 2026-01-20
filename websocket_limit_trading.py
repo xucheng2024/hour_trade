@@ -50,7 +50,10 @@ except ImportError as e:
         )
     except Exception:
         # Ultimate fallback: print to stderr if logger fails
-        print(f"⚠️ Failed to import BlacklistManager: {e}. Blacklist checks will be disabled.", file=sys.stderr)
+        print(
+            f"⚠️ Failed to import BlacklistManager: {e}. Blacklist checks will be disabled.",
+            file=sys.stderr,
+        )
     BlacklistManager = None
 except Exception as e:
     try:
@@ -59,7 +62,10 @@ except Exception as e:
         )
     except Exception:
         # Ultimate fallback: print to stderr if logger fails
-        print(f"❌ Error importing BlacklistManager: {e}. Blacklist checks will be disabled.", file=sys.stderr)
+        print(
+            f"❌ Error importing BlacklistManager: {e}. Blacklist checks will be disabled.",
+            file=sys.stderr,
+        )
     BlacklistManager = None
 
 # Import stable buy strategy
@@ -234,25 +240,17 @@ try:
     from core.signal_processing import (
         process_batch_buy_signal as _process_batch_buy_signal,
     )
-    from core.signal_processing import (
-        process_batch_sell_signal as _process_batch_sell_signal,
-    )
     from core.signal_processing import process_buy_signal as _process_buy_signal
     from core.signal_processing import process_sell_signal as _process_sell_signal
     from core.signal_processing import (
         process_stable_buy_signal as _process_stable_buy_signal,
-    )
-    from core.signal_processing import (
-        process_stable_sell_signal as _process_stable_sell_signal,
     )
 except ImportError as e:
     logger.warning(f"Failed to import signal_processing: {e}")
     _process_buy_signal = None
     _process_sell_signal = None
     _process_stable_buy_signal = None
-    _process_stable_sell_signal = None
     _process_batch_buy_signal = None
-    _process_batch_sell_signal = None
 
 try:
     from core.websocket_connection import candle_open as _candle_open
@@ -724,8 +722,6 @@ def on_candle_message(ws, msg_string):
             batch_active_orders,
             lock,
             process_sell_signal,
-            process_stable_sell_signal,
-            process_batch_sell_signal,
             thread_pool,  # Pass thread pool for async processing
         )
     else:
@@ -774,21 +770,9 @@ def process_stable_buy_signal(instId: str, limit_price: float):
 
 
 def process_stable_sell_signal(instId: str):
-    """Process stable strategy sell signal at next hour close (idempotent)"""
-    if _process_stable_sell_signal:
-        _process_stable_sell_signal(
-            instId,
-            STABLE_STRATEGY_NAME,
-            SIMULATION_MODE,
-            get_trade_api,
-            get_db_connection,
-            sell_stable_order,
-            stable_active_orders,
-            stable_strategy,
-            lock,
-        )
-    else:
-        logger.error("process_stable_sell_signal not available - module import failed")
+    """Process stable strategy sell signal - uses same function as regular sell (each order is independent)"""
+    # ✅ FIX: Use process_sell_signal directly since each order is treated independently
+    process_sell_signal(instId)
 
 
 def buy_stable_order(
@@ -914,25 +898,6 @@ def process_batch_buy_signal(instId: str, limit_price: float):
         logger.error("process_batch_buy_signal not available - module import failed")
 
 
-def process_batch_sell_signal(instId: str):
-    """Process batch strategy sell signal at next hour close (idempotent)"""
-    if _process_batch_sell_signal:
-        _process_batch_sell_signal(
-            instId,
-            BATCH_STRATEGY_NAME,
-            SIMULATION_MODE,
-            get_trade_api,
-            get_db_connection,
-            sell_market_order,  # ✅ FIX: Use sell_market_order instead of sell_batch_order
-            batch_active_orders,
-            batch_pending_buys,
-            batch_strategy,
-            lock,
-        )
-    else:
-        logger.error("process_batch_sell_signal not available - module import failed")
-
-
 # Initialize order sync manager after process_sell_signal is defined
 if OrderSyncManager is not None and order_sync_manager is None:
     try:
@@ -949,8 +914,8 @@ if OrderSyncManager is not None and order_sync_manager is None:
             batch_strategy=batch_strategy,
             lock=lock,
             process_sell_signal=process_sell_signal,
-            process_stable_sell_signal=process_stable_sell_signal,
-            process_batch_sell_signal=process_batch_sell_signal,
+            process_stable_sell_signal=process_sell_signal,  # ✅ FIX: Use same function for stable (each order is independent)
+            process_batch_sell_signal=process_sell_signal,  # ✅ FIX: Use same function for batch (each order is independent)
             simulation_mode=SIMULATION_MODE,
         )
         logger.info("✅ OrderSyncManager initialized")
@@ -1167,9 +1132,13 @@ def check_sell_timeout():
                 if strategy_type == "original":
                     thread_pool.submit(process_sell_signal, instId)
                 elif strategy_type == "stable":
-                    thread_pool.submit(process_stable_sell_signal, instId)
+                    thread_pool.submit(
+                        process_sell_signal, instId
+                    )  # ✅ FIX: Use same function for stable
                 elif strategy_type == "batch":
-                    thread_pool.submit(process_batch_sell_signal, instId)
+                    thread_pool.submit(
+                        process_sell_signal, instId
+                    )  # ✅ FIX: Use same function for batch
         except Exception as e:
             logger.error(f"Error in check_sell_timeout: {e}")
             time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)  # Wait on error

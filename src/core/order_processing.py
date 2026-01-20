@@ -419,8 +419,8 @@ def _execute_market_sell(
             # Check for existing sell_order_id for this specific buy order
             try:
                 cur_check.execute(
-                    "SELECT sell_order_id FROM orders WHERE instId = %s AND ordId = %s AND flag = %s",
-                    (instId, ordId, strategy_name),
+                    "SELECT sell_order_id FROM orders WHERE instId = %s AND ordId = %s",
+                    (instId, ordId),
                 )
                 row = cur_check.fetchone()
                 if row and row[0]:
@@ -468,13 +468,12 @@ def _execute_market_sell(
                                     )
                                     cur_check.execute(
                                         "UPDATE orders SET state = %s, sell_price = %s "
-                                        "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                        "WHERE instId = %s AND ordId = %s",
                                         (
                                             "sold out",
                                             sell_price_str,
                                             instId,
                                             ordId,
-                                            strategy_name,
                                         ),
                                     )
                                     conn.commit()
@@ -527,12 +526,11 @@ def _execute_market_sell(
                                         )
                                         cur_check.execute(
                                             "UPDATE orders SET size = %s, sell_order_id = NULL "
-                                            "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                            "WHERE instId = %s AND ordId = %s",
                                             (
                                                 remaining_size_str,
                                                 instId,
                                                 ordId,
-                                                strategy_name,
                                             ),
                                         )
                                         conn.commit()
@@ -582,13 +580,12 @@ def _execute_market_sell(
                                             )
                                             cur_check.execute(
                                                 "UPDATE orders SET state = %s, sell_price = %s, sell_order_id = NULL "
-                                                "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                                "WHERE instId = %s AND ordId = %s",
                                                 (
                                                     "sold out",
                                                     sell_price_str,
                                                     instId,
                                                     ordId,
-                                                    strategy_name,
                                                 ),
                                             )
                                             sell_amount_usdt = (
@@ -610,12 +607,11 @@ def _execute_market_sell(
                                             )
                                             cur_check.execute(
                                                 "UPDATE orders SET state = %s, sell_order_id = NULL "
-                                                "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                                "WHERE instId = %s AND ordId = %s",
                                                 (
                                                     "sold out",
                                                     instId,
                                                     ordId,
-                                                    strategy_name,
                                                 ),
                                             )
 
@@ -628,8 +624,8 @@ def _execute_market_sell(
                                         f"has state={sell_order_state} with no fills, clearing linkage"
                                     )
                                     cur_check.execute(
-                                        "UPDATE orders SET sell_order_id = NULL WHERE instId = %s AND ordId = %s AND flag = %s",
-                                        (instId, ordId, strategy_name),
+                                        "UPDATE orders SET sell_order_id = NULL WHERE instId = %s AND ordId = %s",
+                                        (instId, ordId),
                                     )
                                     conn.commit()
                     except Exception as e:
@@ -687,8 +683,8 @@ def _execute_market_sell(
                         cur_save = conn.cursor()
                         try:
                             cur_save.execute(
-                                "UPDATE orders SET sell_order_id = %s WHERE instId = %s AND ordId = %s AND flag = %s",
-                                (order_id, instId, ordId, strategy_name),
+                                "UPDATE orders SET sell_order_id = %s WHERE instId = %s AND ordId = %s",
+                                (order_id, instId, ordId),
                             )
                             conn.commit()
                         except Exception as e:
@@ -799,13 +795,12 @@ def _execute_market_sell(
 
         cur.execute(
             "UPDATE orders SET state = %s, sell_price = %s "
-            "WHERE instId = %s AND ordId = %s AND flag = %s",
+            "WHERE instId = %s AND ordId = %s",
             (
                 "sold out",
                 sell_price_str,
                 instId,
                 ordId,
-                strategy_name,
             ),
         )
         rows_updated = cur.rowcount
