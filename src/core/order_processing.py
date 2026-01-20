@@ -99,11 +99,11 @@ def buy_limit_order(
     cur = conn.cursor()
     try:
         now = datetime.now()
-        # Sell at 55 minutes of current hour (e.g., 10:55)
+        # ✅ FIX: Always sell at next hour's 55 minutes (next hour after purchase)
+        # Calculate next hour's 55 minutes
         sell_time_dt = now.replace(minute=55, second=0, microsecond=0)
-        # If current time is past 55 minutes, sell at next hour's 55 minutes
-        if now.minute >= 55:
-            sell_time_dt = sell_time_dt + timedelta(hours=1)
+        # Always add 1 hour to ensure we sell at next hour's close
+        sell_time_dt = sell_time_dt + timedelta(hours=1)
         create_time = int(now.timestamp() * 1000)
         sell_time = int(sell_time_dt.timestamp() * 1000)
         order_state = "filled" if simulation_mode else ""
@@ -265,7 +265,8 @@ def sell_market_order(
 
         if failed_flag > 0:
             logger.error(
-                f"❌ {strategy_name} SELL FAILED: {instId}, ordId={ordId}, all {max_attempts} attempts failed"
+                f"❌ {strategy_name} SELL FAILED: {instId}, ordId={ordId}, "
+                f"all {max_attempts} attempts failed"
             )
             return False
 
@@ -295,7 +296,8 @@ def sell_market_order(
 
         if rows_updated == 0:
             logger.error(
-                f"❌ {strategy_name} SELL DB UPDATE FAILED: {instId}, ordId={ordId}, no rows updated"
+                f"❌ {strategy_name} SELL DB UPDATE FAILED: {instId}, "
+                f"ordId={ordId}, no rows updated"
             )
             return False
 
@@ -399,11 +401,11 @@ def buy_momentum_order(
     cur = conn.cursor()
     try:
         now = datetime.now()
-        # Sell at 55 minutes of current hour (e.g., 10:55)
+        # ✅ FIX: Always sell at next hour's 55 minutes (next hour after purchase)
+        # Calculate next hour's 55 minutes
         sell_time_dt = now.replace(minute=55, second=0, microsecond=0)
-        # If current time is past 55 minutes, sell at next hour's 55 minutes
-        if now.minute >= 55:
-            sell_time_dt = sell_time_dt + timedelta(hours=1)
+        # Always add 1 hour to ensure we sell at next hour's close
+        sell_time_dt = sell_time_dt + timedelta(hours=1)
         create_time = int(now.timestamp() * 1000)
         sell_time = int(sell_time_dt.timestamp() * 1000)
         order_state = "filled" if simulation_mode else ""
@@ -597,7 +599,8 @@ def sell_momentum_order(
 
         if rows_updated == 0:
             logger.error(
-                f"❌ {strategy_name} SELL DB UPDATE FAILED: {instId}, ordId={ordId}, no rows updated"
+                f"❌ {strategy_name} SELL DB UPDATE FAILED: {instId}, "
+                f"ordId={ordId}, no rows updated"
             )
             return False
 

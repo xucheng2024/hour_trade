@@ -52,11 +52,11 @@ def process_buy_signal(
                     if instId in pending_buys:
                         del pending_buys[instId]
                     now = datetime.now()
-                    # Sell at 55 minutes of current hour (e.g., 10:55)
+                    # ✅ FIX: Always sell at next hour's 55 minutes
+                    # Calculate next hour's 55 minutes
                     sell_time = now.replace(minute=55, second=0, microsecond=0)
-                    # If current time is past 55 minutes, sell at next hour's 55 minutes
-                    if now.minute >= 55:
-                        sell_time = sell_time + timedelta(hours=1)
+                    # Always add 1 hour to ensure we sell at next hour's close
+                    sell_time = sell_time + timedelta(hours=1)
                     active_orders[instId] = {
                         "ordId": ordId,
                         "buy_price": limit_price,
@@ -292,11 +292,11 @@ def process_momentum_buy_signal(
                         momentum_strategy.record_buy(instId, buy_price, size, ordId)
 
                     now = datetime.now()
-                    # Sell at 55 minutes of current hour (e.g., 10:55)
+                    # ✅ FIX: Always sell at next hour's 55 minutes
+                    # Calculate next hour's 55 minutes
                     sell_time = now.replace(minute=55, second=0, microsecond=0)
-                    # If current time is past 55 minutes, sell at next hour's 55 minutes
-                    if now.minute >= 55:
-                        sell_time = sell_time + timedelta(hours=1)
+                    # Always add 1 hour to ensure we sell at next hour's close
+                    sell_time = sell_time + timedelta(hours=1)
 
                     # ✅ OPTIMIZED: Use dict keyed by ordId instead of parallel lists
                     if instId not in momentum_active_orders:
@@ -447,7 +447,9 @@ def process_momentum_sell_signal(
                         with lock:
                             if instId in momentum_active_orders:
                                 # ✅ FIXED: Use orders dict instead of legacy lists
-                                if ordId in momentum_active_orders[instId].get("orders", {}):
+                                if ordId in momentum_active_orders[instId].get(
+                                    "orders", {}
+                                ):
                                     del momentum_active_orders[instId]["orders"][ordId]
                         continue
 

@@ -69,12 +69,14 @@ def on_ticker_message(
                                     f"on ticker update (coin is active)"
                                 )
 
-                            if (
-                                instId not in pending_buys
-                                and instId not in active_orders
-                            ):
-                                limit_percent = crypto_limits[instId]
-                                ref_price = reference_prices.get(instId)
+                            # Skip if already in pending_buys or active_orders
+                            if instId in pending_buys or instId in active_orders:
+                                continue
+
+                        # Get reference price and limit_percent outside lock
+                        with lock:
+                            ref_price = reference_prices.get(instId)
+                            limit_percent = crypto_limits[instId]
 
                         if ref_price is None or ref_price <= 0:
                             with lock:

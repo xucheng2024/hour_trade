@@ -124,6 +124,63 @@ def import_limits_from_json():
         conn.close()
 
 
+def update_limits(limits_dict):
+    """Update limit_percent and limit_ratio in hour_limit table
+
+    Args:
+        limits_dict: Dictionary with inst_id as key and limit_percent as value
+                    Example: {"BABYDOGE-USDT": 95.0, "RSS3-USDT": 97.5}
+    """
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+
+    try:
+        count = 0
+        updated = 0
+        not_found = []
+
+        for inst_id, limit_percent in limits_dict.items():
+            limit_ratio = limit_percent / 100.0
+
+            # Update existing records only
+            cur.execute(
+                """
+                UPDATE hour_limit
+                SET limit_percent = %s,
+                    limit_ratio = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE inst_id = %s
+                """,
+                (limit_percent, limit_ratio, inst_id),
+            )
+
+            if cur.rowcount > 0:
+                updated += 1
+                print(
+                    f"✅ Updated {inst_id}: limit_percent={limit_percent}, "
+                    f"limit_ratio={limit_ratio}"
+                )
+            else:
+                not_found.append(inst_id)
+                print(f"⚠️  {inst_id} not found in database")
+
+            count += 1
+
+        conn.commit()
+        print()
+        print(f"✅ Successfully updated {updated} out of {count} records")
+        if not_found:
+            print(f"⚠️  {len(not_found)} records not found: {', '.join(not_found)}")
+        return True
+    except Exception as e:
+        print(f"❌ Update failed: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+
 def main():
     print("=" * 60)
     print("创建 hour_limit 表并导入数据")
