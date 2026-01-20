@@ -94,6 +94,10 @@ class MomentumVolumeStrategy:
         self.SCORE_THRESHOLD_ADD = -3.2  # Add position threshold
         self.MIN_HOURS_BETWEEN_BUYS = 2  # Minimum hours between additional buys
 
+        # Track if we've received at least one confirmed 1H candle after startup
+        # This prevents immediate buys right after history initialization
+        self.first_candle_confirmed: Dict[str, bool] = {}
+
     def initialize_history(
         self, instId: str, candles: list, logger_instance=None
     ) -> bool:
@@ -350,12 +354,30 @@ class MomentumVolumeStrategy:
             if realized_vol is not None:
                 self.volatility_history[instId].append(realized_vol)
 
-            # deque automatically maintains maxlen, but log when we have enough data
-            history_len = len(self.price_history[instId])
-            if history_len == M + 1:
+    def mark_first_candle_confirmed(self, instId: str):
+        """Mark that we've received the first confirmed 1H candle for this crypto
+        This allows buy signals to be triggered after the first complete hour
+        """
+        with self.lock:
+            self.first_candle_confirmed[instId] = True
+
+            # Log history status if available (safe check to avoid KeyError)
+            if instId in self.price_history:
+                history_len = len(self.price_history[instId])
+                if history_len == M + 1:
+                    logger.debug(
+                        f"📊 {instId} History full: {history_len} 1H candles "
+                        f"(true {M}-hour window ready)"
+                    )
+                else:
+                    logger.debug(
+                        f"📊 {instId} First candle confirmed, "
+                        f"history: {history_len}/{M + 1} candles"
+                    )
+            else:
                 logger.debug(
-                    f"📊 {instId} History full: {history_len} 1H candles "
-                    f"(true {M}-hour window ready)"
+                    f"📊 {instId} First candle confirmed "
+                    f"(history not initialized yet)"
                 )
 
     def calculate_momentum_stats(self, instId: str) -> Optional[Dict]:
@@ -753,11 +775,27 @@ class MomentumVolumeStrategy:
                 return False, None
 
         # Check if in downtrend (use current_price for intra-hour checks)
-        if not self.is_in_downtrend(instId, current_price=current_price):
+        in_downtrend = self.is_in_downtrend(instId, current_price=current_price)
+        if not in_downtrend:
+            logger.debug(
+                f"⏭️ {instId} Not in downtrend (current_price={current_price:.6f})"
+            )
             return False, None
 
+        # Check if we've received at least one confirmed 1H candle for this crypto
+        # This prevents immediate buys right after history initialization
+        with self.lock:
+            if not self.first_candle_confirmed.get(instId, False):
+                logger.debug(
+                    f"⏸️ {instId} First confirmed 1H candle not received yet, "
+                    f"blocking buy to avoid immediate triggers after history init"
+                )
+                return False, None
+
         # Check if buy should be blocked
-        if self.should_block_buy(instId):
+        should_block = self.should_block_buy(instId)
+        if should_block:
+            logger.debug(f"🚫 {instId} Buy blocked by should_block_buy check")
             return False, None
 
         # Calculate statistics
@@ -765,6 +803,11 @@ class MomentumVolumeStrategy:
         volume_stats = self.calculate_volume_stats(instId)
 
         if momentum_stats is None or volume_stats is None:
+            logger.debug(
+                f"⏭️ {instId} Insufficient stats: "
+                f"momentum={momentum_stats is not None}, "
+                f"volume={volume_stats is not None}"
+            )
             return False, None
 
         # Priority D: Calculate scores for scoring system
@@ -819,8 +862,18 @@ class MomentumVolumeStrategy:
                     volume_ratio = self.calculate_volume_ratio(instId)
 
         # Priority C: Check volatility filter
-        if not self._check_volatility_filter(instId):
+        volatility_passed = self._check_volatility_filter(instId)
+        if not volatility_passed:
+            logger.debug(
+                f"🚫 {instId} Volatility filter blocked buy signal "
+                f"(current_price={current_price:.6f})"
+            )
             return False, None
+        else:
+            logger.debug(
+                f"✅ {instId} Volatility filter passed "
+                f"(current_price={current_price:.6f})"
+            )
 
         # Calculate price drop
         price_drop_pct = None
@@ -886,7 +939,8 @@ class MomentumVolumeStrategy:
                 f"⏭️ {instId} Score {total_score:.2f} not meeting threshold "
                 f"(first: {total_buy_pct==0.0}, needed: "
                 f"{self.SCORE_THRESHOLD_FIRST if total_buy_pct==0.0 else self.SCORE_THRESHOLD_ADD}, "
-                f"hours_since: {hours_since_last_buy:.1f})"
+                f"hours_since: {hours_since_last_buy:.1f}, "
+                f"scores: mom={score_mom:.2f}, vol={score_vol:.2f}, drop={score_drop:.2f})"
             )
             return False, None
 
@@ -1018,6 +1072,9 @@ class MomentumVolumeStrategy:
             # Keep volatility history for future use (Priority C)
             # if instId in self.volatility_history:
             #     del self.volatility_history[instId]
+            # Reset first candle confirmed flag so we wait for next confirmation
+            if instId in self.first_candle_confirmed:
+                del self.first_candle_confirmed[instId]
             logger.info(f"🔄 {instId} Position reset")
 
     def get_position_info(self, instId: str) -> Optional[Dict]:

@@ -261,6 +261,8 @@ def on_candle_message(
                             last_1h_candle_time[instId] = now
 
                         if momentum_strategy is not None and instId in crypto_limits:
+                            # Mark first candle confirmed to allow buy signals
+                            momentum_strategy.mark_first_candle_confirmed(instId)
                             candle_volume = (
                                 float(candle_data[5]) if len(candle_data) > 5 else 0.0
                             )
