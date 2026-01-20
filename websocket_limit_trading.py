@@ -38,10 +38,11 @@ except Exception:
     _temp_logger = logging.getLogger(__name__)
     _temp_logger.addHandler(logging.StreamHandler())
 
-# Add src directory to path to import blacklist_manager
+# ✅ FIX: Import BlacklistManager from local utils module instead of external crypto_remote
+# Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 try:
-    from crypto_remote.blacklist_manager import BlacklistManager
+    from utils.blacklist_manager import BlacklistManager
 except ImportError as e:
     try:
         _temp_logger.warning(
