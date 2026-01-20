@@ -7,7 +7,7 @@ Create recommended database indexes for order_sync performance
 import os
 import sys
 
-import psycopg2
+import psycopg
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -51,7 +51,7 @@ indexes = [
 def main():
     """Create all recommended indexes"""
     try:
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        conn = psycopg.connect(DATABASE_URL, connect_timeout=10)
         cur = conn.cursor()
 
         print("Creating database indexes for order_sync performance...")
@@ -64,7 +64,7 @@ def main():
                 cur.execute(idx["sql"])
                 conn.commit()
                 print(f"✅ Successfully created index: {idx['name']}")
-            except psycopg2.Error as e:
+            except psycopg.Error as e:
                 conn.rollback()
                 if "already exists" in str(e).lower():
                     print(f"⚠️  Index {idx['name']} already exists, skipping")
@@ -98,7 +98,7 @@ def main():
         conn.close()
         print("\n✅ Index creation completed!")
 
-    except psycopg2.Error as e:
+    except psycopg.Error as e:
         print(f"❌ Database error: {e}")
         sys.exit(1)
     except Exception as e:

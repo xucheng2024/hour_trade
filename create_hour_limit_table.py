@@ -7,7 +7,7 @@
 import json
 import os
 
-import psycopg2
+import psycopg
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,7 +21,7 @@ LIMITS_FILE = "valid_crypto_limits.json"
 
 def create_hour_limit_table():
     """创建 hour_limit 表"""
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL)
     cur = conn.cursor()
 
     try:
@@ -74,7 +74,7 @@ def import_limits_from_json():
     with open(LIMITS_FILE, "r") as f:
         data = json.load(f)
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL)
     cur = conn.cursor()
 
     try:
@@ -131,7 +131,7 @@ def update_limits(limits_dict):
         limits_dict: Dictionary with inst_id as key and limit_percent as value
                     Example: {"BABYDOGE-USDT": 95.0, "RSS3-USDT": 97.5}
     """
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL)
     cur = conn.cursor()
 
     try:

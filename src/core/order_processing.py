@@ -502,16 +502,136 @@ def _execute_market_sell(
                                     # Return False to allow retry on next call
                                     return False
                             else:
-                                # Sell order is canceled or unknown state, clear it from DB
-                                logger.warning(
-                                    f"⚠️ {log_prefix}: Existing sell order {existing_sell_order_id} "
-                                    f"has state={sell_order_state}, clearing linkage"
+                                # ✅ CRITICAL FIX: Sell order is canceled or unknown state
+                                # Check for partial fills before clearing linkage to prevent overselling
+                                acc_fill_sz = order_info.get("accFillSz", "0")
+                                acc_fill_sz_float = (
+                                    float(acc_fill_sz) if acc_fill_sz else 0.0
                                 )
-                                cur_check.execute(
-                                    "UPDATE orders SET sell_order_id = NULL WHERE instId = %s AND ordId = %s AND flag = %s",
-                                    (instId, ordId, strategy_name),
-                                )
-                                conn.commit()
+
+                                if acc_fill_sz_float > 0:
+                                    # ✅ PARTIAL FILL DETECTED: Update remaining size before clearing linkage
+                                    logger.warning(
+                                        f"⚠️ {log_prefix}: Existing sell order {existing_sell_order_id} "
+                                        f"has state={sell_order_state} but partial fill detected: "
+                                        f"accFillSz={acc_fill_sz_float}, original size={size_float}"
+                                    )
+
+                                    # Calculate remaining size to sell
+                                    remaining_size = size_float - acc_fill_sz_float
+
+                                    if remaining_size > 0:
+                                        # Update database with remaining size
+                                        remaining_size_str = format_number_func(
+                                            remaining_size, instId
+                                        )
+                                        cur_check.execute(
+                                            "UPDATE orders SET size = %s, sell_order_id = NULL "
+                                            "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                            (
+                                                remaining_size_str,
+                                                instId,
+                                                ordId,
+                                                strategy_name,
+                                            ),
+                                        )
+                                        conn.commit()
+
+                                        # Update size_float for the new sell order
+                                        size_float = remaining_size
+                                        size_str = format_number_func(
+                                            size_float, instId
+                                        )
+
+                                        logger.warning(
+                                            f"✅ {log_prefix}: Updated remaining size to {remaining_size_str} "
+                                            f"after partial fill of {acc_fill_sz_float}. "
+                                            f"Will place new sell order for remaining amount."
+                                        )
+                                    else:
+                                        # Fully filled despite state being canceled/unknown
+                                        # This shouldn't happen, but handle it gracefully
+                                        logger.error(
+                                            f"❌ {log_prefix}: Sell order {existing_sell_order_id} "
+                                            f"state={sell_order_state} but accFillSz={acc_fill_sz_float} >= "
+                                            f"original size={size_float}. This is unexpected. "
+                                            f"Attempting to fetch sell_price before marking as sold out."
+                                        )
+
+                                        # ✅ FIX: Attempt to fetch sell_price before marking as sold out
+                                        # This ensures PnL/reporting is accurate
+                                        (
+                                            sell_price,
+                                            price_source,
+                                            failure_chain,
+                                            is_confirmed_filled,
+                                        ) = _get_sell_price_with_fallback(
+                                            instId,
+                                            existing_sell_order_id,
+                                            tradeAPI,
+                                            get_market_api_func,
+                                            current_prices,
+                                            lock,
+                                            requested_size=size_float,
+                                        )
+
+                                        # Prepare UPDATE statement with or without sell_price
+                                        if sell_price > 0:
+                                            sell_price_str = format_number_func(
+                                                sell_price, instId
+                                            )
+                                            cur_check.execute(
+                                                "UPDATE orders SET state = %s, sell_price = %s, sell_order_id = NULL "
+                                                "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                                (
+                                                    "sold out",
+                                                    sell_price_str,
+                                                    instId,
+                                                    ordId,
+                                                    strategy_name,
+                                                ),
+                                            )
+                                            sell_amount_usdt = (
+                                                float(sell_price) * size_float
+                                            )
+                                            logger.warning(
+                                                f"✅ {log_prefix} FINALIZED: {instId}, price={sell_price_str} "
+                                                f"(from {price_source}), size={size_str}, amount={sell_amount_usdt:.2f} USDT, "
+                                                f"buy_ordId={ordId}, sell_ordId={existing_sell_order_id}"
+                                            )
+                                            play_sound_func("sell")
+                                        else:
+                                            # Could not get sell_price, but still mark as sold out to prevent overselling
+                                            # Log warning for reporting/PnL issues
+                                            logger.error(
+                                                f"⚠️ {log_prefix}: Sell order {existing_sell_order_id} fully filled "
+                                                f"but could not get sell_price. Chain: {' -> '.join(failure_chain)}. "
+                                                f"Marking as sold out without price - this may affect PnL reporting."
+                                            )
+                                            cur_check.execute(
+                                                "UPDATE orders SET state = %s, sell_order_id = NULL "
+                                                "WHERE instId = %s AND ordId = %s AND flag = %s",
+                                                (
+                                                    "sold out",
+                                                    instId,
+                                                    ordId,
+                                                    strategy_name,
+                                                ),
+                                            )
+
+                                        conn.commit()
+                                        return True
+                                else:
+                                    # No partial fill, safe to clear linkage
+                                    logger.warning(
+                                        f"⚠️ {log_prefix}: Existing sell order {existing_sell_order_id} "
+                                        f"has state={sell_order_state} with no fills, clearing linkage"
+                                    )
+                                    cur_check.execute(
+                                        "UPDATE orders SET sell_order_id = NULL WHERE instId = %s AND ordId = %s AND flag = %s",
+                                        (instId, ordId, strategy_name),
+                                    )
+                                    conn.commit()
                     except Exception as e:
                         logger.warning(
                             f"⚠️ Could not verify existing sell order {existing_sell_order_id}: {e}. "

@@ -7,7 +7,7 @@ Update limit_percent values in hour_limit table
 import os
 import sys
 
-import psycopg2
+import psycopg
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -63,7 +63,7 @@ def update_limits(limits_dict):
     Args:
         limits_dict: Dictionary with inst_id as key and limit_percent as value
     """
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL)
     cur = conn.cursor()
 
     try:

@@ -168,7 +168,7 @@ open https://your-project.vercel.app
 ```txt
 Flask==3.1.0                  ← Web框架
 python-dotenv==1.0.1         ← 环境变量
-psycopg2-binary==2.9.10      ← PostgreSQL
+psycopg[binary]>=3.2.0       ← PostgreSQL (v3, modern)
 python-okx==0.4.0            ← OKX API
 pandas==2.3.1                ← 数据处理
 requests==2.32.4             ← HTTP请求
@@ -322,7 +322,7 @@ def add_header(response):
 
 ```python
 # 使用连接池
-from psycopg2.pool import SimpleConnectionPool
+from psycopg.pool import ConnectionPool
 pool = SimpleConnectionPool(1, 10, DATABASE_URL)
 ```
 

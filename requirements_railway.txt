@@ -1,22 +1,7 @@
 # Railway Deployment Requirements
-# Core dependencies for websocket_limit_trading.py
-
-# Database
-psycopg2-binary==2.9.10
-
-# WebSocket (websocket-client is the correct package for websocket module)
-websocket-client==1.6.4
-
-# OKX API
-python-okx==0.4.0
-
-# Environment variables
-python-dotenv==1.0.1
-
-# Data processing (required by okx_functions, okx_ws_manage, okx_order_manage)
-# Use newer versions compatible with Python 3.12 (distutils was removed)
-numpy>=1.26.0
-pandas>=2.1.0
+# Include base requirements
+-r requirements.txt
 
 # Note: Railway will automatically detect this file
 # If this file doesn't exist, Railway will use requirements.txt
+# Dockerfile should be used for proper system library installation (libpq)

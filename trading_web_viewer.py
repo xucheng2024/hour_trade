@@ -10,10 +10,10 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-import psycopg2
-import psycopg2.extras
+import psycopg
 from dotenv import load_dotenv
 from flask import Flask, render_template_string
+from psycopg.rows import dict_row
 
 # Load environment variables
 load_dotenv()
@@ -34,7 +34,7 @@ CACHE_TTL = 5  # seconds
 
 def get_db_connection():
     """Get PostgreSQL database connection"""
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
 HTML_TEMPLATE = """  # noqa: E501
@@ -281,7 +281,7 @@ def get_trading_records():
     query_start = time.time()
 
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         # Get all orders for this strategy (including sell_price)

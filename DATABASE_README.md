@@ -66,9 +66,9 @@ import os, sys
 sys.path.insert(0, 'src')
 from dotenv import load_dotenv
 load_dotenv()
-import psycopg2
+import psycopg
 
-conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+conn = psycopg.connect(os.getenv('DATABASE_URL'))
 cur = conn.cursor()
 cur.execute(\"SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name\")
 print('Tables:', [t[0] for t in cur.fetchall()])
@@ -133,8 +133,8 @@ import os, sys
 sys.path.insert(0, 'src')
 from dotenv import load_dotenv
 load_dotenv()
-import psycopg2
-conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+import psycopg
+conn = psycopg.connect(os.getenv('DATABASE_URL'))
 print('✅ Connected successfully')
 conn.close()
 "

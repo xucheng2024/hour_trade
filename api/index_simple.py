@@ -12,8 +12,8 @@ from collections import defaultdict
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 
-import psycopg2
-import psycopg2.extras
+import psycopg
+from psycopg.rows import dict_row
 
 # Configuration
 STRATEGY_NAME = "hourly_limit_ws"
@@ -26,7 +26,7 @@ def get_db_connection():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise ValueError("DATABASE_URL not found")
-    return psycopg2.connect(database_url)
+    return psycopg.connect(database_url)
 
 
 def get_trading_records():
@@ -40,7 +40,7 @@ def get_trading_records():
     print("[Cache Miss] Querying database...")
 
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     cur.execute(
         """

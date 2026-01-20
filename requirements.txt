@@ -1,6 +1,6 @@
 # Core dependencies for both Vercel and Railway
-# Database
-psycopg2-binary==2.9.10
+# Database - psycopg v3 (modern, production-ready)
+psycopg[binary]>=3.2.0
 
 # WebSocket (for Railway trading bot)
 websocket-client==1.6.4

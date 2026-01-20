@@ -8,8 +8,8 @@ import os
 from contextlib import contextmanager
 from typing import Optional
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 
 # Load environment variables
 try:
@@ -32,7 +32,7 @@ if not DATABASE_URL.startswith("postgresql://"):
 
 def get_database_connection():
     """Get PostgreSQL database connection"""
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
 @contextmanager
@@ -40,7 +40,7 @@ def get_db_cursor():
     """Get database cursor as context manager"""
     conn = get_database_connection()
     try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor = conn.cursor(row_factory=dict_row)
         yield cursor
         conn.commit()
     except Exception:

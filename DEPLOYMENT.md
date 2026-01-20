@@ -227,9 +227,9 @@ conn.close()
 # 2. Import to PostgreSQL
 python -c "
 import json
-import psycopg2
+import psycopg
 import os
-conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+conn = psycopg.connect(os.getenv('DATABASE_URL'))
 cur = conn.cursor()
 with open('orders_backup.json') as f:
     orders = json.load(f)

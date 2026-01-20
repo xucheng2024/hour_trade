@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import okx_strategy
 import pandas as pd
-import psycopg2
-import psycopg2.extras
+import psycopg
+import psycopg.extras
 import requests
 import websocket
 from dotenv import load_dotenv
@@ -291,7 +291,7 @@ try:
         # Fallback to hardcoded path (for local development)
         base_dir = Path("/Users/mac/Downloads/stocks/ex_okx")
         cryptos_file = base_dir / "src" / "config" / "cryptos_selected.json"
-    
+
     if cryptos_file.exists():
         with open(cryptos_file, "r") as file:
             cryptos = json.load(file)
@@ -383,7 +383,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL not found in environment variables")
 
-conn = psycopg2.connect(DATABASE_URL)
+conn = psycopg.connect(DATABASE_URL)
 
 time.sleep(60)
 

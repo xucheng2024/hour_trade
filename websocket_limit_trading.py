@@ -18,8 +18,8 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-import psycopg2
-import psycopg2.extras
+import psycopg
+import psycopg.extras
 import websocket
 from dotenv import load_dotenv
 from okx.MarketData import MarketAPI
@@ -30,7 +30,15 @@ from okx.Trade import TradeAPI
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 try:
     from crypto_remote.blacklist_manager import BlacklistManager
-except ImportError:
+except ImportError as e:
+    logger.warning(
+        f"⚠️ Failed to import BlacklistManager: {e}. Blacklist checks will be disabled."
+    )
+    BlacklistManager = None
+except Exception as e:
+    logger.error(
+        f"❌ Error importing BlacklistManager: {e}. Blacklist checks will be disabled."
+    )
     BlacklistManager = None
 
 # Import stable buy strategy
@@ -337,7 +345,7 @@ def get_db_connection(max_retries=None, retry_delay=None):
 
     Note: Neon database URL includes '-pooler' which provides connection pooling
     at the database level. For high-load scenarios, consider implementing
-    application-level connection pooling (e.g., psycopg2.pool) to further
+    application-level connection pooling (e.g., psycopg.pool) to further
     reduce connection overhead.
     """
     # Environment-configurable connection parameters
@@ -347,7 +355,7 @@ def get_db_connection(max_retries=None, retry_delay=None):
 
     for attempt in range(max_retries):
         try:
-            conn = psycopg2.connect(DATABASE_URL, connect_timeout=connect_timeout)
+            conn = psycopg.connect(DATABASE_URL, connect_timeout=connect_timeout)
             # Test connection
             cur = conn.cursor()
             try:
@@ -355,7 +363,7 @@ def get_db_connection(max_retries=None, retry_delay=None):
             finally:
                 cur.close()
             return conn
-        except (psycopg2.Error, psycopg2.OperationalError) as e:
+        except (psycopg.Error, psycopg.OperationalError) as e:
             if attempt < max_retries - 1:
                 logger.warning(
                     f"Database connection failed "

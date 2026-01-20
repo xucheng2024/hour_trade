@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import psycopg2
-import psycopg2.extras
+import psycopg
+import psycopg.extras
 import requests
 from dotenv import load_dotenv
 from okx.Account import AccountAPI
@@ -167,7 +167,7 @@ def main():
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL not found in environment variables")
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL)
     cur = conn.cursor()
 
     while True:

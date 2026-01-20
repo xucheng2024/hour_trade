@@ -59,6 +59,9 @@ logs/
 htmlcov/
 .tox/
 .nox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
 # Data files
 data/*.npz

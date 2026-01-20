@@ -51,7 +51,7 @@ fi
 # 5. 检查必需的import
 echo ""
 echo "📦 检查必需的导入..."
-required_imports=("import time" "from collections import defaultdict" "import psycopg2")
+required_imports=("import time" "from collections import defaultdict" "import psycopg")
 missing=0
 for imp in "${required_imports[@]}"; do
     if ! grep -q "$imp" api/index.py; then
@@ -78,10 +78,13 @@ fi
 echo ""
 echo "📋 检查依赖..."
 if [ -f "requirements.txt" ]; then
-    if grep -q "psycopg2-binary" requirements.txt; then
-        echo "✅ requirements.txt包含必需依赖"
+    if grep -q "psycopg" requirements.txt || grep -q "psycopg2" requirements.txt; then
+        echo "✅ requirements.txt包含数据库依赖"
+        if grep -q "psycopg2" requirements.txt; then
+            echo "⚠️  检测到psycopg2，建议迁移到psycopg[binary]>=3.2.0"
+        fi
     else
-        echo "⚠️  requirements.txt可能缺少psycopg2-binary"
+        echo "⚠️  requirements.txt可能缺少数据库驱动（psycopg[binary]）"
     fi
 else
     echo "⚠️  requirements.txt不存在"

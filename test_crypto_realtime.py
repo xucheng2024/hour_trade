@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-import psycopg2
+import psycopg
 import websocket
 from dotenv import load_dotenv
 
@@ -38,7 +38,7 @@ def get_db_connection():
     """Get PostgreSQL database connection"""
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL not found in environment variables")
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
 def load_crypto_limits():
