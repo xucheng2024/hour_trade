@@ -60,11 +60,13 @@ def on_ticker_message(
                     last_price = float(ticker.get("last", 0))
 
                     if last_price > 0:
-                        # ✅ OPTIMIZED: Skip if price hasn't changed (deduplication)
+                        # ✅ FIX: Price deduplication - skip original if unchanged,
+                        # but still allow stable strategy update_price + check_stability
+                        # Allows stability seconds to accumulate during flat markets
                         with lock:
                             old_price = current_prices.get(instId)
-                            if old_price == last_price:
-                                continue  # Price unchanged, skip processing
+                            price_unchanged = old_price == last_price
+                            # Always update for consistency
                             current_prices[instId] = last_price
 
                             if (
@@ -73,24 +75,26 @@ def on_ticker_message(
                             ):
                                 reference_price_fetch_attempts[instId] = 0
                                 logger.debug(
-                                    f"📊 Reset reference_price_fetch_attempts for {instId} "
-                                    f"on ticker update (coin is active)"
+                                    f"📊 Reset reference_price_fetch_attempts "
+                                    f"for {instId} on ticker update (coin is active)"
                                 )
 
-                            # Skip original strategy if already in pending_buys or active_orders
+                            # Skip original strategy if already in pending_buys
+                            # or active_orders
                             skip_original = (
                                 instId in pending_buys or instId in active_orders
                             )
 
-                        # Update stable strategy price history (always update, even if already have orders)
-                        # This runs independently of original strategy, outside main lock to avoid deadlock
+                        # ✅ FIX: Always update stable strategy (even if price unchanged)
+                        # Allows stability seconds to accumulate during flat markets
+                        # Runs independently, outside main lock to avoid deadlock
                         # stable_strategy has its own RLock, so calling it is safe
                         if stable_strategy is not None:
                             stable_strategy.update_price(instId, last_price)
-                            # Check if stable strategy has pending signal that's now ready
+                            # Check if stable strategy has pending signal ready
                             limit_price_stable = stable_strategy.check_stability(instId)
                             if limit_price_stable:
-                                # Check stable strategy state (need lock for thread-safe check)
+                                # Check stable strategy state (thread-safe check)
                                 with lock:
                                     if (
                                         instId in stable_pending_buys
@@ -119,8 +123,9 @@ def on_ticker_message(
                                             daemon=True,
                                         ).start()
 
-                        # Skip original strategy processing if already active
-                        if skip_original:
+                        # ✅ FIX: Skip original if price unchanged OR already active
+                        # Stable strategy already ran above, accumulates stability seconds
+                        if price_unchanged or skip_original:
                             continue
 
                         # Get reference price and limit_percent outside lock
