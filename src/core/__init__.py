@@ -7,11 +7,11 @@ Contains order management, WebSocket handling, and core trading functions.
 # Only import what's actually needed, and make imports optional
 try:
     from .okx_functions import (
-        get_trade_api,
+        format_number,
+        get_instrument_precision,
         get_market_api,
         get_public_api,
-        get_instrument_precision,
-        format_number,
+        get_trade_api,
     )
 except ImportError:
     # If okx_functions fails to import (e.g., numpy missing), set to None
@@ -26,9 +26,9 @@ except ImportError:
 # and they cause circular import issues
 
 __all__ = [
-    'get_trade_api',
-    'get_market_api',
-    'get_public_api',
-    'get_instrument_precision',
-    'format_number',
+    "get_trade_api",
+    "get_market_api",
+    "get_public_api",
+    "get_instrument_precision",
+    "format_number",
 ]

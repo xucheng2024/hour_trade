@@ -8,16 +8,15 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
 
 import numpy as np
-import pandas as pd
 
 # Add ex_okx to path
 sys.path.insert(0, "/Users/mac/Downloads/stocks/ex_okx")
 sys.path.insert(0, os.path.join("/Users/mac/Downloads/stocks/ex_okx", "src"))
 
-from strategies.historical_data_loader import get_historical_data_loader
+from strategies.historical_data_loader import get_historical_data_loader  # noqa: E402
 
 LIMITS_FILE = "valid_crypto_limits.json"
 with open(LIMITS_FILE, "r") as f:
@@ -136,8 +135,10 @@ def main():
         results_without.append(result_without)
 
         print(
-            f"With filter: {result_with['total_trades']} trades, {result_with['total_return_pct']:+.2f}% | "
-            f"Without: {result_without['total_trades']} trades, {result_without['total_return_pct']:+.2f}%"
+            f"With filter: {result_with['total_trades']} trades, "
+            f"{result_with['total_return_pct']:+.2f}% | "
+            f"Without: {result_without['total_trades']} trades, "
+            f"{result_without['total_return_pct']:+.2f}%"
         )
 
     print()
@@ -159,17 +160,16 @@ def main():
             portfolio_without *= rwo["total_return"]
             trades_without += rwo["total_trades"]
 
-    print(f"With 2h Filter:")
+    print("With 2h Filter:")
     print(f"  Total Trades: {trades_with}")
     print(f"  Portfolio Return: {(portfolio_with - 1.0) * 100:+.2f}%")
     print()
-    print(f"Without 2h Filter:")
+    print("Without 2h Filter:")
     print(f"  Total Trades: {trades_without}")
     print(f"  Portfolio Return: {(portfolio_without - 1.0) * 100:+.2f}%")
     print()
-    print(
-        f"Difference: {((portfolio_with - portfolio_without) / portfolio_without) * 100:+.2f}%"
-    )
+    diff_pct = ((portfolio_with - portfolio_without) / portfolio_without) * 100
+    print(f"Difference: {diff_pct:+.2f}%")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,7 @@ import pandas as pd
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(__file__))
 
-from okx.MarketData import MarketAPI
+from okx.MarketData import MarketAPI  # noqa: E402
 
 LIMITS_FILE = "valid_crypto_limits.json"
 with open(LIMITS_FILE, "r") as f:
@@ -65,7 +65,8 @@ def fetch_realtime_data(instId: str, days: int = 30) -> Optional[pd.DataFrame]:
 
             # Convert to DataFrame format
             for candle in data:
-                # Format: [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
+                # Format: [ts, open, high, low, close, vol, volCcy,
+                # volCcyQuote, confirm]
                 ts_ms = int(candle[0])
                 candle_time = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
 
@@ -300,14 +301,13 @@ def main():
             "portfolio_return_pct": (total_return_all - 1.0) * 100,
         }
 
-        print(f"\n总结:")
+        print("\n总结:")
         print(f"  总交易数: {total_trades}")
         print(f"  有交易的币种: {cryptos_with_trades}")
         if cryptos_with_trades > 0:
             print(f"  组合收益: {(total_return_all - 1.0) * 100:+.2f}%")
-            print(
-                f"  平均收益: {((total_return_all ** (1.0 / cryptos_with_trades)) - 1.0) * 100:+.2f}%"
-            )
+            avg_return = ((total_return_all ** (1.0 / cryptos_with_trades)) - 1.0) * 100
+            print(f"  平均收益: {avg_return:+.2f}%")
         else:
             print("  组合收益: N/A")
 
@@ -318,10 +318,12 @@ def main():
             reverse=True,
         )
         if results_sorted:
-            print(f"\n  前5名:")
+            print("\n  前5名:")
             for i, r in enumerate(results_sorted[:5], 1):
                 print(
-                    f"    {i}. {r['instId']:20s} {r['total_trades']:3d}笔 {r['total_return_pct']:+7.2f}%"
+                    f"    {i}. {r['instId']:20s} "
+                    f"{r['total_trades']:3d}笔 "
+                    f"{r['total_return_pct']:+7.2f}%"
                 )
 
     # Final comparison
@@ -333,11 +335,11 @@ def main():
     with_filter = all_results["有2h过滤"]
     without_filter = all_results["无2h过滤"]
 
-    print(f"有2h过滤:")
+    print("有2h过滤:")
     print(f"  交易数: {with_filter['total_trades']}")
     print(f"  组合收益: {with_filter['portfolio_return_pct']:+.2f}%")
     print()
-    print(f"无2h过滤:")
+    print("无2h过滤:")
     print(f"  交易数: {without_filter['total_trades']}")
     print(f"  组合收益: {without_filter['portfolio_return_pct']:+.2f}%")
     print()

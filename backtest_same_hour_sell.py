@@ -12,7 +12,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,7 +21,7 @@ import pandas as pd
 sys.path.insert(0, "/Users/mac/Downloads/stocks/ex_okx")
 sys.path.insert(0, os.path.join("/Users/mac/Downloads/stocks/ex_okx", "src"))
 
-from strategies.historical_data_loader import get_historical_data_loader
+from strategies.historical_data_loader import get_historical_data_loader  # noqa: E402
 
 LIMITS_FILE = "valid_crypto_limits.json"
 with open(LIMITS_FILE, "r") as f:
@@ -204,9 +204,8 @@ def main():
     print(f"Total Trades: {total_trades_all}")
     if cryptos_with_trades > 0:
         print(f"Portfolio Return: {(total_return_all - 1.0) * 100:+.2f}%")
-        print(
-            f"Average Return per Crypto: {((total_return_all ** (1.0 / cryptos_with_trades)) - 1.0) * 100:+.2f}%"
-        )
+        avg_return = ((total_return_all ** (1.0 / cryptos_with_trades)) - 1.0) * 100
+        print(f"Average Return per Crypto: {avg_return:+.2f}%")
     else:
         print("Portfolio Return: N/A (no trades)")
     print()

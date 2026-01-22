@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def check_and_cancel_unfilled_order_after_timeout(
     active_orders: dict,
     stable_active_orders: dict,
     batch_active_orders: dict,
-    batch_strategy: Optional[object],
+    batch_strategy: Optional[Any],
     batch_pending_buys: dict,
     batch_strategy_name: str,
     lock,

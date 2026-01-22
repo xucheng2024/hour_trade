@@ -1,7 +1,3 @@
-import base64
-import hashlib
-import hmac
-import json
 import math
 import os
 import time
@@ -13,24 +9,24 @@ from typing import Dict, Optional
 try:
     import numpy as np
     import pandas as pd
+
     HAS_NUMPY = True
 except ImportError:
     np = None
     pd = None
     HAS_NUMPY = False
 
-import requests
-from okx.Account import AccountAPI
 from okx.MarketData import MarketAPI
 from okx.PublicData import PublicAPI
 from okx.Trade import TradeAPI
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-import logging
-import sys
-from pathlib import Path
+import logging  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-# ✅ FIX: Import BlacklistManager from local utils module instead of external crypto_remote
+# ✅ FIX: Import BlacklistManager from local utils module
+# instead of external crypto_remote
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
@@ -189,7 +185,7 @@ def get_instrument_precision(
     Returns:
         Dict with precision info or None
     """
-    global _instrument_precision_cache
+    global _instrument_precision_cache  # noqa: F824
     # Check cache first
     if use_cache and instId in _instrument_precision_cache:
         return _instrument_precision_cache[instId]
@@ -240,7 +236,8 @@ def format_number(number, instId: Optional[str] = None, trading_flag: str = "0")
 
     Args:
         number: Number to format (price or size)
-        instId: Optional instrument ID (e.g., 'BTC-USDT') to use instrument-specific precision
+        instId: Optional instrument ID (e.g., 'BTC-USDT')
+            to use instrument-specific precision
         trading_flag: Trading flag ("0"=production, "1"=demo)
     """
     number = float(number)
@@ -368,7 +365,8 @@ def buy_market(instId, size, tradeAPI, strategy, conn, minutes):
             if ordId is None:
                 return
             cur.execute(
-                """INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
+                """INSERT INTO orders (instId, flag, ordId, create_time,
+                orderType, state, price, size, sell_time, side)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     instId,
@@ -461,7 +459,8 @@ def buy_limit(instId, buy_price, size, tradeAPI, strategy, conn, minutes):
             side = "buy"
 
             cur.execute(
-                """INSERT INTO orders (instId, flag, ordId, create_time, orderType, state, price, size, sell_time,side)
+                """INSERT INTO orders (instId, flag, ordId, create_time,
+                orderType, state, price, size, sell_time, side)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     instId,

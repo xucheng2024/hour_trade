@@ -16,7 +16,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,8 @@ class OrderSyncManager:
         active_orders: Dict,
         stable_active_orders: Dict,
         batch_active_orders: Dict,
-        stable_strategy: Optional[object],
-        batch_strategy: Optional[object],
+        stable_strategy: Optional[Any],
+        batch_strategy: Optional[Any],
         lock: threading.Lock,
         process_sell_signal: Callable,
         process_stable_sell_signal: Callable,

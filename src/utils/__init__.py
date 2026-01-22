@@ -3,10 +3,7 @@ Utility functions module.
 Contains helper functions and utility scripts.
 """
 
-from .sub_account import *
 from .delist import *
+from .sub_account import *
 
-__all__ = [
-    'sub_account',
-    'delist'
-]
+__all__ = ["sub_account", "delist"]

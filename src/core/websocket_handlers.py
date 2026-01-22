@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,10 @@ def on_ticker_message(
     active_orders: dict,
     stable_active_orders: dict,
     stable_pending_buys: dict,
-    stable_strategy: Optional[object],
+    stable_strategy: Optional[Any],
     batch_active_orders: dict,
     batch_pending_buys: dict,
-    batch_strategy: Optional[object],
+    batch_strategy: Optional[Any],
     lock: threading.Lock,
     fetch_current_hour_open_price_func,
     calculate_limit_price_func,
@@ -124,7 +124,7 @@ def on_ticker_message(
                                         ).start()
 
                         # ✅ FIX: Skip original if price unchanged OR already active
-                        # Stable strategy already ran above, accumulates stability seconds
+                        # Stable strategy already ran above, accumulates stability
                         if price_unchanged or skip_original:
                             continue
 
@@ -144,15 +144,17 @@ def on_ticker_message(
 
                                 if time_since_fetch < min_wait:
                                     logger.debug(
-                                        f"⏳ Skipping reference price fetch for {instId}: "
-                                        f"backoff ({time_since_fetch:.1f}s < {min_wait}s)"
+                                        f"⏳ Skipping reference price fetch "
+                                        f"for {instId}: backoff "
+                                        f"({time_since_fetch:.1f}s < {min_wait}s)"
                                     )
                                     continue
 
                                 reference_price_fetch_time[instId] = time.time()
 
                             logger.warning(
-                                f"⚠️ No reference price for {instId}, fetching current hour's open..."
+                                f"⚠️ No reference price for {instId}, "
+                                f"fetching current hour's open..."
                             )
                             ref_price = fetch_current_hour_open_price_func(instId)
                             if ref_price and ref_price > 0:
@@ -169,8 +171,9 @@ def on_ticker_message(
                                         fetch_attempts + 1
                                     )
                                 logger.warning(
-                                    f"⚠️ Failed to get reference price for {instId}, skipping buy check "
-                                    f"(will retry after backoff, attempts={fetch_attempts + 1})"
+                                    f"⚠️ Failed to get reference price for {instId}, "
+                                    f"skipping buy check (will retry after backoff, "
+                                    f"attempts={fetch_attempts + 1})"
                                 )
                                 continue
 
@@ -178,10 +181,13 @@ def on_ticker_message(
                             ref_price, limit_percent, instId
                         )
 
-                        # Check stable strategy buy signal independently (before original strategy check)
-                        # This allows stable strategy to register even when original strategy is active
+                        # Check stable strategy buy signal independently
+                        # (before original strategy check)
+                        # This allows stable strategy to register even when
+                        # original strategy is active
                         if stable_strategy is not None and last_price <= limit_price:
-                            # Check if not already registered or active for stable strategy
+                            # Check if not already registered or active
+                            # for stable strategy
                             with lock:
                                 instId_not_in_stable = (
                                     instId not in stable_pending_buys
@@ -194,22 +200,28 @@ def on_ticker_message(
                                     check_2h_gain_filter_func(instId, ref_price)
                                 )
                                 if not should_skip_buy_stable:
-                                    # Register stable buy signal (will wait for stability)
-                                    # register_buy_signal uses its own RLock, safe to call outside main lock
+                                    # Register stable buy signal
+                                    # (will wait for stability)
+                                    # register_buy_signal uses its own RLock,
+                                    # safe to call outside main lock
                                     if stable_strategy.register_buy_signal(
                                         instId, limit_price
                                     ):
                                         with lock:
                                             stable_pending_buys[instId] = True
                                         logger.warning(
-                                            f"📝 STABLE BUY SIGNAL REGISTERED: {instId}, "
-                                            f"limit={limit_price:.6f}, waiting for stability"
+                                            f"📝 STABLE BUY SIGNAL REGISTERED: "
+                                            f"{instId}, limit={limit_price:.6f}, "
+                                            f"waiting for stability"
                                         )
 
-                        # Check batch strategy buy signal independently (before original strategy check)
-                        # This allows batch strategy to register even when other strategies are active
+                        # Check batch strategy buy signal independently
+                        # (before original strategy check)
+                        # This allows batch strategy to register even when
+                        # other strategies are active
                         if batch_strategy is not None and last_price <= limit_price:
-                            # Check if not already registered or active for batch strategy
+                            # Check if not already registered or active
+                            # for batch strategy
                             with lock:
                                 instId_not_in_batch = (
                                     instId not in batch_pending_buys
@@ -222,8 +234,10 @@ def on_ticker_message(
                                     check_2h_gain_filter_func(instId, ref_price)
                                 )
                                 if not should_skip_buy_batch:
-                                    # Register batch buy signal (will trigger first batch immediately)
-                                    # register_buy_signal uses its own RLock, safe to call outside main lock
+                                    # Register batch buy signal
+                                    # (will trigger first batch immediately)
+                                    # register_buy_signal uses its own RLock,
+                                    # safe to call outside main lock
                                     if batch_strategy.register_buy_signal(
                                         instId, limit_price
                                     ):
@@ -231,12 +245,16 @@ def on_ticker_message(
                                             batch_pending_buys[instId] = True
                                         logger.warning(
                                             f"📝 BATCH BUY SIGNAL REGISTERED: {instId}, "
-                                            f"limit={limit_price:.6f}, batches=30/30/40 USDT"
+                                            f"limit={limit_price:.6f}, "
+                                            f"batches=30/30/40 USDT"
                                         )
                                         # Trigger first batch immediately
-                                        # ✅ FIX: Removed manual thread scheduling to avoid thread storm
-                                        # Batch strategy's get_next_batch() already checks time delays
-                                        # Subsequent batches will be triggered automatically when time is ready
+                                        # ✅ FIX: Removed manual thread scheduling
+                                        # to avoid thread storm
+                                        # Batch strategy's get_next_batch() already
+                                        # checks time delays
+                                        # Subsequent batches will be triggered
+                                        # automatically when time is ready
                                         if thread_pool:
                                             thread_pool.submit(
                                                 process_batch_buy_signal_func,
@@ -280,7 +298,8 @@ def on_ticker_message(
                                 f"current={last_price:.6f} <= limit={limit_price:.6f} "
                                 f"(ref={ref_price:.6f}, {limit_percent}%{gain_info})"
                             )
-                            # ✅ OPTIMIZED: Use thread pool if available, otherwise create thread
+                            # ✅ OPTIMIZED: Use thread pool if available,
+                            # otherwise create thread
                             if thread_pool:
                                 thread_pool.submit(
                                     process_buy_signal_func, instId, limit_price
@@ -371,12 +390,14 @@ def on_candle_message(
                                 ):
                                     reference_price_fetch_attempts[instId] = 0
                                     logger.debug(
-                                        f"📊 Reset reference_price_fetch_attempts for {instId} "
-                                        f"on candle update (coin is active)"
+                                        f"📊 Reset reference_price_fetch_attempts "
+                                        f"for {instId} on candle update "
+                                        f"(coin is active)"
                                     )
                                 logger.debug(
                                     f"📊 {instId} updated reference price from "
-                                    f"WebSocket: ${open_price:.6f} (hour={candle_hour.strftime('%H:00')})"
+                                    f"WebSocket: ${open_price:.6f} "
+                                    f"(hour={candle_hour.strftime('%H:00')})"
                                 )
 
                     if confirm == "1":
@@ -396,18 +417,22 @@ def on_candle_message(
                                 # Medium: Block if next_hour_close_time is missing
                                 if not next_hour_close:
                                     logger.warning(
-                                        f"🚫 {instId} KLINE CONFIRMED but missing next_hour_close_time, "
-                                        f"blocking sell to prevent premature sale"
+                                        f"🚫 {instId} KLINE CONFIRMED but missing "
+                                        f"next_hour_close_time, blocking sell to "
+                                        f"prevent premature sale"
                                     )
                                 elif now < next_hour_close:
                                     logger.debug(
-                                        f"⏸️ {instId} KLINE CONFIRMED but not ready to sell yet: "
+                                        f"⏸️ {instId} KLINE CONFIRMED but not ready "
+                                        f"to sell yet: "
                                         f"now={now.strftime('%H:%M:%S')}, "
-                                        f"sell_time={next_hour_close.strftime('%H:%M:%S')}"
+                                        f"sell_time="
+                                        f"{next_hour_close.strftime('%H:%M:%S')}"
                                     )
                                 elif order_info.get("sell_triggered", False):
                                     logger.debug(
-                                        f"⚠️ Sell already triggered for {instId}, skipping duplicate candle confirm"
+                                        f"⚠️ Sell already triggered for {instId}, "
+                                        f"skipping duplicate candle confirm"
                                     )
                                 else:
                                     active_orders[instId]["sell_triggered"] = True
@@ -418,7 +443,8 @@ def on_candle_message(
                                     )
                                     logger.warning(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
-                                        f"close_price={close_price:.6f}, trigger SELL (original)"
+                                        f"close_price={close_price:.6f}, "
+                                        f"trigger SELL (original)"
                                     )
                                     # ✅ OPTIMIZED: Use thread pool if available
                                     if thread_pool:
@@ -439,18 +465,22 @@ def on_candle_message(
 
                                 if not next_hour_close:
                                     logger.warning(
-                                        f"🚫 {instId} KLINE CONFIRMED but missing next_hour_close_time (stable), "
-                                        f"blocking sell to prevent premature sale"
+                                        f"🚫 {instId} KLINE CONFIRMED but missing "
+                                        f"next_hour_close_time (stable), blocking sell "
+                                        f"to prevent premature sale"
                                     )
                                 elif now < next_hour_close:
                                     logger.debug(
-                                        f"⏸️ {instId} KLINE CONFIRMED but not ready to sell yet (stable): "
+                                        f"⏸️ {instId} KLINE CONFIRMED but not ready "
+                                        f"to sell yet (stable): "
                                         f"now={now.strftime('%H:%M:%S')}, "
-                                        f"sell_time={next_hour_close.strftime('%H:%M:%S')}"
+                                        f"sell_time="
+                                        f"{next_hour_close.strftime('%H:%M:%S')}"
                                     )
                                 elif order_info.get("sell_triggered", False):
                                     logger.debug(
-                                        f"⚠️ Stable sell already triggered for {instId}, skipping duplicate candle confirm"
+                                        f"⚠️ Stable sell already triggered for "
+                                        f"{instId}, skipping duplicate candle confirm"
                                     )
                                 else:
                                     stable_active_orders[instId][
@@ -463,9 +493,11 @@ def on_candle_message(
                                     )
                                     logger.warning(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
-                                        f"close_price={close_price:.6f}, trigger SELL (stable)"
+                                        f"close_price={close_price:.6f}, "
+                                        f"trigger SELL (stable)"
                                     )
-                                    # ✅ FIX: Use process_sell_signal_func for stable orders too (each order is independent)
+                                    # ✅ FIX: Use process_sell_signal_func for stable
+                                    # orders too (each order is independent)
                                     if thread_pool:
                                         thread_pool.submit(
                                             process_sell_signal_func, instId
@@ -484,18 +516,22 @@ def on_candle_message(
 
                                 if not next_hour_close:
                                     logger.warning(
-                                        f"🚫 {instId} KLINE CONFIRMED but missing next_hour_close_time (batch), "
-                                        f"blocking sell to prevent premature sale"
+                                        f"🚫 {instId} KLINE CONFIRMED but missing "
+                                        f"next_hour_close_time (batch), blocking sell "
+                                        f"to prevent premature sale"
                                     )
                                 elif now < next_hour_close:
                                     logger.debug(
-                                        f"⏸️ {instId} KLINE CONFIRMED but not ready to sell yet (batch): "
+                                        f"⏸️ {instId} KLINE CONFIRMED but not ready "
+                                        f"to sell yet (batch): "
                                         f"now={now.strftime('%H:%M:%S')}, "
-                                        f"sell_time={next_hour_close.strftime('%H:%M:%S')}"
+                                        f"sell_time="
+                                        f"{next_hour_close.strftime('%H:%M:%S')}"
                                     )
                                 elif order_info.get("sell_triggered", False):
                                     logger.debug(
-                                        f"⚠️ Batch sell already triggered for {instId}, skipping duplicate candle confirm"
+                                        f"⚠️ Batch sell already triggered for "
+                                        f"{instId}, skipping duplicate candle confirm"
                                     )
                                 else:
                                     batch_active_orders[instId]["sell_triggered"] = True
@@ -506,9 +542,11 @@ def on_candle_message(
                                     )
                                     logger.warning(
                                         f"🕐 KLINE CONFIRMED: {instId}, "
-                                        f"close_price={close_price:.6f}, trigger SELL (batch)"
+                                        f"close_price={close_price:.6f}, "
+                                        f"trigger SELL (batch)"
                                     )
-                                    # ✅ FIX: Use process_sell_signal_func for batch orders too (each order is independent)
+                                    # ✅ FIX: Use process_sell_signal_func for batch
+                                    # orders too (each order is independent)
                                     if thread_pool:
                                         thread_pool.submit(
                                             process_sell_signal_func, instId

@@ -8,7 +8,7 @@ Handles buy and sell signal processing
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +342,7 @@ def process_stable_buy_signal(
     check_blacklist_func,
     stable_active_orders: dict,
     stable_pending_buys: dict,
-    stable_strategy: Optional[object],
+    stable_strategy: Optional[Any],
     lock: threading.Lock,
     check_and_cancel_unfilled_order_func,
     current_prices: Optional[
@@ -453,7 +453,7 @@ def process_batch_buy_signal(
     instId: str,
     limit_price: float,
     strategy_name: str,
-    batch_strategy: Optional[object],
+    batch_strategy: Optional[Any],
     simulation_mode: bool,
     get_trade_api_func,
     get_db_connection_func,

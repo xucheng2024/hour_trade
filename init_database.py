@@ -4,13 +4,14 @@
 Initialize database tables - Neon PostgreSQL
 """
 
-import sys
 import os
+import sys
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from utils.db_connection import init_orders_table, DB_TYPE
+from utils.db_connection import DB_TYPE, init_orders_table  # noqa: E402
+
 
 def main():
     """Initialize database tables"""
@@ -22,8 +23,10 @@ def main():
     except Exception as e:
         print(f"❌ Error initializing database: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
+
 
 if __name__ == "__main__":
     exit(main())

@@ -40,7 +40,7 @@ indexes = [
     {
         "name": "idx_orders_flag_createtime",
         "sql": """
-        CREATE INDEX IF NOT EXISTS idx_orders_flag_createtime 
+        CREATE INDEX IF NOT EXISTS idx_orders_flag_createtime
         ON orders(flag, create_time DESC);
         """,
         "description": "Index for time-based scans ordered by create_time",
@@ -76,9 +76,9 @@ def main():
         print("Verifying indexes...")
         cur.execute(
             """
-            SELECT indexname, indexdef 
-            FROM pg_indexes 
-            WHERE tablename = 'orders' 
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE tablename = 'orders'
             AND indexname LIKE 'idx_orders_%'
             ORDER BY indexname;
         """
