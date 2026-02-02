@@ -357,7 +357,26 @@ def buy_market(instId, size, tradeAPI, strategy, conn, minutes):
             orderType = "mrk"
             state = ""
             price = ""
-            size = ""
+            size_db = str(size)
+
+            # Best-effort: fetch actual fill price/size for market orders
+            try:
+                order_result = tradeAPI.get_order(instId=instId, ordId=ordId)
+                if order_result.get("code") == "0" and order_result.get("data"):
+                    order_info = order_result["data"][0]
+                    avg_px = order_info.get("avgPx") or order_info.get("fillPx")
+                    acc_fill_sz = order_info.get("accFillSz") or order_info.get("sz")
+                    if avg_px:
+                        price = str(avg_px)
+                    if acc_fill_sz:
+                        size_db = str(acc_fill_sz)
+            except Exception as e:
+                logging.warning(
+                    "%s buy mrk: fetch order info failed: %s, %s",
+                    strategy,
+                    ordId,
+                    e,
+                )
 
             sell_time = int((now + timedelta(minutes=minutes)).timestamp() * 1000)
             side = "buy"
@@ -376,7 +395,7 @@ def buy_market(instId, size, tradeAPI, strategy, conn, minutes):
                     orderType,
                     state,
                     price,
-                    size,
+                    size_db,
                     sell_time,
                     side,
                 ),
@@ -453,8 +472,8 @@ def buy_limit(instId, buy_price, size, tradeAPI, strategy, conn, minutes):
             create_time = int(now.timestamp() * 1000)
             orderType = "limit"
             state = ""
-            price = ""
-            size = ""
+            price = str(buy_price)
+            size_db = str(size)
             sell_time = int((now + timedelta(minutes=minutes)).timestamp() * 1000)
             side = "buy"
 
@@ -470,7 +489,7 @@ def buy_limit(instId, buy_price, size, tradeAPI, strategy, conn, minutes):
                     orderType,
                     state,
                     price,
-                    size,
+                    size_db,
                     sell_time,
                     side,
                 ),
@@ -521,13 +540,56 @@ def sell_market(instId, ordId, size, tradeAPI, strategy, conn):
     for attempts in range(max_attempts):
         try:
             new_state = "sold out"
+            sell_price = ""
 
-            sql_statement = """
-            UPDATE orders
-            SET state = %s
-            WHERE instId = %s AND ordId = %s;
-            """
-            cur.execute(sql_statement, (new_state, instId, ordId))
+            # Best-effort: fetch sell fill price from OKX
+            try:
+                sell_order_id = result["data"][0]["ordId"]
+                order_result = tradeAPI.get_order(instId=instId, ordId=sell_order_id)
+                if order_result.get("code") == "0" and order_result.get("data"):
+                    order_info = order_result["data"][0]
+                    avg_px = order_info.get("avgPx") or order_info.get("fillPx")
+                    if avg_px:
+                        sell_price = str(avg_px)
+            except Exception as e:
+                logging.warning(
+                    "%s sell mrk: fetch sell price failed: %s, %s",
+                    strategy,
+                    ordId,
+                    e,
+                )
+
+            # Final fallback to ticker (if order info unavailable)
+            if not sell_price:
+                try:
+                    market_api = get_market_api()
+                    ticker_result = market_api.get_ticker(instId=instId)
+                    if ticker_result.get("code") == "0" and ticker_result.get("data"):
+                        last_price = ticker_result["data"][0].get("last", "")
+                        if last_price:
+                            sell_price = str(last_price)
+                except Exception as e:
+                    logging.warning(
+                        "%s sell mrk: ticker fallback failed: %s, %s",
+                        strategy,
+                        ordId,
+                        e,
+                    )
+
+            if sell_price:
+                sql_statement = """
+                UPDATE orders
+                SET state = %s, sell_price = %s
+                WHERE instId = %s AND ordId = %s;
+                """
+                cur.execute(sql_statement, (new_state, sell_price, instId, ordId))
+            else:
+                sql_statement = """
+                UPDATE orders
+                SET state = %s
+                WHERE instId = %s AND ordId = %s;
+                """
+                cur.execute(sql_statement, (new_state, instId, ordId))
             conn.commit()
             logging.warning("%s sell mrk:db:%s,%s,%s", strategy, instId, ordId)
 

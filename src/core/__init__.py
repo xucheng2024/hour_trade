@@ -5,6 +5,21 @@ Contains order management, WebSocket handling, and core trading functions.
 
 # Avoid circular imports by using lazy imports
 # Only import what's actually needed, and make imports optional
+from typing import Any, Callable, Optional
+
+GetTradeApiFunc = Callable[
+    [Optional[str], Optional[str], Optional[str], str, bool], Any
+]
+GetMarketApiFunc = Callable[[str], Any]
+GetPublicApiFunc = Callable[[str], Any]
+GetInstrumentPrecisionFunc = Callable[[str, bool, str], Optional[dict]]
+FormatNumberFunc = Callable[[Any, Optional[str], str], Any]
+
+get_trade_api: Optional[GetTradeApiFunc]
+get_market_api: Optional[GetMarketApiFunc]
+get_public_api: Optional[GetPublicApiFunc]
+get_instrument_precision: Optional[GetInstrumentPrecisionFunc]
+format_number: Optional[FormatNumberFunc]
 try:
     from .okx_functions import (
         format_number,
