@@ -45,16 +45,13 @@ def get_trading_records():
     conn = get_db_connection()
     cur = conn.cursor(row_factory=dict_row)
 
-    # Optimized query: reduce LIMIT and add WHERE for recent orders only
-    # Only fetch orders from last 7 days to improve performance
-    seven_days_ago_ms = int((time.time() - 7 * 24 * 3600) * 1000)
+    # Optimized query: reduce LIMIT for better performance
     cur.execute(
         """
         SELECT instId, ordId, create_time, state,
                price, size, sell_time, side, sell_price, flag
         FROM orders
         WHERE flag IN (%s, %s, %s, %s)
-          AND create_time > %s
         ORDER BY create_time DESC
         LIMIT 300
     """,
@@ -63,7 +60,6 @@ def get_trading_records():
             STABLE_STRATEGY_NAME,
             BATCH_STRATEGY_NAME,
             ORIGINAL_GAP_STRATEGY_NAME,
-            seven_days_ago_ms,
         ),
     )
 
