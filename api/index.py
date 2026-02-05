@@ -20,7 +20,7 @@ STRATEGY_NAME = "hourly_limit_ws"
 STABLE_STRATEGY_NAME = "stable_buy_ws"
 BATCH_STRATEGY_NAME = "batch_buy_ws"
 ORIGINAL_GAP_STRATEGY_NAME = "original_gap"
-CACHE_TTL = 15
+CACHE_TTL = 60  # Increased from 15 to 60 seconds - data doesn't change that frequently
 _cache = {"data": None, "timestamp": 0}
 
 
@@ -45,20 +45,25 @@ def get_trading_records():
     conn = get_db_connection()
     cur = conn.cursor(row_factory=dict_row)
 
+    # Optimized query: reduce LIMIT and add WHERE for recent orders only
+    # Only fetch orders from last 7 days to improve performance
+    seven_days_ago_ms = int((time.time() - 7 * 24 * 3600) * 1000)
     cur.execute(
         """
         SELECT instId, ordId, create_time, state,
                price, size, sell_time, side, sell_price, flag
         FROM orders
         WHERE flag IN (%s, %s, %s, %s)
+          AND create_time > %s
         ORDER BY create_time DESC
-        LIMIT 500
+        LIMIT 300
     """,
         (
             STRATEGY_NAME,
             STABLE_STRATEGY_NAME,
             BATCH_STRATEGY_NAME,
             ORIGINAL_GAP_STRATEGY_NAME,
+            seven_days_ago_ms,
         ),
     )
 
@@ -274,7 +279,9 @@ class handler(BaseHTTPRequestHandler):
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "public, max-age=15")
+                self.send_header(
+                    "Cache-Control", "public, max-age=60"
+                )  # Increased from 15 to 60
                 self.end_headers()
                 self.wfile.write(body.encode("utf-8"))
 
