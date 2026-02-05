@@ -6,48 +6,74 @@
     <title>Trading Records</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            color-scheme: light;
+            --bg: #f6f7fb;
+            --card: #ffffff;
+            --text: #101828;
+            --muted: #667085;
+            --border: #e4e7ec;
+            --accent: #111827;
+            --pos: #16a34a;
+            --neg: #dc2626;
+            --chip: #f2f4f7;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f7fa; color: #2d3748; padding: 16px; font-size: 14px;
-            line-height: 1.5;
+            background: var(--bg);
+            color: var(--text);
+            padding: 14px;
+            font-size: 13px;
+            line-height: 1.4;
         }
-        .container { max-width: 1600px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        h1 { font-size: 24px; font-weight: 700; color: #1a202c; }
-        .refresh-info { font-size: 12px; color: #718096; background: #edf2f7; padding: 4px 10px; border-radius: 6px; }
-        .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
-        .summary-item { background: #fff; padding: 16px 20px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .summary-label { font-size: 11px; color: #718096; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; font-weight: 600; }
-        .summary-value { font-size: 24px; font-weight: 700; }
-        .profit-positive { color: #16a34a; }
-        .profit-negative { color: #dc2626; }
-        .crypto-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; }
-        .crypto-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%); border-bottom: 1px solid #e2e8f0; }
-        .crypto-name { font-size: 16px; font-weight: 700; color: #1a202c; }
-        .crypto-profit { font-size: 14px; font-weight: 600; padding: 6px 14px; border-radius: 8px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th { background: #f7fafc; color: #4a5568; font-weight: 600; font-size: 11px; 
-             text-transform: uppercase; letter-spacing: 0.5px; padding: 12px 16px; 
-             text-align: left; border-bottom: 2px solid #e2e8f0; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+        h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.2px; }
+        .refresh-info { font-size: 11px; color: var(--muted); background: var(--chip); padding: 4px 8px; border-radius: 6px; }
+        .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+        .summary-item { background: var(--card); padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); }
+        .summary-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; font-weight: 600; }
+        .summary-value { font-size: 18px; font-weight: 700; }
+        .profit-positive { color: var(--pos); }
+        .profit-negative { color: var(--neg); }
+        .crypto-section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+        .crypto-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #f9fafb; border-bottom: 1px solid var(--border); }
+        .crypto-name { font-size: 14px; font-weight: 700; color: var(--accent); }
+        .crypto-profit { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 8px; background: #f2f4f7; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th {
+            background: #fafafa;
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
         th.num { text-align: right; }
-        td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+        td { padding: 8px 10px; border-bottom: 1px solid #f2f4f7; vertical-align: middle; }
         td.num { text-align: right; font-family: 'SF Mono', 'Monaco', 'Courier New', monospace; font-weight: 500; }
         td.text { text-align: left; }
-        tr:hover { background: #f7fafc; }
-        tr.profit-row { background: #dcfce7; }
-        tr.profit-row:hover { background: #bbf7d0; }
-        tr.loss-row { background: #fee2e2; }
-        tr.loss-row:hover { background: #fecaca; }
-        .status-badge { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+        tr:hover { background: #f9fafb; }
+        tr.profit-row { background: #ecfdf3; }
+        tr.profit-row:hover { background: #d1fadf; }
+        tr.loss-row { background: #fef2f2; }
+        tr.loss-row:hover { background: #fee2e2; }
+        .status-badge { padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
         .status-active { background: #fef3c7; color: #92400e; }
         .status-sold { background: #d1fae5; color: #065f46; }
-        .loading { text-align: center; padding: 60px; color: #718096; font-size: 14px; }
-        @media (max-width: 768px) {
-            body { padding: 12px; }
-            .summary { grid-template-columns: 1fr; gap: 12px; }
-            .crypto-header { flex-direction: column; gap: 10px; align-items: flex-start; }
-            table { font-size: 12px; }
-            th, td { padding: 8px 10px; }
+        .loading { text-align: center; padding: 48px; color: var(--muted); font-size: 13px; }
+        @media (max-width: 900px) {
+            .summary { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 640px) {
+            body { padding: 10px; }
+            .summary { grid-template-columns: 1fr; }
+            .crypto-header { flex-direction: column; gap: 8px; align-items: flex-start; }
+            table { font-size: 11px; }
+            th, td { padding: 6px 8px; }
         }
     </style>
 </head>
@@ -216,12 +242,16 @@
                 // Format price function - show more decimals for small prices
                 function formatPrice(price) {
                     if (!price || price === 0) return '0.00';
-                    if (price >= 1) return price.toFixed(2);
-                    if (price >= 0.01) return price.toFixed(4);
-                    if (price >= 0.001) return price.toFixed(5);
-                    if (price >= 0.0001) return price.toFixed(6);
-                    if (price >= 0.00001) return price.toFixed(7);
-                    return price.toFixed(8);
+                    if (price < 1e-8) return price.toExponential(2);
+                    let fixed;
+                    if (price >= 1) fixed = price.toFixed(2);
+                    else if (price >= 0.01) fixed = price.toFixed(4);
+                    else if (price >= 0.001) fixed = price.toFixed(5);
+                    else if (price >= 0.0001) fixed = price.toFixed(6);
+                    else if (price >= 0.00001) fixed = price.toFixed(7);
+                    else fixed = price.toFixed(8);
+                    // Trim trailing zeros to avoid long decimals
+                    return fixed.replace(/\.?0+$/, '');
                 }
                 
                 for (const trade of cryptoData.trades) {
