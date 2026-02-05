@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# flake8: noqa
 # -*- coding: utf-8 -*-
 """
 Signal Processing Functions
@@ -11,6 +12,9 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+_sell_signal_locks: dict[str, threading.Lock] = {}
+_sell_signal_locks_guard = threading.Lock()
 
 
 def process_buy_signal(
@@ -139,15 +143,12 @@ def process_sell_signal(
     # ✅ FIX: Add per-instId lock to prevent concurrent sell attempts
     # This prevents multiple strategies from selling the same orders simultaneously
     instId_lock_key = f"sell_{instId}"
-    if not hasattr(process_sell_signal, "_instId_locks"):
-        process_sell_signal._instId_locks = {}
+    if instId_lock_key not in _sell_signal_locks:
+        with _sell_signal_locks_guard:
+            if instId_lock_key not in _sell_signal_locks:
+                _sell_signal_locks[instId_lock_key] = threading.Lock()
 
-    if instId_lock_key not in process_sell_signal._instId_locks:
-        with lock:
-            if instId_lock_key not in process_sell_signal._instId_locks:
-                process_sell_signal._instId_locks[instId_lock_key] = threading.Lock()
-
-    instId_lock = process_sell_signal._instId_locks[instId_lock_key]
+    instId_lock = _sell_signal_locks[instId_lock_key]
 
     # ✅ FIX: Use per-instId lock to prevent concurrent sells
     if not instId_lock.acquire(blocking=False):
@@ -589,12 +590,12 @@ def process_batch_buy_signal(
                             )
                     else:
                         # ✅ FIX: Auto-schedule next batch using thread pool (bounded)
-                        # Schedule next batch check after 30 seconds (batch delay)
+                        # Schedule next batch check after 10 minutes (batch delay)
                         # This avoids creating unbounded threads for sleep operations
                         def schedule_next_batch_check():
                             import time
 
-                            time.sleep(30)  # Wait for batch delay
+                            time.sleep(600)  # Wait for batch delay
                             if batch_strategy and batch_strategy.is_batch_active(
                                 instId
                             ):

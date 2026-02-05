@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Batch configuration
 BATCH_AMOUNTS = [30, 30, 40]  # USDT amounts for each batch
-BATCH_DELAY_SECONDS = 30  # Delay between batches
+BATCH_DELAY_SECONDS = 600  # Delay between batches
 
 
 class BatchBuyStrategy:
