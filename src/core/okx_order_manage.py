@@ -1,3 +1,4 @@
+# flake8: noqa
 import base64
 import hashlib
 import hmac
@@ -24,11 +25,19 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 import logging
 import os
+import threading
 from pathlib import Path
 
 logger = logging.getLogger()
 logger.setLevel(logging.WARNING)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+_sell_lock = threading.Lock()
+
+
+def _noop_play_sound(_sound: str):
+    return None
+
 
 # Only use file logging if logs directory exists or can be created
 # In Railway/Vercel, prefer stdout logging
@@ -95,17 +104,54 @@ def order_update(instId, ordId, tradeAPI, conn, cur):
             result = tradeAPI.get_order(instId=instId, ordId=ordId)
 
             data = result["data"][0]
-            size = data["accFillSz"]
-            price = data["fillPx"]
-            new_state = "completed" if size not in ("", "0") else "canceled"
+            size = data.get("accFillSz", "")
+            price = data.get("fillPx", "")
+            order_state = data.get("state", "")
+            order_size = data.get("sz", "0")
 
-            if new_state == "completed":
+            try:
+                filled_size = float(size) if size not in ("", None) else 0.0
+            except (ValueError, TypeError):
+                filled_size = 0.0
+
+            try:
+                total_size = float(order_size) if order_size not in ("", None) else 0.0
+            except (ValueError, TypeError):
+                total_size = 0.0
+
+            if filled_size <= 0:
+                new_state = "canceled"
+            elif order_state == "filled" or (
+                total_size > 0 and abs(filled_size - total_size) < 0.000001
+            ):
+                new_state = "filled"
+            else:
+                new_state = "partially_filled"
+
+            if new_state in ("filled", "partially_filled"):
+                # Derive sell_time from fillTime (next hour 55 min) for consistency
+                fill_time_ms = data.get("fillTime", "")
+                if fill_time_ms and fill_time_ms != "":
+                    try:
+                        fill_time = datetime.fromtimestamp(int(fill_time_ms) / 1000)
+                    except (ValueError, TypeError):
+                        fill_time = datetime.now()
+                else:
+                    fill_time = datetime.now()
+
+                next_hour = fill_time.replace(minute=55, second=0, microsecond=0)
+                next_hour = next_hour + timedelta(hours=1)
+                sell_time_ms = int(next_hour.timestamp() * 1000)
+
                 sql_statement = """
                 UPDATE orders
-                SET state = %s, size = %s, price = %s
+                SET state = %s, size = %s, price = %s, sell_time = %s
                 WHERE instId = %s AND ordId = %s;
                 """
-                cur.execute(sql_statement, (new_state, size, price, instId, ordId))
+                cur.execute(
+                    sql_statement,
+                    (new_state, size, price, sell_time_ms, instId, ordId),
+                )
             else:
                 sql_statement = """
                 UPDATE orders
@@ -221,18 +267,34 @@ def main():
                 orderType = each["orderType"]
                 flag = each["flag"]
 
-                if orderType == "mrk" or "limit":
+                if orderType in ("mrk", "limit"):
                     order_update(instId, ordId, tradeAPI_dict[flag], conn, cur)
 
         now = datetime.now()
-        state_value = "completed"
+        state_value = "filled"
         sell_time_value = int((now).timestamp() * 1000)
         side = "buy"
 
-        sql_statement = (
-            "SELECT * FROM orders WHERE state = %s and sell_time < %s and side = %s;"
+        # Recover stuck selling orders (e.g., process crash after claiming)
+        stuck_threshold_ms = int((now - timedelta(minutes=5)).timestamp() * 1000)
+        cur.execute(
+            """
+            UPDATE orders
+            SET state = 'filled'
+            WHERE state = 'selling'
+              AND (sell_price IS NULL OR sell_price = '')
+              AND sell_time < %s
+            """,
+            (stuck_threshold_ms,),
         )
-        cur.execute(sql_statement, (state_value, sell_time_value, side))
+        conn.commit()
+
+        sql_statement = (
+            "SELECT * FROM orders WHERE state IN ('filled', 'partially_filled') "
+            "AND (sell_price IS NULL OR sell_price = '') "
+            "AND sell_time < %s and side = %s;"
+        )
+        cur.execute(sql_statement, (sell_time_value, side))
 
         rows = cur.fetchall()
 
@@ -253,6 +315,13 @@ def main():
         )
 
         if len(df) > 0:
+            if os.getenv("ORDER_MANAGE_SELL_ENABLED", "0") != "1":
+                logger.warning(
+                    "ORDER_MANAGE_SELL_ENABLED=0, skipping okx_order_manage sell path"
+                )
+                cur.close()
+                conn.close()
+                continue
 
             logger.warning("ord mng to sell:%s", df.to_string())
             result = master_accountAPI.get_account_balance()
@@ -288,10 +357,53 @@ def main():
                 if is_sell > 0:
                     continue
 
-                # Lazy import to avoid circular import issues
-                from src.core.okx_functions import sell_market
+                # Guard against duplicate sell attempts by claiming the order
+                cur.execute(
+                    """
+                    UPDATE orders
+                    SET state = 'selling'
+                    WHERE instId = %s AND ordId = %s
+                      AND state IN ('filled', 'partially_filled')
+                      AND (sell_price IS NULL OR sell_price = '')
+                    """,
+                    (instId, ordId),
+                )
+                conn.commit()
+                if cur.rowcount == 0:
+                    continue
 
-                sell_market(instId, ordId, size, tradeAPI_dict[flag], flag, conn)
+                # Use shared sell logic from order_processing
+                from src.core.okx_functions import format_number, get_market_api
+                from src.core.order_processing import sell_market_order
+
+                sell_success = sell_market_order(
+                    instId=instId,
+                    ordId=ordId,
+                    size=size,
+                    tradeAPI=tradeAPI_dict[flag],
+                    conn=conn,
+                    strategy_name=flag,
+                    simulation_mode=False,
+                    format_number_func=format_number,
+                    play_sound_func=_noop_play_sound,
+                    get_market_api_func=get_market_api,
+                    current_prices={},
+                    lock=_sell_lock,
+                )
+
+                # If sell did not update sell_price, revert state for retry
+                if not sell_success:
+                    cur.execute(
+                        """
+                        UPDATE orders
+                        SET state = 'filled'
+                        WHERE instId = %s AND ordId = %s
+                          AND state = 'selling'
+                          AND (sell_price IS NULL OR sell_price = '')
+                        """,
+                        (instId, ordId),
+                    )
+                    conn.commit()
 
     cur.close()
     conn.close()

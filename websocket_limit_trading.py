@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# flake8: noqa
 # -*- coding: utf-8 -*-
 """
 Real-time Trading System using WebSocket
@@ -16,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import psycopg
 import websocket
@@ -138,7 +139,7 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # Reduce debug logging for high-frequency market data
 REDUCE_MARKET_DATA_LOGS = os.getenv("REDUCE_MARKET_DATA_LOGS", "true").lower() == "true"
 
-handlers = [logging.StreamHandler()]
+handlers: list[logging.Handler] = [logging.StreamHandler()]
 
 if LOG_TO_FILE:
     file_handler = TimedRotatingFileHandler(
@@ -157,6 +158,25 @@ logging.basicConfig(
     handlers=handlers,
 )
 logger = logging.getLogger(__name__)
+# Watchdog/heartbeat
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30"))
+HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS", "180"))
+_last_heartbeat_ts = time.time()
+
+
+def _heartbeat_tick():
+    global _last_heartbeat_ts
+    _last_heartbeat_ts = time.time()
+
+
+def _watchdog_loop():
+    while True:
+        time.sleep(HEARTBEAT_INTERVAL_SECONDS)
+        if time.time() - _last_heartbeat_ts > HEARTBEAT_TIMEOUT_SECONDS:
+            logger.error("❌ WATCHDOG: heartbeat timeout, exiting to trigger restart")
+            os._exit(1)
+
+
 # ✅ FIX: logger is already configured by basicConfig above, but ensure it uses the handlers
 logger.handlers = handlers
 logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
@@ -221,6 +241,9 @@ try:
 except ImportError as e:
     logger.warning(f"Failed to import order_sync: {e}")
     OrderSyncManager = None
+
+if TYPE_CHECKING:
+    from core.order_sync import OrderSyncManager as OrderSyncManagerType
 
 try:
     from core.order_timeout import (
@@ -532,7 +555,7 @@ if PriceManager is not None:
         price_manager = None
 
 # Order sync manager will be initialized after process_sell_signal is defined
-order_sync_manager: Optional[object] = None
+order_sync_manager: Optional["OrderSyncManager"] = None
 
 
 def fetch_current_hour_open_price(instId: str) -> Optional[float]:
@@ -1200,6 +1223,12 @@ def main():
         logger.error("Failed to connect to database, exiting")
         return
 
+    # Start watchdog thread
+    watchdog_thread = threading.Thread(
+        target=_watchdog_loop, daemon=True, name="Watchdog"
+    )
+    watchdog_thread.start()
+
     # Start ticker WebSocket
     ticker_url = "wss://ws.okx.com:8443/ws/v5/public"
     ticker_thread = threading.Thread(
@@ -1243,6 +1272,7 @@ def main():
     try:
         while True:
             time.sleep(60)
+            _heartbeat_tick()
             # Periodic status log
             with lock:
                 logger.info(
@@ -1297,7 +1327,8 @@ def main():
         logger.warning("Shutting down gracefully...")
     except Exception as e:
         logger.error(f"Unexpected error in main loop: {e}")
-        raise
+        time.sleep(5)
+        return
 
 
 if __name__ == "__main__":

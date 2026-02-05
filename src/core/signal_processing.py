@@ -6,8 +6,11 @@ Signal Processing Functions
 Handles buy and sell signal processing
 """
 
+import json
 import logging
+import os
 import threading
+import urllib.request
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -15,6 +18,27 @@ logger = logging.getLogger(__name__)
 
 _sell_signal_locks: dict[str, threading.Lock] = {}
 _sell_signal_locks_guard = threading.Lock()
+_sell_fail_counts: dict[str, int] = {}
+_sell_fail_counts_lock = threading.Lock()
+
+
+def _send_alert(message: str) -> None:
+    alert_url = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+    if not alert_url:
+        return
+    try:
+        payload = json.dumps({"text": message}).encode("utf-8")
+        req = urllib.request.Request(
+            alert_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        timeout_seconds = int(os.getenv("ALERT_WEBHOOK_TIMEOUT_SECONDS", "5"))
+        with urllib.request.urlopen(req, timeout=timeout_seconds):
+            return
+    except Exception as e:
+        logger.warning(f"Alert webhook failed: {e}")
 
 
 def process_buy_signal(
@@ -174,11 +198,12 @@ def process_sell_signal(
 
                 cur.execute(
                     """
-                    SELECT ordId, state, size FROM orders
+                    SELECT ordId, state, size, sell_time, create_time FROM orders
                     WHERE instId = %s
                       AND state IN ('filled', 'partially_filled')
                       AND (sell_price IS NULL OR sell_price = '')
-                      AND (sell_time IS NULL OR sell_time <= %s)
+                      AND sell_time IS NOT NULL
+                      AND sell_time <= %s
                     ORDER BY create_time ASC
                     """,
                     (instId, now_ms),
@@ -202,6 +227,35 @@ def process_sell_signal(
                     ordId = row[0]
                     db_state = row[1] if row[1] else ""
                     db_size = row[2] if row[2] else "0"
+                    db_sell_time = row[3]
+                    db_create_time = row[4]
+
+                    if not db_sell_time:
+                        # Derive sell_time from create_time to avoid immediate sell
+                        if db_create_time:
+                            create_dt = datetime.fromtimestamp(db_create_time / 1000)
+                        else:
+                            create_dt = datetime.now()
+                        next_hour = create_dt.replace(
+                            minute=55, second=0, microsecond=0
+                        )
+                        next_hour = next_hour + timedelta(hours=1)
+                        sell_time_ms = int(next_hour.timestamp() * 1000)
+                        try:
+                            cur_update = conn.cursor()
+                            cur_update.execute(
+                                "UPDATE orders SET sell_time = %s WHERE instId = %s AND ordId = %s",
+                                (sell_time_ms, instId, ordId),
+                            )
+                            conn.commit()
+                        finally:
+                            cur_update.close()
+                        logger.warning(
+                            f"{strategy_name} Missing sell_time for {instId}, {ordId}; "
+                            f"set to {next_hour.strftime('%Y-%m-%d %H:%M:%S')}, skip sell this cycle"
+                        )
+                        failed_sells += 1
+                        continue
 
                     if db_state == "sold out":
                         logger.debug(
@@ -285,6 +339,68 @@ def process_sell_signal(
                         failed_sells += 1
                         continue
 
+                    # If a sell_order_id already exists and is filled, finalize without re-selling
+                    try:
+                        cur_existing = conn.cursor()
+                        cur_existing.execute(
+                            "SELECT sell_order_id FROM orders WHERE instId = %s AND ordId = %s",
+                            (instId, ordId),
+                        )
+                        row_existing = cur_existing.fetchone()
+                        cur_existing.close()
+                        existing_sell_order_id = (
+                            row_existing[0] if row_existing else None
+                        )
+                        if (
+                            existing_sell_order_id
+                            and api is not None
+                            and not simulation_mode
+                        ):
+                            order_result = api.get_order(
+                                instId=instId, ordId=existing_sell_order_id
+                            )
+                            if order_result.get("code") == "0" and order_result.get(
+                                "data"
+                            ):
+                                order_info = order_result["data"][0]
+                                order_state = order_info.get("state", "")
+                                acc_fill_sz = order_info.get("accFillSz", "0")
+                                filled_size = float(acc_fill_sz) if acc_fill_sz else 0.0
+                                if order_state == "filled" and filled_size > 0:
+                                    avg_px = order_info.get("avgPx") or order_info.get(
+                                        "fillPx"
+                                    )
+                                    if avg_px and float(avg_px) > 0:
+                                        cur_price = conn.cursor()
+                                        cur_price.execute(
+                                            "UPDATE orders SET state = %s, sell_price = %s, sell_order_id = NULL "
+                                            "WHERE instId = %s AND ordId = %s",
+                                            ("sold out", str(avg_px), instId, ordId),
+                                        )
+                                        conn.commit()
+                                        cur_price.close()
+                                    else:
+                                        cur_mark = conn.cursor()
+                                        cur_mark.execute(
+                                            "UPDATE orders SET state = %s, sell_order_id = NULL "
+                                            "WHERE instId = %s AND ordId = %s",
+                                            ("sold out", instId, ordId),
+                                        )
+                                        conn.commit()
+                                        cur_mark.close()
+                                    logger.warning(
+                                        f"{strategy_name} SELL already filled on exchange for {instId}, {ordId}; "
+                                        f"skipping re-sell"
+                                    )
+                                    successful_sells += 1
+                                    with _sell_fail_counts_lock:
+                                        _sell_fail_counts.pop(instId, None)
+                                    continue
+                    except Exception as e:
+                        logger.warning(
+                            f"{strategy_name} SELL pre-check failed for {instId}, {ordId}: {e}"
+                        )
+
                     # Sell this order independently
                     sell_success = sell_market_order_func(
                         instId, ordId, size, api, conn
@@ -295,11 +411,152 @@ def process_sell_signal(
                         logger.warning(
                             f"✅ {strategy_name} SELL: {instId}, ordId={ordId} sold successfully"
                         )
+                        with _sell_fail_counts_lock:
+                            _sell_fail_counts.pop(instId, None)
+                        # Verify sell_price was recorded; otherwise revert for retry
+                        try:
+                            cur_verify = conn.cursor()
+                            cur_verify.execute(
+                                "SELECT sell_price FROM orders WHERE instId = %s AND ordId = %s",
+                                (instId, ordId),
+                            )
+                            row_verify = cur_verify.fetchone()
+                            cur_verify.close()
+                            sell_price_value = row_verify[0] if row_verify else None
+                            if not sell_price_value or str(sell_price_value) in (
+                                "",
+                                "0",
+                            ):
+                                # Avoid duplicate sells: verify sell_order_id status before reverting
+                                cur_order = conn.cursor()
+                                cur_order.execute(
+                                    "SELECT sell_order_id FROM orders WHERE instId = %s AND ordId = %s",
+                                    (instId, ordId),
+                                )
+                                row_order = cur_order.fetchone()
+                                cur_order.close()
+                                sell_order_id = row_order[0] if row_order else None
+
+                                should_revert = True
+                                if (
+                                    sell_order_id
+                                    and api is not None
+                                    and not simulation_mode
+                                ):
+                                    try:
+                                        order_result = api.get_order(
+                                            instId=instId, ordId=sell_order_id
+                                        )
+                                        if order_result.get(
+                                            "code"
+                                        ) == "0" and order_result.get("data"):
+                                            order_info = order_result["data"][0]
+                                            order_state = order_info.get("state", "")
+                                            acc_fill_sz = order_info.get(
+                                                "accFillSz", "0"
+                                            )
+                                            filled_size = (
+                                                float(acc_fill_sz)
+                                                if acc_fill_sz
+                                                else 0.0
+                                            )
+                                            if (
+                                                order_state == "filled"
+                                                and filled_size > 0
+                                            ):
+                                                should_revert = False
+                                                # Try best-effort update of sell_price from order info
+                                                avg_px = order_info.get(
+                                                    "avgPx"
+                                                ) or order_info.get("fillPx")
+                                                if avg_px and float(avg_px) > 0:
+                                                    cur_price = conn.cursor()
+                                                    cur_price.execute(
+                                                        "UPDATE orders SET sell_price = %s WHERE instId = %s AND ordId = %s",
+                                                        (str(avg_px), instId, ordId),
+                                                    )
+                                                    conn.commit()
+                                                    cur_price.close()
+                                                else:
+                                                    try:
+                                                        from core.okx_functions import (
+                                                            get_market_api,
+                                                        )
+
+                                                        market_api = get_market_api()
+                                                        ticker_result = (
+                                                            market_api.get_ticker(
+                                                                instId=instId
+                                                            )
+                                                        )
+                                                        if ticker_result.get(
+                                                            "code"
+                                                        ) == "0" and ticker_result.get(
+                                                            "data"
+                                                        ):
+                                                            last_price = ticker_result[
+                                                                "data"
+                                                            ][0].get("last", "")
+                                                            if last_price:
+                                                                cur_price = (
+                                                                    conn.cursor()
+                                                                )
+                                                                cur_price.execute(
+                                                                    "UPDATE orders SET sell_price = %s WHERE instId = %s AND ordId = %s",
+                                                                    (
+                                                                        str(last_price),
+                                                                        instId,
+                                                                        ordId,
+                                                                    ),
+                                                                )
+                                                                conn.commit()
+                                                                cur_price.close()
+                                                    except Exception as e:
+                                                        logger.warning(
+                                                            f"{strategy_name} SELL ticker fallback failed for {instId}, {ordId}: {e}"
+                                                        )
+                                                logger.warning(
+                                                    f"{strategy_name} SELL filled on exchange but missing sell_price for "
+                                                    f"{instId}, {ordId}; keeping sold out to avoid duplicate sell"
+                                                )
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"{strategy_name} SELL verify sell_order_id failed for {instId}, {ordId}: {e}"
+                                        )
+
+                                if should_revert:
+                                    cur_revert = conn.cursor()
+                                    cur_revert.execute(
+                                        "UPDATE orders SET state = %s WHERE instId = %s AND ordId = %s",
+                                        ("filled", instId, ordId),
+                                    )
+                                    conn.commit()
+                                    cur_revert.close()
+                                    failed_sells += 1
+                                    successful_sells -= 1
+                                    logger.warning(
+                                        f"{strategy_name} SELL missing sell_price for {instId}, {ordId}; "
+                                        f"reverted to filled for retry"
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"{strategy_name} SELL verify error for {instId}, {ordId}: {e}"
+                            )
                     else:
                         failed_sells += 1
                         logger.error(
                             f"❌ {strategy_name} SELL FAILED: {instId}, {ordId}"
                         )
+                        with _sell_fail_counts_lock:
+                            _sell_fail_counts[instId] = (
+                                _sell_fail_counts.get(instId, 0) + 1
+                            )
+                            fail_count = _sell_fail_counts[instId]
+                        threshold = int(os.getenv("SELL_FAIL_ALERT_THRESHOLD", "3"))
+                        if fail_count >= threshold:
+                            _send_alert(
+                                f"SELL failed {fail_count}x for {instId} ({strategy_name})."
+                            )
 
                 # Clean up active_orders if all orders are sold
                 if successful_sells > 0 and failed_sells == 0:
