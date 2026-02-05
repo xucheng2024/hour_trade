@@ -747,17 +747,22 @@ def check_and_cancel_unfilled_order_after_timeout_gap(
 
 
 def _record_gap_buy(instId: str, buy_time: datetime):
+    """Record global gap buy time (not per-instId, but global cooldown)"""
     with lock:
-        gap_last_buy_time[instId] = buy_time.timestamp()
+        gap_last_buy_time["__global__"] = buy_time.timestamp()
 
 
 def _has_recent_gap_buy(instId: str) -> bool:
+    """Check if there was ANY gap buy in the last 30 minutes (global cooldown)"""
     now_ts = time.time()
+
+    # Check memory first (global cooldown)
     with lock:
-        last_ts = gap_last_buy_time.get(instId)
+        last_ts = gap_last_buy_time.get("__global__")
     if last_ts and (now_ts - last_ts) < ORIGINAL_GAP_COOLDOWN_SECONDS:
         return True
 
+    # Fallback to DB: check if ANY coin was bought in the last 30 minutes
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -765,19 +770,19 @@ def _has_recent_gap_buy(instId: str) -> bool:
         cur.execute(
             """
             SELECT MAX(create_time) FROM orders
-            WHERE instId = %s AND side = 'buy' AND flag = %s AND create_time >= %s
+            WHERE side = 'buy' AND flag = %s AND create_time >= %s
             """,
-            (instId, ORIGINAL_GAP_STRATEGY_NAME, cutoff_ms),
+            (ORIGINAL_GAP_STRATEGY_NAME, cutoff_ms),
         )
         row = cur.fetchone()
         cur.close()
         conn.close()
         if row and row[0]:
             with lock:
-                gap_last_buy_time[instId] = float(row[0]) / 1000.0
+                gap_last_buy_time["__global__"] = float(row[0]) / 1000.0
             return True
     except Exception as e:
-        logger.warning(f"Original gap buy check failed for {instId}: {e}")
+        logger.warning(f"Original gap global buy check failed: {e}")
 
     return False
 
@@ -850,17 +855,31 @@ def on_candle_message(ws, msg_string):
         logger.error("on_candle_message not available - module import failed")
 
 
-def process_sell_signal(instId: str):
+def process_sell_signal(instId: str, strategy_type: str = "original"):
     """Process sell signal at next hour close (idempotent)"""
     if _process_sell_signal:
+        # Select strategy_name and active_orders based on strategy_type
+        if strategy_type == "gap":
+            strategy_name = ORIGINAL_GAP_STRATEGY_NAME
+            orders_dict = gap_active_orders
+        elif strategy_type == "stable":
+            strategy_name = STABLE_STRATEGY_NAME
+            orders_dict = stable_active_orders
+        elif strategy_type == "batch":
+            strategy_name = BATCH_STRATEGY_NAME
+            orders_dict = batch_active_orders
+        else:
+            strategy_name = STRATEGY_NAME
+            orders_dict = active_orders
+
         _process_sell_signal(
             instId,
-            STRATEGY_NAME,
+            strategy_name,
             SIMULATION_MODE,
             get_trade_api,
             get_db_connection,
             sell_market_order,
-            active_orders,
+            orders_dict,
             lock,
         )
     else:
@@ -1023,6 +1042,19 @@ def process_batch_buy_signal(instId: str, limit_price: float):
 # Initialize order sync manager after process_sell_signal is defined
 if OrderSyncManager is not None and order_sync_manager is None:
     try:
+        import functools
+
+        # Create wrapped functions with correct strategy_type for each strategy
+        original_process_sell_signal = functools.partial(
+            process_sell_signal, strategy_type="original"
+        )
+        stable_process_sell_signal = functools.partial(
+            process_sell_signal, strategy_type="stable"
+        )
+        batch_process_sell_signal = functools.partial(
+            process_sell_signal, strategy_type="batch"
+        )
+
         order_sync_manager = OrderSyncManager(
             strategy_name=STRATEGY_NAME,
             stable_strategy_name=STABLE_STRATEGY_NAME,
@@ -1035,9 +1067,9 @@ if OrderSyncManager is not None and order_sync_manager is None:
             stable_strategy=stable_strategy,
             batch_strategy=batch_strategy,
             lock=lock,
-            process_sell_signal=process_sell_signal,
-            process_stable_sell_signal=process_sell_signal,  # ✅ FIX: Use same function for stable (each order is independent)
-            process_batch_sell_signal=process_sell_signal,  # ✅ FIX: Use same function for batch (each order is independent)
+            process_sell_signal=original_process_sell_signal,
+            process_stable_sell_signal=stable_process_sell_signal,
+            process_batch_sell_signal=batch_process_sell_signal,
             simulation_mode=SIMULATION_MODE,
         )
         logger.info("✅ OrderSyncManager initialized")
@@ -1047,6 +1079,13 @@ if OrderSyncManager is not None and order_sync_manager is None:
 
 if OrderSyncManager is not None and gap_order_sync_manager is None:
     try:
+        import functools
+
+        # Create wrapped functions with correct strategy_type for gap
+        gap_process_sell_signal = functools.partial(
+            process_sell_signal, strategy_type="gap"
+        )
+
         gap_order_sync_manager = OrderSyncManager(
             strategy_name=ORIGINAL_GAP_STRATEGY_NAME,
             stable_strategy_name="__unused__",
@@ -1059,9 +1098,9 @@ if OrderSyncManager is not None and gap_order_sync_manager is None:
             stable_strategy=None,
             batch_strategy=None,
             lock=lock,
-            process_sell_signal=process_sell_signal,
-            process_stable_sell_signal=process_sell_signal,
-            process_batch_sell_signal=process_sell_signal,
+            process_sell_signal=gap_process_sell_signal,
+            process_stable_sell_signal=gap_process_sell_signal,
+            process_batch_sell_signal=gap_process_sell_signal,
             simulation_mode=SIMULATION_MODE,
         )
         logger.info("✅ Gap OrderSyncManager initialized")
@@ -1292,18 +1331,7 @@ def check_sell_timeout():
                     f"⏰ TIMEOUT SELL: {instId} ({strategy_type}), "
                     f"next_hour_close_time reached, triggering sell"
                 )
-                if strategy_type == "original":
-                    thread_pool.submit(process_sell_signal, instId)
-                elif strategy_type == "stable":
-                    thread_pool.submit(
-                        process_sell_signal, instId
-                    )  # ✅ FIX: Use same function for stable
-                elif strategy_type == "batch":
-                    thread_pool.submit(
-                        process_sell_signal, instId
-                    )  # ✅ FIX: Use same function for batch
-                elif strategy_type == "gap":
-                    thread_pool.submit(process_sell_signal, instId)
+                thread_pool.submit(process_sell_signal, instId, strategy_type)
         except Exception as e:
             logger.error(f"Error in check_sell_timeout: {e}")
             time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)  # Wait on error

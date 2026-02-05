@@ -103,17 +103,54 @@ def process_buy_signal(
 
         conn = get_db_connection_func()
         try:
-            ordId = buy_limit_order_func(instId, actual_buy_price, size, api, conn)
-            if ordId:
+            # ✅ FIX: Database-level duplicate check to prevent multiple processes/instances
+            # from buying the same coin simultaneously
+            cur = conn.cursor()
+            # Check if there are any unsold orders in the last 5 minutes
+            # This prevents duplicate buys even if multiple processes are running
+            five_minutes_ago_ms = int(
+                (datetime.now() - timedelta(minutes=5)).timestamp() * 1000
+            )
+            cur.execute(
+                """
+                SELECT ordId, state, create_time FROM orders
+                WHERE instId = %s AND flag = %s
+                  AND create_time > %s
+                  AND state IN ('filled', 'partially_filled')
+                  AND (sell_price IS NULL OR sell_price = '')
+                ORDER BY create_time DESC
+                LIMIT 1
+                """,
+                (instId, strategy_name, five_minutes_ago_ms),
+            )
+            recent_unsold = cur.fetchone()
+            cur.close()
+
+            if recent_unsold:
+                logger.warning(
+                    f"🚫 DUPLICATE BUY BLOCKED: {instId} already has unsold order "
+                    f"ordId={recent_unsold[0]}, state={recent_unsold[1]}, "
+                    f"created at {datetime.fromtimestamp(recent_unsold[2]/1000).strftime('%H:%M:%S')}"
+                )
                 with lock:
                     if instId in pending_buys:
                         del pending_buys[instId]
-                    now = datetime.now()
-                    # ✅ FIX: Always sell at next hour's 55 minutes
-                    # Calculate next hour's 55 minutes
-                    sell_time = now.replace(minute=55, second=0, microsecond=0)
-                    # Always add 1 hour to ensure we sell at next hour's close
-                    sell_time = sell_time + timedelta(hours=1)
+                return
+
+            ordId = buy_limit_order_func(instId, actual_buy_price, size, api, conn)
+            if ordId:
+                now = datetime.now()
+                # ✅ FIX: Always sell at next hour's 55 minutes
+                # Calculate next hour's 55 minutes
+                sell_time = now.replace(minute=55, second=0, microsecond=0)
+                # Always add 1 hour to ensure we sell at next hour's close
+                sell_time = sell_time + timedelta(hours=1)
+
+                # ✅ FIX: Atomic operation - delete from pending_buys and add to active_orders
+                # in single lock to prevent race condition (duplicate buy signal)
+                with lock:
+                    if instId in pending_buys:
+                        del pending_buys[instId]
                     active_orders[instId] = {
                         "ordId": ordId,
                         "buy_price": actual_buy_price,  # ✅ FIX: Store actual buy price used

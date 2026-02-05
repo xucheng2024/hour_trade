@@ -83,12 +83,6 @@ def on_ticker_message(
                                     f"for {instId} on ticker update (coin is active)"
                                 )
 
-                            # Skip original strategy if already in pending_buys
-                            # or active_orders
-                            skip_original = (
-                                instId in pending_buys or instId in active_orders
-                            )
-
                         # ✅ FIX: Always update stable strategy (even if price unchanged)
                         # Allows stability seconds to accumulate during flat markets
                         # Runs independently, outside main lock to avoid deadlock
@@ -127,9 +121,10 @@ def on_ticker_message(
                                             daemon=True,
                                         ).start()
 
-                        # ✅ FIX: Skip original if price unchanged OR already active
+                        # ✅ FIX: Skip original if price unchanged
+                        # Already-active check done atomically later under lock
                         # Stable strategy already ran above, accumulates stability
-                        if price_unchanged or skip_original:
+                        if price_unchanged:
                             continue
 
                         # Get reference price and limit_percent outside lock
@@ -297,7 +292,7 @@ def on_ticker_message(
                                 elif check_gap_recent_buy_func(instId):
                                     logger.warning(
                                         f"⏳ {instId} GAP BUY BLOCKED: "
-                                        "recent buy within 30m"
+                                        "global cooldown (any gap buy within 30m)"
                                     )
                                 else:
                                     with lock:
