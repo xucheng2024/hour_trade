@@ -77,6 +77,10 @@
                 <div class="summary-value" id="original-profit">-</div>
             </div>
             <div class="summary-item">
+                <div class="summary-label">Original Gap</div>
+                <div class="summary-value" id="original-gap-profit">-</div>
+            </div>
+            <div class="summary-item">
                 <div class="summary-label">Stable Strategy</div>
                 <div class="summary-value" id="stable-profit">-</div>
             </div>
@@ -127,6 +131,7 @@
                 const originalProfit = data.strategies['hourly_limit_ws']?.profit || 0;
                 const stableProfit = data.strategies['stable_buy_ws']?.profit || 0;
                 const batchProfit = data.strategies['batch_buy_ws']?.profit || 0;
+                const gapProfit = data.strategies['original_gap']?.profit || 0;
                 
                 const originalEl = document.getElementById('original-profit');
                 originalEl.textContent = originalProfit.toFixed(2) + ' USDT';
@@ -145,6 +150,12 @@
                 batchEl.className = 'summary-value ' + 
                     (batchProfit > 0 ? 'profit-positive' : 
                      batchProfit < 0 ? 'profit-negative' : '');
+
+                const gapEl = document.getElementById('original-gap-profit');
+                gapEl.textContent = gapProfit.toFixed(2) + ' USDT';
+                gapEl.className = 'summary-value ' + 
+                    (gapProfit > 0 ? 'profit-positive' : 
+                     gapProfit < 0 ? 'profit-negative' : '');
             }
             
             // Render crypto list
@@ -167,6 +178,8 @@
                 const originalTrades = cryptoData.strategies?.['hourly_limit_ws']?.trades?.length || 0;
                 const stableTrades = cryptoData.strategies?.['stable_buy_ws']?.trades?.length || 0;
                 const batchTrades = cryptoData.strategies?.['batch_buy_ws']?.trades?.length || 0;
+                const gapProfit = cryptoData.strategies?.['original_gap']?.profit || 0;
+                const gapTrades = cryptoData.strategies?.['original_gap']?.trades?.length || 0;
                 
                 html += `
                     <div class="crypto-section">
@@ -178,6 +191,7 @@
                                 </div>
                                 <div style="font-size: 12px; color: #718096;">
                                     Original: ${originalProfit.toFixed(2)} (${originalTrades}) | 
+                                    Original Gap: ${gapProfit.toFixed(2)} (${gapTrades}) | 
                                     Stable: ${stableProfit.toFixed(2)} (${stableTrades}) | 
                                     Batch: ${batchProfit.toFixed(2)} (${batchTrades})
                                 </div>
@@ -229,6 +243,10 @@
                         strategyName = 'Batch';
                         strategyBgColor = '#e9d5ff';
                         strategyTextColor = '#6b21a8';
+                    } else if (trade.strategy === 'original_gap') {
+                        strategyName = 'Original Gap';
+                        strategyBgColor = '#fee2e2';
+                        strategyTextColor = '#991b1b';
                     }
                     
                     // Calculate profit percentage

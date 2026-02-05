@@ -12,7 +12,7 @@ import os
 import threading
 import urllib.request
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ def process_buy_signal(
     current_prices: Optional[
         dict
     ] = None,  # Optional current prices dict to get actual market price
+    on_order_created: Optional[Callable[[str, datetime], None]] = None,
 ):
     """Process buy signal in separate thread"""
     try:
@@ -125,6 +126,8 @@ def process_buy_signal(
                         f"buy_price={actual_buy_price:.6f}, "
                         f"sell_time={sell_time.strftime('%Y-%m-%d %H:%M:%S')}"
                     )
+                    if on_order_created:
+                        on_order_created(instId, now)
 
                     if not simulation_mode:
                         threading.Thread(

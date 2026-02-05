@@ -14,13 +14,19 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Accelerated drop thresholds
+# Accelerated drop thresholds (base, before volatility adjustment)
 DROP_1S_THRESHOLD = -0.0015  # -0.15% in 1 second
 DROP_3S_THRESHOLD = -0.0030  # -0.30% in 3 seconds
 
 # Stability check parameters
-STABILITY_CHECK_SECONDS = 5  # Check stability for 5 seconds
+STABILITY_REQUIRED_SECONDS = 10  # Require stable for 10 seconds
 STABLE_DROP_THRESHOLD = -0.0005  # -0.05% per second considered stable
+
+# History and volatility windows
+HISTORY_WINDOW_SECONDS = 15  # Keep recent history for stability checks
+VOLATILITY_WINDOW_SECONDS = 10  # Window to estimate volatility
+VOLATILITY_MIN_POINTS = 5
+VOLATILITY_MULTIPLIER = 2.5
 
 
 class StableBuyStrategy:
@@ -57,11 +63,19 @@ class StableBuyStrategy:
         """
         with self.lock:
             if instId not in self.price_history:
-                # Keep 10 seconds of history (at 1 update per second average)
-                self.price_history[instId] = deque(maxlen=10)
+                self.price_history[instId] = deque()
 
             timestamp = time.time()
             self.price_history[instId].append((timestamp, price))
+            self._prune_history(instId)
+
+    def _prune_history(self, instId: str):
+        if instId not in self.price_history:
+            return
+        cutoff = time.time() - HISTORY_WINDOW_SECONDS
+        history = self.price_history[instId]
+        while history and history[0][0] < cutoff:
+            history.popleft()
 
     def _get_price_at_time(self, instId: str, seconds_ago: float) -> Optional[float]:
         """Get price at specified seconds ago
@@ -96,6 +110,39 @@ class StableBuyStrategy:
 
             return None
 
+    def _compute_volatility(self, instId: str) -> Optional[float]:
+        if instId not in self.price_history:
+            return None
+        history = list(self.price_history[instId])
+        if len(history) < VOLATILITY_MIN_POINTS:
+            return None
+
+        cutoff = time.time() - VOLATILITY_WINDOW_SECONDS
+        window = [p for p in history if p[0] >= cutoff]
+        if len(window) < VOLATILITY_MIN_POINTS:
+            return None
+
+        returns = []
+        for i in range(1, len(window)):
+            prev = window[i - 1][1]
+            curr = window[i][1]
+            if prev and prev > 0:
+                returns.append((curr - prev) / prev)
+
+        if len(returns) < 2:
+            return None
+
+        mean = sum(returns) / len(returns)
+        variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+        return variance**0.5
+
+    def _dynamic_threshold(self, instId: str, base_threshold: float) -> float:
+        volatility = self._compute_volatility(instId)
+        if volatility is None or volatility <= 0:
+            return base_threshold
+        dynamic = -VOLATILITY_MULTIPLIER * volatility
+        return min(base_threshold, dynamic)
+
     def is_accelerated_drop(self, instId: str) -> bool:
         """Check if price is in accelerated drop
 
@@ -110,17 +157,18 @@ class StableBuyStrategy:
             if len(history) < 2:
                 return False
 
-            current_time = time.time()
             current_price = history[-1][1]
+            drop_1s_threshold = self._dynamic_threshold(instId, DROP_1S_THRESHOLD)
+            drop_3s_threshold = self._dynamic_threshold(instId, DROP_3S_THRESHOLD)
 
             # Check 1 second drop
             price_1s_ago = self._get_price_at_time(instId, 1.0)
             if price_1s_ago and price_1s_ago > 0:
                 drop_1s = (current_price - price_1s_ago) / price_1s_ago
-                if drop_1s <= DROP_1S_THRESHOLD:
+                if drop_1s <= drop_1s_threshold:
                     logger.debug(
                         f"🚫 {instId} Accelerated drop detected (1s): "
-                        f"{drop_1s*100:.3f}% <= {DROP_1S_THRESHOLD*100:.3f}%"
+                        f"{drop_1s*100:.3f}% <= {drop_1s_threshold*100:.3f}%"
                     )
                     return True
 
@@ -128,10 +176,10 @@ class StableBuyStrategy:
             price_3s_ago = self._get_price_at_time(instId, 3.0)
             if price_3s_ago and price_3s_ago > 0:
                 drop_3s = (current_price - price_3s_ago) / price_3s_ago
-                if drop_3s <= DROP_3S_THRESHOLD:
+                if drop_3s <= drop_3s_threshold:
                     logger.debug(
                         f"🚫 {instId} Accelerated drop detected (3s): "
-                        f"{drop_3s*100:.3f}% <= {DROP_3S_THRESHOLD*100:.3f}%"
+                        f"{drop_3s*100:.3f}% <= {drop_3s_threshold*100:.3f}%"
                     )
                     return True
 
@@ -145,7 +193,8 @@ class StableBuyStrategy:
             limit_price: Limit price for buy
 
         Returns:
-            True if signal registered, False if already registered or in accelerated drop
+            True if signal registered, False if already registered or in accelerated
+            drop
         """
         with self.lock:
             # Check if already in accelerated drop
@@ -180,7 +229,7 @@ class StableBuyStrategy:
                 "trigger_time": time.time(),
                 "trigger_price": current_price,
                 "limit_price": limit_price,
-                "stable_count": 0,
+                "stable_seconds": 0.0,
                 "last_check_time": time.time(),
             }
 
@@ -209,7 +258,7 @@ class StableBuyStrategy:
             # Check if still in accelerated drop
             if self.is_accelerated_drop(instId):
                 # Reset stable count
-                signal["stable_count"] = 0
+                signal["stable_seconds"] = 0.0
                 signal["last_check_time"] = current_time
                 logger.debug(
                     f"⏸️ {instId} Still in accelerated drop, resetting stability check"
@@ -231,33 +280,39 @@ class StableBuyStrategy:
             price_1s_ago = self._get_price_at_time(instId, 1.0)
             if price_1s_ago and price_1s_ago > 0:
                 drop_1s = (current_price - price_1s_ago) / price_1s_ago
+                stable_threshold = self._dynamic_threshold(
+                    instId, STABLE_DROP_THRESHOLD
+                )
 
                 # If drop rate is within stable threshold, count as stable
-                if drop_1s >= STABLE_DROP_THRESHOLD:
-                    signal["stable_count"] += 1
+                if drop_1s >= stable_threshold:
+                    signal["stable_seconds"] += time_since_last_check
                 else:
                     # Reset count if drop is too fast
-                    signal["stable_count"] = 0
+                    signal["stable_seconds"] = 0.0
                     logger.debug(
                         f"⏸️ {instId} Drop rate too fast: {drop_1s*100:.3f}% < "
-                        f"{STABLE_DROP_THRESHOLD*100:.3f}%, resetting stability"
+                        f"{stable_threshold*100:.3f}%, resetting stability"
                     )
 
             signal["last_check_time"] = current_time
 
-            # If we have enough consecutive stable checks, ready to buy
-            if signal["stable_count"] >= STABILITY_CHECK_SECONDS:
-                limit_price = signal["limit_price"]
+            # If we have enough stable time, ready to buy
+            if signal["stable_seconds"] >= STABILITY_REQUIRED_SECONDS:
+                # Recalculate limit price based on latest price
+                limit_price = min(signal["limit_price"], current_price)
                 logger.warning(
                     f"✅ {instId} Price stable, ready to buy "
-                    f"(stable for {signal['stable_count']}s, limit={limit_price:.6f})"
+                    f"(stable for {signal['stable_seconds']:.1f}s, "
+                    f"limit={limit_price:.6f})"
                 )
                 # Remove from pending signals
                 del self.pending_signals[instId]
                 return limit_price
 
             logger.debug(
-                f"⏳ {instId} Stability check: {signal['stable_count']}/{STABILITY_CHECK_SECONDS} "
+                f"⏳ {instId} Stability check: {signal['stable_seconds']:.1f}/"
+                f"{STABILITY_REQUIRED_SECONDS}s "
                 f"(current={current_price:.6f})"
             )
             return None

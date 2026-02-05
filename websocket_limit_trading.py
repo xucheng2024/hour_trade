@@ -112,7 +112,9 @@ TRADING_AMOUNT_USDT = int(
 STRATEGY_NAME = "hourly_limit_ws"
 STABLE_STRATEGY_NAME = "stable_buy_ws"
 BATCH_STRATEGY_NAME = "batch_buy_ws"
+ORIGINAL_GAP_STRATEGY_NAME = "original_gap"
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
+ORIGINAL_GAP_COOLDOWN_SECONDS = int(os.getenv("ORIGINAL_GAP_COOLDOWN_SECONDS", "1800"))
 
 # Strategy Parameters - Environment configurable
 INTRA_HOUR_CHECK_THROTTLE_SECONDS = int(
@@ -308,6 +310,12 @@ pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
 active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
+# Original-gap strategy active orders
+gap_active_orders: Dict[str, Dict] = (
+    {}
+)  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
+gap_pending_buys: Dict[str, bool] = {}
+gap_last_buy_time: Dict[str, float] = {}
 # Stable strategy active orders
 stable_active_orders: Dict[str, Dict] = (
     {}
@@ -556,6 +564,7 @@ if PriceManager is not None:
 
 # Order sync manager will be initialized after process_sell_signal is defined
 order_sync_manager: Optional["OrderSyncManager"] = None
+gap_order_sync_manager: Optional["OrderSyncManager"] = None
 
 
 def fetch_current_hour_open_price(instId: str) -> Optional[float]:
@@ -668,12 +677,16 @@ def on_ticker_message(ws, msg_string):
             batch_active_orders,
             batch_pending_buys,
             batch_strategy,
+            gap_active_orders,
+            gap_pending_buys,
             lock,
             fetch_current_hour_open_price,
             calculate_limit_price,
             process_buy_signal,
             process_stable_buy_signal,
             process_batch_buy_signal,
+            process_gap_buy_signal,
+            _has_recent_gap_buy,
             check_2h_gain_filter,  # Pass 2h gain filter function
             thread_pool,  # Pass thread pool for async processing
         )
@@ -707,6 +720,68 @@ def check_and_cancel_unfilled_order_after_timeout(
         )
 
 
+def check_and_cancel_unfilled_order_after_timeout_gap(
+    instId: str, ordId: str, tradeAPI: TradeAPI
+):
+    """Check order status after 1 minute timeout for original_gap"""
+    if _check_and_cancel_unfilled_order_after_timeout:
+        _check_and_cancel_unfilled_order_after_timeout(
+            instId,
+            ordId,
+            tradeAPI,
+            ORIGINAL_GAP_STRATEGY_NAME,
+            SIMULATION_MODE,
+            get_db_connection,
+            gap_active_orders,
+            stable_active_orders,
+            batch_active_orders,
+            batch_strategy,
+            batch_pending_buys,
+            BATCH_STRATEGY_NAME,
+            lock,
+        )
+    else:
+        logger.error(
+            "check_and_cancel_unfilled_order_after_timeout not available - module import failed"
+        )
+
+
+def _record_gap_buy(instId: str, buy_time: datetime):
+    with lock:
+        gap_last_buy_time[instId] = buy_time.timestamp()
+
+
+def _has_recent_gap_buy(instId: str) -> bool:
+    now_ts = time.time()
+    with lock:
+        last_ts = gap_last_buy_time.get(instId)
+    if last_ts and (now_ts - last_ts) < ORIGINAL_GAP_COOLDOWN_SECONDS:
+        return True
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cutoff_ms = int((now_ts - ORIGINAL_GAP_COOLDOWN_SECONDS) * 1000)
+        cur.execute(
+            """
+            SELECT MAX(create_time) FROM orders
+            WHERE instId = %s AND side = 'buy' AND flag = %s AND create_time >= %s
+            """,
+            (instId, ORIGINAL_GAP_STRATEGY_NAME, cutoff_ms),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row[0]:
+            with lock:
+                gap_last_buy_time[instId] = float(row[0]) / 1000.0
+            return True
+    except Exception as e:
+        logger.warning(f"Original gap buy check failed for {instId}: {e}")
+
+    return False
+
+
 def process_buy_signal(instId: str, limit_price: float):
     """Process buy signal in separate thread"""
     if _process_buy_signal:
@@ -725,6 +800,30 @@ def process_buy_signal(instId: str, limit_price: float):
             lock,
             check_and_cancel_unfilled_order_after_timeout,
             current_prices,  # ✅ FIX: Pass current prices to use actual market price
+        )
+    else:
+        logger.error("process_buy_signal not available - module import failed")
+
+
+def process_gap_buy_signal(instId: str, limit_price: float):
+    """Process original-gap buy signal with cooldown"""
+    if _process_buy_signal:
+        _process_buy_signal(
+            instId,
+            limit_price,
+            ORIGINAL_GAP_STRATEGY_NAME,
+            TRADING_AMOUNT_USDT,
+            SIMULATION_MODE,
+            get_trade_api,
+            get_db_connection,
+            buy_limit_order,
+            check_blacklist_before_buy,
+            gap_active_orders,
+            gap_pending_buys,
+            lock,
+            check_and_cancel_unfilled_order_after_timeout_gap,
+            current_prices,
+            _record_gap_buy,
         )
     else:
         logger.error("process_buy_signal not available - module import failed")
@@ -946,6 +1045,30 @@ if OrderSyncManager is not None and order_sync_manager is None:
         logger.warning(f"⚠️ Failed to initialize OrderSyncManager: {e}")
         order_sync_manager = None
 
+if OrderSyncManager is not None and gap_order_sync_manager is None:
+    try:
+        gap_order_sync_manager = OrderSyncManager(
+            strategy_name=ORIGINAL_GAP_STRATEGY_NAME,
+            stable_strategy_name="__unused__",
+            batch_strategy_name="__unused__",
+            get_db_connection=get_db_connection,
+            get_trade_api=get_trade_api,
+            active_orders=gap_active_orders,
+            stable_active_orders={},
+            batch_active_orders={},
+            stable_strategy=None,
+            batch_strategy=None,
+            lock=lock,
+            process_sell_signal=process_sell_signal,
+            process_stable_sell_signal=process_sell_signal,
+            process_batch_sell_signal=process_sell_signal,
+            simulation_mode=SIMULATION_MODE,
+        )
+        logger.info("✅ Gap OrderSyncManager initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to initialize Gap OrderSyncManager: {e}")
+        gap_order_sync_manager = None
+
 
 def ticker_open(ws):
     """Handle ticker WebSocket connection open"""
@@ -982,6 +1105,8 @@ def sync_orders_from_database():
         order_sync_manager.sync_orders_from_database()
     else:
         logger.warning("OrderSyncManager not available, skipping sync")
+    if gap_order_sync_manager:
+        gap_order_sync_manager.sync_orders_from_database()
 
 
 def recover_orders_from_database(now: datetime):
@@ -999,6 +1124,8 @@ def recover_orders_from_database(now: datetime):
         order_sync_manager.recover_orders_from_database(now)
     else:
         logger.warning("OrderSyncManager not available, skipping recovery")
+    if gap_order_sync_manager:
+        gap_order_sync_manager.recover_orders_from_database(now)
 
 
 def monitor_websocket_health(now: datetime):
@@ -1146,6 +1273,19 @@ def check_sell_timeout():
                                     f"past sell_time={next_hour_close.strftime('%H:%M:%S')}, triggering sell"
                                 )
 
+                    # Check original-gap strategy orders from memory
+                    for instId, order_info in list(gap_active_orders.items()):
+                        next_hour_close = order_info.get("next_hour_close_time")
+                        if next_hour_close and now >= next_hour_close:
+                            if not order_info.get("sell_triggered", False):
+                                orders_to_sell.append((instId, "gap"))
+                                order_info["sell_triggered"] = True
+                                order_info["last_sell_attempt_time"] = now
+                                logger.warning(
+                                    f"⏰ SELL CHECK ({current_minute}min): {instId} (gap) "
+                                    f"past sell_time={next_hour_close.strftime('%H:%M:%S')}, triggering sell"
+                                )
+
             # Trigger sells outside of lock using thread pool
             for instId, strategy_type in orders_to_sell:
                 logger.warning(
@@ -1162,6 +1302,8 @@ def check_sell_timeout():
                     thread_pool.submit(
                         process_sell_signal, instId
                     )  # ✅ FIX: Use same function for batch
+                elif strategy_type == "gap":
+                    thread_pool.submit(process_sell_signal, instId)
         except Exception as e:
             logger.error(f"Error in check_sell_timeout: {e}")
             time.sleep(TIMEOUT_CHECK_INTERVAL_SECONDS)  # Wait on error

@@ -19,6 +19,7 @@ from psycopg.rows import dict_row
 STRATEGY_NAME = "hourly_limit_ws"
 STABLE_STRATEGY_NAME = "stable_buy_ws"
 BATCH_STRATEGY_NAME = "batch_buy_ws"
+ORIGINAL_GAP_STRATEGY_NAME = "original_gap"
 CACHE_TTL = 15
 _cache = {"data": None, "timestamp": 0}
 
@@ -49,11 +50,16 @@ def get_trading_records():
         SELECT instId, ordId, create_time, state,
                price, size, sell_time, side, sell_price, flag
         FROM orders
-        WHERE flag IN (%s, %s, %s)
+        WHERE flag IN (%s, %s, %s, %s)
         ORDER BY create_time DESC
         LIMIT 500
     """,
-        (STRATEGY_NAME, STABLE_STRATEGY_NAME, BATCH_STRATEGY_NAME),
+        (
+            STRATEGY_NAME,
+            STABLE_STRATEGY_NAME,
+            BATCH_STRATEGY_NAME,
+            ORIGINAL_GAP_STRATEGY_NAME,
+        ),
     )
 
     rows = cur.fetchall()
@@ -82,6 +88,13 @@ def get_trading_records():
                     "sell_amount": 0.0,
                 },
                 BATCH_STRATEGY_NAME: {
+                    "trades": [],
+                    "profit": 0.0,
+                    "profit_pct": 0.0,
+                    "buy_amount": 0.0,
+                    "sell_amount": 0.0,
+                },
+                ORIGINAL_GAP_STRATEGY_NAME: {
                     "trades": [],
                     "profit": 0.0,
                     "profit_pct": 0.0,
@@ -208,6 +221,10 @@ class handler(BaseHTTPRequestHandler):
                     d["strategies"][BATCH_STRATEGY_NAME]["profit"]
                     for d in cryptos.values()
                 )
+                gap_profit = sum(
+                    d["strategies"][ORIGINAL_GAP_STRATEGY_NAME]["profit"]
+                    for d in cryptos.values()
+                )
 
                 response = {
                     "success": True,
@@ -234,6 +251,17 @@ class handler(BaseHTTPRequestHandler):
                                 "profit": batch_profit,
                                 "trades": sum(
                                     len(d["strategies"][BATCH_STRATEGY_NAME]["trades"])
+                                    for d in cryptos.values()
+                                ),
+                            },
+                            ORIGINAL_GAP_STRATEGY_NAME: {
+                                "profit": gap_profit,
+                                "trades": sum(
+                                    len(
+                                        d["strategies"][ORIGINAL_GAP_STRATEGY_NAME][
+                                            "trades"
+                                        ]
+                                    )
                                     for d in cryptos.values()
                                 ),
                             },

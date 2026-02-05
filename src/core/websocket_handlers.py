@@ -31,12 +31,16 @@ def on_ticker_message(
     batch_active_orders: dict,
     batch_pending_buys: dict,
     batch_strategy: Optional[Any],
+    gap_active_orders: dict,
+    gap_pending_buys: dict,
     lock: threading.Lock,
     fetch_current_hour_open_price_func,
     calculate_limit_price_func,
     process_buy_signal_func,
     process_stable_buy_signal_func,
     process_batch_buy_signal_func,
+    process_gap_buy_signal_func,
+    check_gap_recent_buy_func,
     check_2h_gain_filter_func,  # Function to check 2h gain filter
     thread_pool=None,  # Optional thread pool for async processing
 ):
@@ -269,6 +273,54 @@ def on_ticker_message(
                                                 args=(instId, limit_price),
                                                 daemon=True,
                                             ).start()
+
+                        # Original-gap strategy (cooldown-based)
+                        if last_price <= limit_price:
+                            with lock:
+                                instId_not_in_gap = (
+                                    instId not in gap_pending_buys
+                                    and instId not in gap_active_orders
+                                )
+
+                            if instId_not_in_gap:
+                                should_skip_buy_gap, gain_pct_gap = (
+                                    check_2h_gain_filter_func(instId, ref_price)
+                                )
+                                if should_skip_buy_gap:
+                                    msg = (
+                                        f"🚫 {instId} GAP BUY BLOCKED "
+                                        "by 2h gain filter: "
+                                        f"gain={gain_pct_gap:.2f}% > 5% "
+                                        f"(current_open=${ref_price:.6f})"
+                                    )
+                                    logger.warning(msg)
+                                elif check_gap_recent_buy_func(instId):
+                                    logger.warning(
+                                        f"⏳ {instId} GAP BUY BLOCKED: "
+                                        "recent buy within 30m"
+                                    )
+                                else:
+                                    with lock:
+                                        gap_pending_buys[instId] = True
+                                    msg = (
+                                        f"🧭 GAP BUY SIGNAL: {instId}, "
+                                        f"current={last_price:.6f} <= "
+                                        f"limit={limit_price:.6f} "
+                                        f"(ref={ref_price:.6f}, {limit_percent}%)"
+                                    )
+                                    logger.warning(msg)
+                                    if thread_pool:
+                                        thread_pool.submit(
+                                            process_gap_buy_signal_func,
+                                            instId,
+                                            limit_price,
+                                        )
+                                    else:
+                                        threading.Thread(
+                                            target=process_gap_buy_signal_func,
+                                            args=(instId, limit_price),
+                                            daemon=True,
+                                        ).start()
 
                         if last_price <= limit_price:
                             # ✅ NEW: Check 2-hour gain filter before buying
