@@ -108,6 +108,7 @@ def process_buy_signal(
             cur = conn.cursor()
             # Check if there are any unsold orders in the last 5 minutes
             # This prevents duplicate buys even if multiple processes are running
+            # Include state='' to catch orders that are just created but not yet filled
             five_minutes_ago_ms = int(
                 (datetime.now() - timedelta(minutes=5)).timestamp() * 1000
             )
@@ -116,7 +117,7 @@ def process_buy_signal(
                 SELECT ordId, state, create_time FROM orders
                 WHERE instId = %s AND flag = %s
                   AND create_time > %s
-                  AND state IN ('filled', 'partially_filled')
+                  AND (state IN ('filled', 'partially_filled', '') OR state IS NULL)
                   AND (sell_price IS NULL OR sell_price = '')
                 ORDER BY create_time DESC
                 LIMIT 1
