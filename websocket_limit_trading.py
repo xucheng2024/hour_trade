@@ -642,7 +642,12 @@ def buy_limit_order(
 
 
 def sell_market_order(
-    instId: str, ordId: str, size: float, tradeAPI: TradeAPI, conn
+    instId: str,
+    ordId: str,
+    size: float,
+    tradeAPI: TradeAPI,
+    conn,
+    strategy_name: str = STRATEGY_NAME,
 ) -> bool:
     """Place market sell order"""
     if _sell_market_order:
@@ -652,7 +657,7 @@ def sell_market_order(
             size,
             tradeAPI,
             conn,
-            STRATEGY_NAME,
+            strategy_name,
             SIMULATION_MODE,
             format_number,
             play_sound,
@@ -727,9 +732,11 @@ def check_and_cancel_unfilled_order_after_timeout(
 
 
 def check_and_cancel_unfilled_order_after_timeout_gap(
-    instId: str, ordId: str, tradeAPI: TradeAPI
+    instId: str, ordId: str, tradeAPI: TradeAPI, strategy_name: Optional[str] = None
 ):
-    """Check order status after 1 minute timeout for original_gap"""
+    """Check order status after 1 minute timeout for original_gap.
+    strategy_name is ignored (always uses ORIGINAL_GAP_STRATEGY_NAME) but accepted
+    for compatibility with process_buy_signal callback signature."""
     if _check_and_cancel_unfilled_order_after_timeout:
         _check_and_cancel_unfilled_order_after_timeout(
             instId,
@@ -855,6 +862,7 @@ def on_candle_message(ws, msg_string):
             active_orders,
             stable_active_orders,
             batch_active_orders,
+            gap_active_orders,
             lock,
             process_sell_signal,
             thread_pool,  # Pass thread pool for async processing
@@ -886,7 +894,7 @@ def process_sell_signal(instId: str, strategy_type: str = "original"):
             SIMULATION_MODE,
             get_trade_api,
             get_db_connection,
-            sell_market_order,
+            functools.partial(sell_market_order, strategy_name=strategy_name),
             orders_dict,
             lock,
         )
@@ -919,9 +927,13 @@ def process_stable_buy_signal(instId: str, limit_price: float):
 
 
 def process_stable_sell_signal(instId: str):
-    """Process stable strategy sell signal - uses same function as regular sell (each order is independent)"""
-    # ✅ FIX: Use process_sell_signal directly since each order is treated independently
-    process_sell_signal(instId)
+    """Process stable strategy sell signal"""
+    process_sell_signal(instId, strategy_type="stable")
+
+
+def process_batch_sell_signal(instId: str):
+    """Process batch strategy sell signal"""
+    process_sell_signal(instId, strategy_type="batch")
 
 
 def buy_stable_order(

@@ -237,17 +237,19 @@ def process_sell_signal(
                 # sell_time is updated based on fill_time in order_timeout.py, not create_time
                 now_ms = int(datetime.now().timestamp() * 1000)
 
+                # ✅ FIX: Filter by flag to only sell orders belonging to this strategy
+                # Same instId can have orders from different strategies (original/stable/batch)
                 cur.execute(
                     """
                     SELECT ordId, state, size, sell_time, create_time FROM orders
-                    WHERE instId = %s
+                    WHERE instId = %s AND flag = %s
                       AND state IN ('filled', 'partially_filled')
                       AND (sell_price IS NULL OR sell_price = '')
                       AND sell_time IS NOT NULL
                       AND sell_time <= %s
                     ORDER BY create_time ASC
                     """,
-                    (instId, now_ms),
+                    (instId, strategy_name, now_ms),
                 )
                 rows = cur.fetchall()
 

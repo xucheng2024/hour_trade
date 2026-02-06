@@ -390,6 +390,7 @@ def on_candle_message(
     active_orders: dict,
     stable_active_orders: dict,
     batch_active_orders: dict,
+    gap_active_orders: dict,
     lock: threading.Lock,
     process_sell_signal_func,
     thread_pool=None,  # Optional thread pool for async processing
@@ -608,6 +609,55 @@ def on_candle_message(
                                         threading.Thread(
                                             target=process_sell_signal_func,
                                             args=(instId, "batch"),
+                                            daemon=True,
+                                        ).start()
+
+                            # Check original-gap strategy orders
+                            if instId in gap_active_orders:
+                                order_info = gap_active_orders[instId]
+                                next_hour_close = order_info.get("next_hour_close_time")
+
+                                if not next_hour_close:
+                                    logger.warning(
+                                        f"🚫 {instId} KLINE CONFIRMED but missing "
+                                        f"next_hour_close_time (gap), blocking sell "
+                                        f"to prevent premature sale"
+                                    )
+                                elif now < next_hour_close:
+                                    logger.debug(
+                                        f"⏸️ {instId} KLINE CONFIRMED but not ready "
+                                        f"to sell yet (gap): "
+                                        f"now={now.strftime('%H:%M:%S')}, "
+                                        f"sell_time="
+                                        f"{next_hour_close.strftime('%H:%M:%S')}"
+                                    )
+                                elif order_info.get("sell_triggered", False):
+                                    logger.debug(
+                                        f"⚠️ Gap sell already triggered for "
+                                        f"{instId}, skipping duplicate candle confirm"
+                                    )
+                                else:
+                                    gap_active_orders[instId]["sell_triggered"] = True
+                                    close_price = (
+                                        float(candle_data[4])
+                                        if len(candle_data) > 4
+                                        else 0
+                                    )
+                                    logger.warning(
+                                        f"🕐 KLINE CONFIRMED: {instId}, "
+                                        f"close_price={close_price:.6f}, "
+                                        f"trigger SELL (gap)"
+                                    )
+                                    if thread_pool:
+                                        thread_pool.submit(
+                                            process_sell_signal_func,
+                                            instId,
+                                            "gap",
+                                        )
+                                    else:
+                                        threading.Thread(
+                                            target=process_sell_signal_func,
+                                            args=(instId, "gap"),
                                             daemon=True,
                                         ).start()
 
