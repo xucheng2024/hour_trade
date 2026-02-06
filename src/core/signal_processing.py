@@ -205,9 +205,9 @@ def process_sell_signal(
     Uses sell_time <= now to filter orders, which is based on fill_time, not create_time.
     This correctly handles late-filled orders from earlier hours.
     """
-    # ✅ FIX: Add per-instId lock to prevent concurrent sell attempts
-    # This prevents multiple strategies from selling the same orders simultaneously
-    instId_lock_key = f"sell_{instId}"
+    # ✅ FIX: Use per-instId-per-strategy lock so different strategies can sell in parallel
+    # Same instId can have orders from original/stable/batch/gap - each strategy is independent
+    instId_lock_key = f"sell_{instId}_{strategy_name}"
     if instId_lock_key not in _sell_signal_locks:
         with _sell_signal_locks_guard:
             if instId_lock_key not in _sell_signal_locks:
