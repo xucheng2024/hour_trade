@@ -496,12 +496,14 @@ def on_candle_message(
                                     # ✅ OPTIMIZED: Use thread pool if available
                                     if thread_pool:
                                         thread_pool.submit(
-                                            process_sell_signal_func, instId
+                                            process_sell_signal_func,
+                                            instId,
+                                            "original",
                                         )
                                     else:
                                         threading.Thread(
                                             target=process_sell_signal_func,
-                                            args=(instId,),
+                                            args=(instId, "original"),
                                             daemon=True,
                                         ).start()
 
@@ -547,12 +549,14 @@ def on_candle_message(
                                     # orders too (each order is independent)
                                     if thread_pool:
                                         thread_pool.submit(
-                                            process_sell_signal_func, instId
+                                            process_sell_signal_func,
+                                            instId,
+                                            "stable",
                                         )
                                     else:
                                         threading.Thread(
                                             target=process_sell_signal_func,
-                                            args=(instId,),
+                                            args=(instId, "stable"),
                                             daemon=True,
                                         ).start()
 
@@ -596,12 +600,14 @@ def on_candle_message(
                                     # orders too (each order is independent)
                                     if thread_pool:
                                         thread_pool.submit(
-                                            process_sell_signal_func, instId
+                                            process_sell_signal_func,
+                                            instId,
+                                            "batch",
                                         )
                                     else:
                                         threading.Thread(
                                             target=process_sell_signal_func,
-                                            args=(instId,),
+                                            args=(instId, "batch"),
                                             daemon=True,
                                         ).start()
 

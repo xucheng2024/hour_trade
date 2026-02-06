@@ -74,8 +74,8 @@ class OrderSyncManager:
         self.batch_strategy = batch_strategy
         self.lock = lock
         self.process_sell_signal = process_sell_signal
-        self.process_stable_sell_signal = process_sell_signal  # ✅ FIX: Use same function for stable (each order is independent)
-        self.process_batch_sell_signal = process_sell_signal  # ✅ FIX: Use same function for batch (each order is independent)
+        self.process_stable_sell_signal = process_stable_sell_signal
+        self.process_batch_sell_signal = process_batch_sell_signal
         self.simulation_mode = simulation_mode
         self.last_deep_recovery_time: Optional[datetime] = None
         self.deep_recovery_running: bool = False

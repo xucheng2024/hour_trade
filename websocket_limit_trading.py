@@ -6,6 +6,7 @@ Real-time Trading System using WebSocket
 Subscribes to OKX tickers and candles, buys at limit prices, sells at next hour close
 """
 
+import functools
 import json
 import logging
 import os
@@ -613,7 +614,12 @@ def initialize_reference_prices():
 
 
 def buy_limit_order(
-    instId: str, limit_price: float, size: float, tradeAPI: TradeAPI, conn
+    instId: str,
+    limit_price: float,
+    size: float,
+    tradeAPI: TradeAPI,
+    conn,
+    strategy_name: str = STRATEGY_NAME,
 ) -> Optional[str]:
     """Place limit buy order and record in database"""
     if _buy_limit_order:
@@ -623,7 +629,7 @@ def buy_limit_order(
             size,
             tradeAPI,
             conn,
-            STRATEGY_NAME,
+            strategy_name,
             SIMULATION_MODE,
             format_number,
             check_blacklist_before_buy,
@@ -821,7 +827,9 @@ def process_gap_buy_signal(instId: str, limit_price: float):
             SIMULATION_MODE,
             get_trade_api,
             get_db_connection,
-            buy_limit_order,
+            functools.partial(
+                buy_limit_order, strategy_name=ORIGINAL_GAP_STRATEGY_NAME
+            ),
             check_blacklist_before_buy,
             gap_active_orders,
             gap_pending_buys,
