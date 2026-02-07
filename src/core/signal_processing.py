@@ -106,11 +106,11 @@ def process_buy_signal(
             # ✅ FIX: Database-level duplicate check to prevent multiple processes/instances
             # from buying the same coin simultaneously
             cur = conn.cursor()
-            # Check if there are any unsold orders in the last 5 minutes
-            # This prevents duplicate buys even if multiple processes are running
+            # Check if there are any unsold orders in the last 2 hours
+            # This prevents duplicate buys during the entire trading cycle
             # Include state='' to catch orders that are just created but not yet filled
-            five_minutes_ago_ms = int(
-                (datetime.now() - timedelta(minutes=5)).timestamp() * 1000
+            two_hours_ago_ms = int(
+                (datetime.now() - timedelta(hours=2)).timestamp() * 1000
             )
             cur.execute(
                 """
@@ -122,9 +122,21 @@ def process_buy_signal(
                 ORDER BY create_time DESC
                 LIMIT 1
                 """,
-                (instId, strategy_name, five_minutes_ago_ms),
+                (instId, strategy_name, two_hours_ago_ms),
             )
             recent_unsold = cur.fetchone()
+
+            # ✅ NEW: If no unsold orders in DB but instId is in active_orders,
+            # clean up stale memory (memory leak fix)
+            if not recent_unsold:
+                with lock:
+                    if instId in active_orders:
+                        logger.warning(
+                            f"🧹 {strategy_name} Cleaned stale active_orders: {instId} "
+                            f"(no unsold orders in DB but still in memory)"
+                        )
+                        del active_orders[instId]
+
             cur.close()
 
             if recent_unsold:
@@ -601,7 +613,8 @@ def process_sell_signal(
                                 f"SELL failed {fail_count}x for {instId} ({strategy_name})."
                             )
 
-                # Clean up active_orders if all orders are sold
+                # ✅ IMPROVED: Clean up active_orders intelligently
+                # If ALL orders are sold successfully, clear immediately
                 if successful_sells > 0 and failed_sells == 0:
                     with lock:
                         if instId in active_orders:
@@ -609,11 +622,37 @@ def process_sell_signal(
                         logger.warning(
                             f"{strategy_name} All {successful_sells} orders sold: {instId}"
                         )
+                # If SOME failed, check if any unsold orders remain in DB
                 elif failed_sells > 0:
                     logger.warning(
                         f"{strategy_name} SELL: {instId}, successful={successful_sells}, "
                         f"failed={failed_sells}, will retry later"
                     )
+                    # ✅ NEW: If no unsold orders remain in DB, clean up memory anyway
+                    try:
+                        cur_check = conn.cursor()
+                        cur_check.execute(
+                            """
+                            SELECT COUNT(*) FROM orders
+                            WHERE instId = %s AND flag = %s
+                              AND state IN ('filled', 'partially_filled')
+                              AND (sell_price IS NULL OR sell_price = '')
+                            """,
+                            (instId, strategy_name),
+                        )
+                        unsold_count = cur_check.fetchone()[0]
+                        cur_check.close()
+
+                        if unsold_count == 0:
+                            with lock:
+                                if instId in active_orders:
+                                    del active_orders[instId]
+                                    logger.warning(
+                                        f"🧹 {strategy_name} Cleaned active_orders for {instId} "
+                                        f"(no unsold orders remain in DB)"
+                                    )
+                    except Exception as e:
+                        logger.warning(f"Failed to check unsold count: {e}")
             finally:
                 cur.close()
         finally:

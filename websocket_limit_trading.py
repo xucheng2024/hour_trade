@@ -296,6 +296,16 @@ except ImportError as e:
     _on_candle_message = None
     _on_ticker_message = None
 
+try:
+    from core.memory_sync import start_periodic_sync as _start_periodic_sync
+    from core.memory_sync import (
+        sync_active_orders_with_db as _sync_active_orders_with_db,
+    )
+except ImportError as e:
+    logger.warning(f"Failed to import memory_sync: {e}")
+    _start_periodic_sync = None
+    _sync_active_orders_with_db = None
+
 # Global variables
 crypto_limits: Dict[str, float] = {}  # instId -> limit_percent
 current_prices: Dict[str, float] = {}  # instId -> last_price
@@ -307,7 +317,7 @@ reference_price_fetch_time: Dict[str, float] = {}  # instId -> last fetch timest
 reference_price_fetch_attempts: Dict[str, int] = (
     {}
 )  # instId -> consecutive fetch failures
-pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
+pending_buys: Dict[str, float] = {}  # instId -> timestamp when pending started
 active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
@@ -315,13 +325,13 @@ active_orders: Dict[str, Dict] = (
 gap_active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
-gap_pending_buys: Dict[str, bool] = {}
+gap_pending_buys: Dict[str, float] = {}  # instId -> timestamp when pending started
 gap_last_buy_time: Dict[str, float] = {}
 # Stable strategy active orders
 stable_active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordId, buy_price, buy_time, next_hour_close_time, fill_time, ...}
-stable_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
+stable_pending_buys: Dict[str, float] = {}  # instId -> timestamp when pending started
 lock = threading.Lock()
 
 # Initialize stable buy strategy
@@ -336,7 +346,7 @@ else:
 batch_active_orders: Dict[str, Dict] = (
     {}
 )  # instId -> {ordIds: [], buy_price, buy_time, next_hour_close_time, total_size, ...}
-batch_pending_buys: Dict[str, bool] = {}  # instId -> has_pending_buy
+batch_pending_buys: Dict[str, float] = {}  # instId -> timestamp when pending started
 
 # Initialize batch buy strategy
 batch_strategy: Optional[BatchBuyStrategy] = None
@@ -1448,6 +1458,48 @@ def main():
     recover_orders_from_database(now)
     sync_orders_from_database()
     logger.warning("✅ Database recovery and sync completed")
+
+    # ✅ NEW: Sync memory with database to prevent memory leaks
+    if _sync_active_orders_with_db:
+        logger.warning("🔄 Running initial memory sync...")
+        _sync_active_orders_with_db(
+            get_db_connection,
+            active_orders,
+            pending_buys,
+            stable_active_orders,
+            stable_pending_buys,
+            batch_active_orders,
+            batch_pending_buys,
+            gap_active_orders,
+            gap_pending_buys,
+            lock,
+            STRATEGY_NAME,
+            STABLE_STRATEGY_NAME,
+            BATCH_STRATEGY_NAME,
+            ORIGINAL_GAP_STRATEGY_NAME,
+        )
+        logger.warning("✅ Initial memory sync completed")
+
+        # Start periodic sync (every 5 minutes)
+        _start_periodic_sync(
+            get_db_connection,
+            active_orders,
+            pending_buys,
+            stable_active_orders,
+            stable_pending_buys,
+            batch_active_orders,
+            batch_pending_buys,
+            gap_active_orders,
+            gap_pending_buys,
+            lock,
+            interval_seconds=int(os.getenv("MEMORY_SYNC_INTERVAL_SECONDS", "300")),
+            strategy_name=STRATEGY_NAME,
+            stable_strategy_name=STABLE_STRATEGY_NAME,
+            batch_strategy_name=BATCH_STRATEGY_NAME,
+            gap_strategy_name=ORIGINAL_GAP_STRATEGY_NAME,
+        )
+    else:
+        logger.warning("⚠️ Memory sync module not available")
 
     # ✅ FIX: Start background thread to check sell timeouts (fallback mechanism)
     timeout_check_thread = threading.Thread(

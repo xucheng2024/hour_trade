@@ -207,7 +207,9 @@ def on_ticker_message(
                                         instId, limit_price
                                     ):
                                         with lock:
-                                            stable_pending_buys[instId] = True
+                                            import time
+
+                                            stable_pending_buys[instId] = time.time()
                                         logger.warning(
                                             f"📝 STABLE BUY SIGNAL REGISTERED: "
                                             f"{instId}, limit={limit_price:.6f}, "
@@ -241,7 +243,9 @@ def on_ticker_message(
                                         instId, limit_price
                                     ):
                                         with lock:
-                                            batch_pending_buys[instId] = True
+                                            import time
+
+                                            batch_pending_buys[instId] = time.time()
                                         logger.warning(
                                             f"📝 BATCH BUY SIGNAL REGISTERED: {instId}, "
                                             f"limit={limit_price:.6f}, "
@@ -296,7 +300,9 @@ def on_ticker_message(
                                     )
                                 else:
                                     with lock:
-                                        gap_pending_buys[instId] = True
+                                        import time
+
+                                        gap_pending_buys[instId] = time.time()
                                     msg = (
                                         f"🧭 GAP BUY SIGNAL: {instId}, "
                                         f"current={last_price:.6f} <= "
@@ -331,9 +337,34 @@ def on_ticker_message(
                                 continue
 
                             with lock:
-                                if instId in pending_buys or instId in active_orders:
+                                # ✅ NEW: Check for stale pending_buys (timeout > 60s)
+                                if instId in pending_buys:
+                                    import time
+
+                                    pending_since = pending_buys[instId]
+                                    elapsed = time.time() - pending_since
+                                    if elapsed > 60:
+                                        # Stale pending, clean up and allow retry
+                                        logger.warning(
+                                            f"🧹 Cleaned stale pending_buys for "
+                                            f"{instId} (pending for {elapsed:.1f}s)"
+                                        )
+                                        del pending_buys[instId]
+                                    else:
+                                        logger.debug(
+                                            f"⏭️ {instId} ORIGIN SKIPPED: "
+                                            f"pending for {elapsed:.1f}s"
+                                        )
+                                        continue
+
+                                if instId in active_orders:
+                                    logger.debug(
+                                        f"⏭️ {instId} ORIGIN SKIPPED: "
+                                        f"active order exists"
+                                    )
                                     continue
-                                pending_buys[instId] = True
+
+                                pending_buys[instId] = time.time()
 
                             gain_info = (
                                 f", 2h_gain={gain_pct:.2f}%"
