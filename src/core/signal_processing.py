@@ -20,6 +20,8 @@ _sell_signal_locks: dict[str, threading.Lock] = {}
 _sell_signal_locks_guard = threading.Lock()
 _sell_fail_counts: dict[str, int] = {}
 _sell_fail_counts_lock = threading.Lock()
+_batch_buy_locks: dict[str, threading.Lock] = {}
+_batch_buy_locks_guard = threading.Lock()
 
 
 def _send_alert(message: str) -> None:
@@ -72,6 +74,9 @@ def process_buy_signal(
         api = get_trade_api_func()
         if api is None and not simulation_mode:
             logger.error(f"{strategy_name} TradeAPI not available for {instId}")
+            with lock:
+                if instId in pending_buys:
+                    del pending_buys[instId]
             return
 
         # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
@@ -235,6 +240,7 @@ def process_sell_signal(
         return
 
     try:
+        fail_count_key = f"{instId}:{strategy_name}"
         api = get_trade_api_func()
         if api is None and not simulation_mode:
             logger.error(f"{strategy_name} TradeAPI not available for sell: {instId}")
@@ -269,9 +275,32 @@ def process_sell_signal(
                     logger.debug(
                         f"{strategy_name} No sellable orders found in DB: {instId}"
                     )
+                    # Don't drop memory state blindly; there may be unsold orders
+                    # with sell_time in the future.
+                    unsold_count = 0
+                    try:
+                        cur_unsold = conn.cursor()
+                        cur_unsold.execute(
+                            """
+                            SELECT COUNT(*) FROM orders
+                            WHERE instId = %s AND flag = %s
+                              AND (state IN ('filled', 'partially_filled', '') OR state IS NULL)
+                              AND (sell_price IS NULL OR sell_price = '')
+                            """,
+                            (instId, strategy_name),
+                        )
+                        unsold_count = cur_unsold.fetchone()[0]
+                        cur_unsold.close()
+                    except Exception as e:
+                        logger.warning(
+                            f"{strategy_name} Failed checking unsold orders for {instId}: {e}"
+                        )
                     with lock:
-                        if instId in active_orders:
+                        if instId in active_orders and unsold_count == 0:
                             del active_orders[instId]
+                        elif instId in active_orders and unsold_count > 0:
+                            # Allow future sell retries for still-open orders.
+                            active_orders[instId]["sell_triggered"] = False
                     return
 
                 # ✅ FIX: Process each order independently
@@ -449,7 +478,7 @@ def process_sell_signal(
                                     )
                                     successful_sells += 1
                                     with _sell_fail_counts_lock:
-                                        _sell_fail_counts.pop(instId, None)
+                                        _sell_fail_counts.pop(fail_count_key, None)
                                     continue
                     except Exception as e:
                         logger.warning(
@@ -467,7 +496,7 @@ def process_sell_signal(
                             f"✅ {strategy_name} SELL: {instId}, ordId={ordId} sold successfully"
                         )
                         with _sell_fail_counts_lock:
-                            _sell_fail_counts.pop(instId, None)
+                            _sell_fail_counts.pop(fail_count_key, None)
                         # Verify sell_price was recorded; otherwise revert for retry
                         try:
                             cur_verify = conn.cursor()
@@ -603,10 +632,10 @@ def process_sell_signal(
                             f"❌ {strategy_name} SELL FAILED: {instId}, {ordId}"
                         )
                         with _sell_fail_counts_lock:
-                            _sell_fail_counts[instId] = (
-                                _sell_fail_counts.get(instId, 0) + 1
+                            _sell_fail_counts[fail_count_key] = (
+                                _sell_fail_counts.get(fail_count_key, 0) + 1
                             )
-                            fail_count = _sell_fail_counts[instId]
+                            fail_count = _sell_fail_counts[fail_count_key]
                         threshold = int(os.getenv("SELL_FAIL_ALERT_THRESHOLD", "3"))
                         if fail_count >= threshold:
                             _send_alert(
@@ -703,6 +732,11 @@ def process_stable_buy_signal(
         api = get_trade_api_func()
         if api is None and not simulation_mode:
             logger.error(f"{strategy_name} TradeAPI not available for {instId}")
+            with lock:
+                if instId in stable_pending_buys:
+                    del stable_pending_buys[instId]
+                if stable_strategy:
+                    stable_strategy.clear_signal(instId)
             return
 
         # ✅ FIX: Use current market price (<= limit_price) instead of limit_price
@@ -736,6 +770,49 @@ def process_stable_buy_signal(
 
         conn = get_db_connection_func()
         try:
+            # Keep stable strategy behavior aligned with original strategy:
+            # block duplicate unsold buys for this strategy.
+            cur = conn.cursor()
+            two_hours_ago_ms = int(
+                (datetime.now() - timedelta(hours=2)).timestamp() * 1000
+            )
+            cur.execute(
+                """
+                SELECT ordId, state, create_time FROM orders
+                WHERE instId = %s AND flag = %s
+                  AND create_time > %s
+                  AND (state IN ('filled', 'partially_filled', '') OR state IS NULL)
+                  AND (sell_price IS NULL OR sell_price = '')
+                ORDER BY create_time DESC
+                LIMIT 1
+                """,
+                (instId, strategy_name, two_hours_ago_ms),
+            )
+            recent_unsold = cur.fetchone()
+
+            if not recent_unsold:
+                with lock:
+                    if instId in stable_active_orders:
+                        logger.warning(
+                            f"🧹 {strategy_name} Cleaned stale stable_active_orders: {instId} "
+                            f"(no unsold orders in DB but still in memory)"
+                        )
+                        del stable_active_orders[instId]
+            cur.close()
+
+            if recent_unsold:
+                logger.warning(
+                    f"🚫 DUPLICATE STABLE BUY BLOCKED: {instId} already has unsold order "
+                    f"ordId={recent_unsold[0]}, state={recent_unsold[1]}, "
+                    f"created at {datetime.fromtimestamp(recent_unsold[2]/1000).strftime('%H:%M:%S')}"
+                )
+                with lock:
+                    if instId in stable_pending_buys:
+                        del stable_pending_buys[instId]
+                    if stable_strategy:
+                        stable_strategy.clear_signal(instId)
+                return
+
             ordId = buy_stable_order_func(instId, actual_buy_price, size, api, conn)
             if ordId:
                 with lock:
@@ -810,23 +887,51 @@ def process_batch_buy_signal(
     ] = None,  # Optional current prices dict to get actual market price
 ):
     """Process batch strategy buy signal - handles multiple batches with delays"""
+    # Prevent duplicate batch execution for same instId (can be triggered by
+    # ticker thread + delayed scheduler concurrently).
+    if instId not in _batch_buy_locks:
+        with _batch_buy_locks_guard:
+            if instId not in _batch_buy_locks:
+                _batch_buy_locks[instId] = threading.Lock()
+
+    batch_lock = _batch_buy_locks[instId]
+    if not batch_lock.acquire(blocking=False):
+        logger.debug(f"{strategy_name} Batch buy already in progress for {instId}")
+        return
+
     try:
-        if check_blacklist_func(instId):
-            logger.warning(f"🚫 Skipping batch buy signal for {instId} - blacklisted")
+
+        def clear_batch_pending(
+            reset_strategy_if_idle: bool = False, force_reset_strategy: bool = False
+        ):
+            """Clear batch pending state and optionally reset strategy if no active orders."""
+            has_active_batch_orders = False
             with lock:
+                order_info = batch_active_orders.get(instId)
+                if order_info and order_info.get("ordIds"):
+                    has_active_batch_orders = True
                 if instId in batch_pending_buys:
                     del batch_pending_buys[instId]
-                if batch_strategy:
-                    batch_strategy.reset_crypto(instId)
+            should_reset = force_reset_strategy or (
+                reset_strategy_if_idle and not has_active_batch_orders
+            )
+            if should_reset and batch_strategy:
+                batch_strategy.reset_crypto(instId)
+
+        if check_blacklist_func(instId):
+            logger.warning(f"🚫 Skipping batch buy signal for {instId} - blacklisted")
+            clear_batch_pending(force_reset_strategy=True)
             return
 
         api = get_trade_api_func()
         if api is None and not simulation_mode:
             logger.error(f"{strategy_name} TradeAPI not available for {instId}")
+            clear_batch_pending(reset_strategy_if_idle=True)
             return
 
         # Get next batch to buy
         if not batch_strategy:
+            clear_batch_pending(reset_strategy_if_idle=False)
             return
 
         batch_info = batch_strategy.get_next_batch(instId)
@@ -971,7 +1076,11 @@ def process_batch_buy_signal(
                 logger.error(
                     f"❌ Failed to create batch buy order for {instId}, batch {batch_index + 1}"
                 )
+                clear_batch_pending(reset_strategy_if_idle=True)
         finally:
             conn.close()
     except Exception as e:
         logger.error(f"process_batch_buy_signal error: {instId}, {e}")
+        clear_batch_pending(reset_strategy_if_idle=True)
+    finally:
+        batch_lock.release()

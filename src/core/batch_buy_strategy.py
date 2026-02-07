@@ -48,8 +48,17 @@ class BatchBuyStrategy:
         with self.lock:
             # Check if already have active batches
             if instId in self.active_batches:
-                logger.debug(f"⏳ {instId} Batch buy already active, skipping")
-                return False
+                batch_info = self.active_batches[instId]
+                batch_states = batch_info.get("batch_states", [])
+                # Clear stale completed state so new cycle can register.
+                if batch_states and all(batch_states):
+                    del self.active_batches[instId]
+                    logger.debug(
+                        f"🧹 {instId} Cleared completed batch state, allowing new signal"
+                    )
+                else:
+                    logger.debug(f"⏳ {instId} Batch buy already active, skipping")
+                    return False
 
             # Register new batch buy
             self.active_batches[instId] = {

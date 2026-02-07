@@ -1477,6 +1477,8 @@ def main():
             STABLE_STRATEGY_NAME,
             BATCH_STRATEGY_NAME,
             ORIGINAL_GAP_STRATEGY_NAME,
+            stable_strategy,
+            batch_strategy,
         )
         logger.warning("✅ Initial memory sync completed")
 
@@ -1497,6 +1499,8 @@ def main():
             stable_strategy_name=STABLE_STRATEGY_NAME,
             batch_strategy_name=BATCH_STRATEGY_NAME,
             gap_strategy_name=ORIGINAL_GAP_STRATEGY_NAME,
+            stable_strategy=stable_strategy,
+            batch_strategy=batch_strategy,
         )
     else:
         logger.warning("⚠️ Memory sync module not available")

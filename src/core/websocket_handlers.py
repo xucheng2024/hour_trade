@@ -83,6 +83,67 @@ def on_ticker_message(
                                     f"for {instId} on ticker update (coin is active)"
                                 )
 
+                        # Self-heal stale pending states for non-original strategies.
+                        # Original pending has dedicated fast cleanup below.
+                        import os
+
+                        now_ts = time.time()
+                        stable_pending_timeout = int(
+                            os.getenv("STABLE_PENDING_TIMEOUT_SECONDS", "180")
+                        )
+                        batch_pending_timeout = int(
+                            os.getenv("BATCH_PENDING_TIMEOUT_SECONDS", "2400")
+                        )
+                        gap_pending_timeout = int(
+                            os.getenv("GAP_PENDING_TIMEOUT_SECONDS", "180")
+                        )
+
+                        clear_stable_signal = False
+                        clear_batch_state = False
+                        with lock:
+                            if (
+                                instId in stable_pending_buys
+                                and instId not in stable_active_orders
+                            ):
+                                stable_elapsed = now_ts - stable_pending_buys[instId]
+                                if stable_elapsed > stable_pending_timeout:
+                                    del stable_pending_buys[instId]
+                                    clear_stable_signal = True
+                                    logger.warning(
+                                        f"🧹 Cleaned stale stable_pending_buys "
+                                        f"for {instId} (pending {stable_elapsed:.1f}s)"
+                                    )
+
+                            if (
+                                instId in batch_pending_buys
+                                and instId not in batch_active_orders
+                            ):
+                                batch_elapsed = now_ts - batch_pending_buys[instId]
+                                if batch_elapsed > batch_pending_timeout:
+                                    del batch_pending_buys[instId]
+                                    clear_batch_state = True
+                                    logger.warning(
+                                        f"🧹 Cleaned stale batch_pending_buys "
+                                        f"for {instId} (pending {batch_elapsed:.1f}s)"
+                                    )
+
+                            if (
+                                instId in gap_pending_buys
+                                and instId not in gap_active_orders
+                            ):
+                                gap_elapsed = now_ts - gap_pending_buys[instId]
+                                if gap_elapsed > gap_pending_timeout:
+                                    del gap_pending_buys[instId]
+                                    logger.warning(
+                                        f"🧹 Cleaned stale gap_pending_buys "
+                                        f"for {instId} (pending {gap_elapsed:.1f}s)"
+                                    )
+
+                        if clear_stable_signal and stable_strategy is not None:
+                            stable_strategy.clear_signal(instId)
+                        if clear_batch_state and batch_strategy is not None:
+                            batch_strategy.reset_crypto(instId)
+
                         # ✅ FIX: Always update stable strategy (even if price unchanged)
                         # Allows stability seconds to accumulate during flat markets
                         # Runs independently, outside main lock to avoid deadlock

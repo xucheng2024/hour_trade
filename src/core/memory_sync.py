@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 from datetime import datetime
-from typing import Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,8 @@ def sync_active_orders_with_db(
     stable_strategy_name: str = "stable_buy_ws",
     batch_strategy_name: str = "batch_buy_ws",
     gap_strategy_name: str = "original_gap",
+    stable_strategy: Optional[Any] = None,
+    batch_strategy: Optional[Any] = None,
 ):
     """Sync active_orders with database to fix inconsistencies
 
@@ -78,14 +80,40 @@ def sync_active_orders_with_db(
                 db_orders = {}
                 for row in db_unsold:
                     instId = row[0]
+                    ordId = row[1]
+                    create_time = row[2]
+                    size = row[3]
+                    price = row[4]
                     db_active_instIds.add(instId)
-                    if instId not in db_orders:
-                        db_orders[instId] = {
-                            "ordId": row[1],
-                            "create_time": row[2],
-                            "size": row[3],
-                            "price": row[4],
-                        }
+                    if label == "batch":
+                        if instId not in db_orders:
+                            db_orders[instId] = {
+                                "ordIds": [],
+                                "create_time": create_time,
+                                "total_size": 0.0,
+                                "price": price,
+                            }
+                        db_orders[instId]["ordIds"].append(ordId)
+                        if create_time > db_orders[instId]["create_time"]:
+                            db_orders[instId]["create_time"] = create_time
+                            db_orders[instId]["price"] = price
+                        try:
+                            db_orders[instId]["total_size"] += (
+                                float(size) if size else 0.0
+                            )
+                        except (ValueError, TypeError):
+                            logger.debug(
+                                f"Invalid batch size in DB for {instId}, "
+                                f"ordId={ordId}: {size}"
+                            )
+                    else:
+                        if instId not in db_orders:
+                            db_orders[instId] = {
+                                "ordId": ordId,
+                                "create_time": create_time,
+                                "size": size,
+                                "price": price,
+                            }
 
                 with lock:
                     # Get current memory state
@@ -97,6 +125,8 @@ def sync_active_orders_with_db(
                     stale_in_memory = memory_active_instIds - db_active_instIds
                     for instId in stale_in_memory:
                         del active_dict[instId]
+                        if label == "batch" and batch_strategy is not None:
+                            batch_strategy.reset_crypto(instId)
                         logger.warning(
                             f"🧹 [{label}] Cleaned stale memory: {instId} "
                             f"(sold in DB but still in active_orders)"
@@ -117,18 +147,39 @@ def sync_active_orders_with_db(
 
                         sell_time = sell_time + timedelta(hours=1)
 
-                        active_dict[instId] = {
-                            "ordId": order_info["ordId"],
-                            "buy_price": (
-                                float(order_info["price"]) if order_info["price"] else 0
-                            ),
-                            "buy_time": create_dt,
-                            "next_hour_close_time": sell_time,
-                            "sell_triggered": False,
-                        }
+                        if label == "batch":
+                            active_dict[instId] = {
+                                "ordIds": order_info["ordIds"],
+                                "buy_price": (
+                                    float(order_info["price"])
+                                    if order_info["price"]
+                                    else 0
+                                ),
+                                "buy_time": create_dt,
+                                "next_hour_close_time": sell_time,
+                                "sell_triggered": False,
+                                "total_size": order_info["total_size"],
+                            }
+                        else:
+                            active_dict[instId] = {
+                                "ordId": order_info["ordId"],
+                                "buy_price": (
+                                    float(order_info["price"])
+                                    if order_info["price"]
+                                    else 0
+                                ),
+                                "buy_time": create_dt,
+                                "next_hour_close_time": sell_time,
+                                "sell_triggered": False,
+                            }
+                        ord_info = (
+                            f"ordIds={order_info['ordIds']}"
+                            if label == "batch"
+                            else f"ordId={order_info['ordId']}"
+                        )
                         logger.warning(
                             f"🔄 [{label}] Restored missing memory: "
-                            f"{instId}, ordId={order_info['ordId']} "
+                            f"{instId}, {ord_info} "
                             f"(exists in DB but not in memory)"
                         )
 
@@ -140,6 +191,11 @@ def sync_active_orders_with_db(
                     )
                     for instId in stale_pending:
                         del pending_dict[instId]
+                        if label == "stable" and stable_strategy is not None:
+                            stable_strategy.clear_signal(instId)
+                        elif label == "batch" and batch_strategy is not None:
+                            if instId not in active_dict:
+                                batch_strategy.reset_crypto(instId)
                         logger.warning(
                             f"🧹 [{label}] Cleaned stale pending_buys: {instId}"
                         )
@@ -179,6 +235,8 @@ def start_periodic_sync(
     stable_strategy_name: str = "stable_buy_ws",
     batch_strategy_name: str = "batch_buy_ws",
     gap_strategy_name: str = "original_gap",
+    stable_strategy: Optional[Any] = None,
+    batch_strategy: Optional[Any] = None,
 ):
     """Start periodic memory sync in background thread
 
@@ -206,6 +264,8 @@ def start_periodic_sync(
                     stable_strategy_name,
                     batch_strategy_name,
                     gap_strategy_name,
+                    stable_strategy,
+                    batch_strategy,
                 )
             except Exception as e:
                 logger.error(f"❌ Periodic sync error: {e}")
