@@ -268,8 +268,6 @@ def on_ticker_message(
                                         instId, limit_price
                                     ):
                                         with lock:
-                                            import time
-
                                             stable_pending_buys[instId] = time.time()
                                         logger.warning(
                                             f"📝 STABLE BUY SIGNAL REGISTERED: "
@@ -304,8 +302,6 @@ def on_ticker_message(
                                         instId, limit_price
                                     ):
                                         with lock:
-                                            import time
-
                                             batch_pending_buys[instId] = time.time()
                                         logger.warning(
                                             f"📝 BATCH BUY SIGNAL REGISTERED: {instId}, "
@@ -326,8 +322,6 @@ def on_ticker_message(
                                                 limit_price,
                                             )
                                         else:
-                                            import threading
-
                                             threading.Thread(
                                                 target=process_batch_buy_signal_func,
                                                 args=(instId, limit_price),
@@ -361,8 +355,6 @@ def on_ticker_message(
                                     )
                                 else:
                                     with lock:
-                                        import time
-
                                         gap_pending_buys[instId] = time.time()
                                     msg = (
                                         f"🧭 GAP BUY SIGNAL: {instId}, "
@@ -400,8 +392,6 @@ def on_ticker_message(
                             with lock:
                                 # ✅ NEW: Check for stale pending_buys (timeout > 60s)
                                 if instId in pending_buys:
-                                    import time
-
                                     pending_since = pending_buys[instId]
                                     elapsed = time.time() - pending_since
                                     if elapsed > 60:
