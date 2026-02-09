@@ -861,10 +861,6 @@ def process_stable_buy_signal(
             if stable_strategy:
                 stable_strategy.clear_signal(instId)
 
-                logger.warning(
-                    f"{strategy_name} Reset sell_triggered for {instId} after exception to allow retry"
-                )
-
 
 def process_batch_buy_signal(
     instId: str,
@@ -972,6 +968,34 @@ def process_batch_buy_signal(
 
         conn = get_db_connection_func()
         try:
+            # ✅ DB-level duplicate check: only when starting new batch cycle (batch_index==0)
+            # Prevents restart leak; does NOT block batch 2 or 3 of same cycle
+            if batch_index == 0:
+                cur = conn.cursor()
+                two_hours_ago_ms = int(
+                    (datetime.now() - timedelta(hours=2)).timestamp() * 1000
+                )
+                cur.execute(
+                    """
+                    SELECT ordId FROM orders
+                    WHERE instId = %s AND flag = %s
+                      AND create_time > %s
+                      AND (state IN ('filled', 'partially_filled', '') OR state IS NULL)
+                      AND (sell_price IS NULL OR sell_price = '')
+                    LIMIT 1
+                    """,
+                    (instId, strategy_name, two_hours_ago_ms),
+                )
+                if cur.fetchone():
+                    logger.warning(
+                        f"🚫 DUPLICATE BATCH BUY BLOCKED: {instId} already has unsold "
+                        f"batch order in last 2h, skipping new cycle"
+                    )
+                    cur.close()
+                    clear_batch_pending(reset_strategy_if_idle=True)
+                    return
+                cur.close()
+
             ordId = buy_batch_order_func(
                 instId, actual_buy_price, size, batch_index, api, conn
             )
