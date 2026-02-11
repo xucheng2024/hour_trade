@@ -39,6 +39,24 @@ def _noop_play_sound(_sound: str):
     return None
 
 
+def _select_valid_fill_price(order_data: dict) -> tuple[str, float]:
+    """Return best available fill price string (prefer avgPx over fillPx)."""
+    avg_px = str(order_data.get("avgPx", "") or "").strip()
+    fill_px = str(order_data.get("fillPx", "") or "").strip()
+
+    for candidate in (avg_px, fill_px):
+        if not candidate:
+            continue
+        try:
+            candidate_float = float(candidate)
+            if candidate_float > 0:
+                return candidate, candidate_float
+        except (ValueError, TypeError):
+            continue
+
+    return "", 0.0
+
+
 # Only use file logging if logs directory exists or can be created
 # In Railway/Vercel, prefer stdout logging
 log_dir = Path("logs")
@@ -105,7 +123,7 @@ def order_update(instId, ordId, tradeAPI, conn, cur):
 
             data = result["data"][0]
             size = data.get("accFillSz", "")
-            price = data.get("fillPx", "")
+            price_to_save, _ = _select_valid_fill_price(data)
             order_state = data.get("state", "")
             order_size = data.get("sz", "0")
 
@@ -143,15 +161,26 @@ def order_update(instId, ordId, tradeAPI, conn, cur):
                 next_hour = next_hour + timedelta(hours=1)
                 sell_time_ms = int(next_hour.timestamp() * 1000)
 
-                sql_statement = """
-                UPDATE orders
-                SET state = %s, size = %s, price = %s, sell_time = %s
-                WHERE instId = %s AND ordId = %s;
-                """
-                cur.execute(
-                    sql_statement,
-                    (new_state, size, price, sell_time_ms, instId, ordId),
-                )
+                if price_to_save:
+                    sql_statement = """
+                    UPDATE orders
+                    SET state = %s, size = %s, price = %s, sell_time = %s
+                    WHERE instId = %s AND ordId = %s;
+                    """
+                    cur.execute(
+                        sql_statement,
+                        (new_state, size, price_to_save, sell_time_ms, instId, ordId),
+                    )
+                else:
+                    sql_statement = """
+                    UPDATE orders
+                    SET state = %s, size = %s, sell_time = %s
+                    WHERE instId = %s AND ordId = %s;
+                    """
+                    cur.execute(
+                        sql_statement,
+                        (new_state, size, sell_time_ms, instId, ordId),
+                    )
             else:
                 sql_statement = """
                 UPDATE orders

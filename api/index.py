@@ -32,6 +32,19 @@ def get_db_connection():
     return psycopg.connect(database_url)
 
 
+def _safe_float(value, default=0.0):
+    """Convert mixed DB values to float safely."""
+    if value is None:
+        return default
+    try:
+        value_str = str(value).strip()
+        if value_str == "":
+            return default
+        return float(value_str)
+    except (TypeError, ValueError):
+        return default
+
+
 def get_trading_records():
     """Get trading records from database with caching"""
     current_time = time.time()
@@ -118,11 +131,18 @@ def get_trading_records():
 
     for row in rows:
         inst_id = row["instid"]
-        buy_price = float(row["price"] or 0)
-        sell_price = float(row.get("sell_price") or 0)
-        size = float(row["size"] or 0)
+        buy_price = _safe_float(row.get("price"))
+        sell_price = _safe_float(row.get("sell_price"))
+        size = _safe_float(row.get("size"))
         state = row["state"] or "active"
         strategy_flag = row.get("flag") or STRATEGY_NAME
+        display_buy_price = (
+            buy_price if buy_price > 0 else (sell_price if state == "sold out" else 0.0)
+        )
+        display_amount = (
+            display_buy_price * size if display_buy_price > 0 and size > 0 else 0.0
+        )
+        buy_amount_for_profit = buy_price * size if buy_price > 0 and size > 0 else 0.0
 
         # Calculate profit/loss for this trade
         trade_profit = 0.0
@@ -136,10 +156,10 @@ def get_trading_records():
             "buy_time": fmt_time(row["create_time"]),
             "sell_time": fmt_time(row.get("sell_time")),
             "side": row["side"],
-            "price": buy_price,
+            "price": display_buy_price,
             "sell_price": sell_price,
             "size": size,
-            "amount": buy_price * size if buy_price > 0 and size > 0 else 0.0,
+            "amount": display_amount,
             "state": state,
             "profit": trade_profit,
             "profit_pct": trade_profit_pct,
@@ -157,7 +177,7 @@ def get_trading_records():
             # Only count completed trades (sold out) for profit
             if trade["side"] == "buy" and state == "sold out":
                 # Only count buy_amount for sold orders
-                strategy_data["buy_amount"] += trade["amount"]
+                strategy_data["buy_amount"] += buy_amount_for_profit
                 # Count sell_amount for sold orders
                 if sell_price > 0 and size > 0:
                     strategy_data["sell_amount"] += sell_price * size
@@ -166,7 +186,7 @@ def get_trading_records():
         # ✅ FIX: Only count completed trades (sold out) for profit calculation
         if trade["side"] == "buy" and state == "sold out":
             # Only count buy_amount for sold orders
-            cryptos[inst_id]["buy_amount"] += trade["amount"]
+            cryptos[inst_id]["buy_amount"] += buy_amount_for_profit
             # Count sell_amount for sold orders
             if sell_price > 0 and size > 0:
                 cryptos[inst_id]["sell_amount"] += sell_price * size
